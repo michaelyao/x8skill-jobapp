@@ -127,6 +127,61 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   east coast → `4716 Ellsworth Ave Apt 703, Pittsburgh PA 15213`. Resume autofill usually picks
   the right one; override when wrong.
 
+## Playbook — diagnosing a field that won't fill
+
+Most failures here are *form-reading* failures, not logic failures. The log line tells you
+which kind, and each kind has a different cause. Read this table before touching code.
+
+| Log signature | What it means | Where to look |
+|---|---|---|
+| `✗ could not fill: X` | An answer existed; the driver's fill returned false | `fill()` / `fillReactSelect` in `drivers/base.ts` |
+| `answered N/N fields` but **no ✓ and no ✗** for X | The answer was discarded as `needsHuman` and silently skipped (non-interactive runs have no `onLearn`) | the guardrails in `llmAgent.ts` — usually the option-allowlist check |
+| `✓ X` then X is in `still empty — retry pass` | Fill claimed success but the re-read says empty; the widget rejected the value | `read()`'s `filled` detection, or a value the widget silently reverted |
+| Label is a raw `name` attribute (`cards[<uuid>][field5]`, `formField-…`) | Every `labelFor()` path missed; it fell through to `name` | `labelFor()` in the `READ_SCRIPT` |
+| `Could not parse <provider> response as JSON` | Usually the reply was **truncated**, not malformed — check whether it ends mid-object | `max_tokens` first, then `stripToJson` |
+
+**Method that works — never guess at DOM structure:**
+
+1. Get the posting URL from the queue or `logs/<run>/filtered-jobs.json`.
+2. Write a throwaway Playwright script (`_t_*.ts` — gitignored) that opens the live form and
+   dumps the ancestor chain, classes, `role`, `aria-*`, and label candidates for the field.
+3. Then verify with the **real driver**, not a reimplementation: `driver.read()` → check the
+   `FieldSpec`, `driver.fill()` → re-read and confirm `filled` plus the value the control shows.
+   A fix isn't done until the re-read agrees.
+4. Delete the scratch script; keep anything durable as a `src/debug/` script.
+
+**Async ("searchable") comboboxes — the big one.** A type-to-filter combobox serves only a
+*slice* of its options before you type: Greenhouse's School field returns 100 alphabetical
+entries starting at "Aalborg University". So:
+
+- A captured option list is a **sample, never an allowlist**. `FieldSpec.searchable` marks these;
+  the agent must not reject an answer for missing the sample.
+- Rejecting-by-sample is invisible: it becomes `needsHuman`, which non-interactive runs skip
+  silently, and the required-field gate then blocks the whole job on one field.
+- Never widen a guardrail without keeping a real gate. It stays safe here because
+  `fillReactSelect` can only ever **click an option that exists** — a wrong value fails loudly
+  instead of being typed in as free text.
+- Menus resolve asynchronously and render `Loading...` first. **Poll for options**; a fixed wait
+  is a race that reads zero options and looks like "the menu never opened".
+
+**Label reading.** Each ATS hangs the question text somewhere different, and the option-stripping
+step (which removes option text like "Yes"/"No" from a radio group's question) can erase a wrong
+guess down to an empty string, which then falls through to the raw `name`. Known containers:
+`[data-automation-id^="formField"]` (Workday), `[class*="fieldEntry"]` (Ashby),
+`[class*="application-question"]` (Lever — text is in a sibling `.application-label`, so the
+control's own container holds only the option list).
+
+**Retrying a job after a fix.** A blocked run is recorded `prefilled_pending_submit`, which
+`hasAppliedBefore` treats as engaged — so it is skipped forever and a form fix would only ever
+help *new* postings. Use `JOB_ID=<CODE> FORCE_RETRY=1` to re-open it. `FORCE_RETRY` cannot
+override a `submitted` / `already_applied_on_site` record (that would duplicate a real
+application) and does not override a tracker-sheet match.
+
+**LLM replies.** Field-heavy pages with drafted free-text blow past a small `max_tokens` and get
+cut mid-array; the parse error is the symptom, the token limit is the cause. `stripToJson`
+tolerates an unpaired ``` fence and repairs a truncated array by keeping the objects that arrived
+whole — and logs what it recovered, because a silent partial fill looks like a complete one.
+
 ## Workday-specific implementation notes
 
 Discovered from live DOM inspection (F5 / Cohesity applications):

@@ -6,7 +6,7 @@ import { LlmAgent } from "../agent/llmAgent.js";
 import { applyToJob, type ApplyDeps } from "./applyJob.js";
 import { buildJobIdentity, decideDedupe } from "./jobIdentity.js";
 import { loadAnswers } from "../knowledge/answerStore.js";
-import { loadApplications, hasAppliedBefore } from "../knowledge/applications.js";
+import { loadApplications, hasAppliedBefore, hasSubmittedBefore } from "../knowledge/applications.js";
 import { loadProfile } from "../knowledge/profile.js";
 import { loadX8NoteConfig } from "../knowledge/x8note.js";
 import { loadInternshipList, refreshInternshipCsv } from "../sources/internshipList.js";
@@ -131,7 +131,19 @@ export async function run(): Promise<void> {
       const alreadyEngaged = hasAppliedBefore(applications, identity);
       if (alreadyEngaged) notes.push("already in local application ledger");
 
-      if (dedupe.shouldSkip || alreadyEngaged) {
+      // FORCE_RETRY=1 re-opens a job the ledger already holds. Needed because a run
+      // that stopped blocked is recorded "prefilled_pending_submit", which otherwise
+      // skips it forever — so a fix to the form handling could never be applied to the
+      // jobs it was written for. It deliberately does NOT override a job we actually
+      // submitted (or that the ATS reports as applied): that would duplicate an
+      // application, which cannot be undone. Tracker-sheet skips also still win.
+      const forceRetry = process.env.FORCE_RETRY === "1" && !hasSubmittedBefore(applications, identity);
+      if (alreadyEngaged && forceRetry) {
+        notes.push("FORCE_RETRY — re-opening despite the ledger record");
+        console.log(`FORCE_RETRY — re-opening [${job.id ?? "----"}] despite its ledger record (never submitted).`);
+      }
+
+      if (dedupe.shouldSkip || (alreadyEngaged && !forceRetry)) {
         summary.push({ company: job.company, title: job.title, applyUrl: job.applyUrl, outcome: "skipped_existing", notes });
         continue;
       }

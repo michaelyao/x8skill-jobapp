@@ -26,15 +26,30 @@ export async function loadApplications(): Promise<ApplicationRecord[]> {
   }
 }
 
+// Statuses that mean the application actually WENT IN — re-opening these risks a
+// duplicate application, so no override may bypass them.
+const SUBMITTED_STATUSES = new Set<ApplicationRecord["status"]>(["submitted", "already_applied_on_site"]);
+
+/** Does this ledger record refer to the same job? */
+function sameJob(record: ApplicationRecord, identity: JobIdentity): boolean {
+  return (
+    record.id === identity.identityKey ||
+    (!!identity.externalJobId && record.externalJobId === identity.externalJobId) ||
+    (!!identity.normalizedApplyUrl && normalize(record.applyUrl) === identity.normalizedApplyUrl)
+  );
+}
+
 /** True if we've already engaged this job in a previous run. */
 export function hasAppliedBefore(records: ApplicationRecord[], identity: JobIdentity): boolean {
-  return records.some(
-    (record) =>
-      ENGAGED_STATUSES.has(record.status) &&
-      (record.id === identity.identityKey ||
-        (!!identity.externalJobId && record.externalJobId === identity.externalJobId) ||
-        (!!identity.normalizedApplyUrl && normalize(record.applyUrl) === identity.normalizedApplyUrl)),
-  );
+  return records.some((record) => ENGAGED_STATUSES.has(record.status) && sameJob(record, identity));
+}
+
+/**
+ * True if this job was really submitted (or the ATS reported us as already applied).
+ * FORCE_RETRY must never override this — a second submission is not undoable.
+ */
+export function hasSubmittedBefore(records: ApplicationRecord[], identity: JobIdentity): boolean {
+  return records.some((record) => SUBMITTED_STATUSES.has(record.status) && sameJob(record, identity));
 }
 
 function normalize(url: string): string {
