@@ -14,6 +14,7 @@ import { postApplicationNote, type X8NoteConfig } from "../knowledge/x8note.js";
 import {
   checkApprovalOnce,
   reviewTo,
+  sendBlockedEmail,
   sendReviewEmail,
   sendSubmittedEmail,
   waitForApproval,
@@ -222,6 +223,24 @@ export async function applyToJob(
       console.log(`  ⚠ stopped before review (${result.filled.length} filled) — debug: ${dbg}`);
       if (result.blockedRequired.length) {
         console.log(`  ⛔ blocked by ${result.blockedRequired.length} empty required field(s): ${result.blockedRequired.join(" | ")}`);
+      }
+      // Email the screenshot so a blocked job is debuggable from the inbox instead of
+      // the run logs. NO_DEBUG_EMAIL=1 silences it on big sweeps.
+      if (process.env.NO_DEBUG_EMAIL !== "1") {
+        const blockedResult = await sendBlockedEmail(
+          {
+            company: job.company,
+            title: job.title,
+            code: job.id,
+            applyUrl: job.applyUrl,
+            blockedRequired: result.blockedRequired,
+            unknown: result.unknown,
+            filledCount: result.filled.length,
+            turns: result.turns,
+          },
+          dbg,
+        );
+        console.log(`  Debug email → ${reviewTo()}: ${blockedResult}`);
       }
       await record("prefilled_pending_submit", {
         filledFields: result.filled,

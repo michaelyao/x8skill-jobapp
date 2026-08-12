@@ -74,6 +74,15 @@ export abstract class GenericDriver implements AtsDriver {
         if (!label) label = c.getAttribute("aria-label") || "";
         if (!label) { const l = c.closest("label"); if (l) label = l.innerText; }
         if (!label) { const l = c.closest("div,fieldset,li"); const lab = l && l.querySelector("label"); if (lab) label = lab.innerText; }
+        // Lever custom questions: <li class="application-question"> carries the question
+        // text in an .application-label, while the control sits in a sibling
+        // .application-field — so nothing above finds it and we used to fall through to
+        // the raw name ("cards[<uuid>][field5]").
+        if (!label) {
+          const aq = c.closest('[class*="application-question" i]');
+          const lab = aq && aq.querySelector('[class*="application-label" i], label');
+          if (lab && lab.innerText) label = lab.innerText;
+        }
         // Field-entry container (e.g. Ashby wraps the react-datepicker several
         // levels below the question label). Walk up to it and take its label text.
         if (!label) {
@@ -113,6 +122,11 @@ export abstract class GenericDriver implements AtsDriver {
           // Prefer the enclosing field container's question text (Workday formField,
           // Ashby fieldEntry) — the generic div-walk otherwise yields just "choice".
           if (!q) { const ff = c.closest('[data-automation-id^="formField"], [class*="fieldEntry" i], [class*="field-entry" i]'); if (ff) q = ff.innerText || ""; }
+          // Lever radio cards: the question lives on the enclosing
+          // <li class="application-question">, NOT on the option list's own container.
+          // Without this the div-walk below finds only "Yes No", which the option
+          // stripping then erases — leaving the raw "cards[<uuid>][fieldN]" name.
+          if (!q) { const aq = c.closest('[class*="application-question" i]'); if (aq) q = aq.innerText || ""; }
           if (!q) { let w = c.closest("div"); for (let k = 0; k < 4 && w; k++) { const t = (w.innerText || "").trim(); if (t && t.length > 3) { q = t; break; } w = w.parentElement; } }
           for (const o of options) if (o) q = q.split(o).join(" ");
           q = q.replace(/\\*/g, " ").replace(/\\brequired\\b/gi, " ").replace(/\\s+/g, " ").trim().slice(0, 160) || name || "choice";

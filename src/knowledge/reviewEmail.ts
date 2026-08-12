@@ -150,6 +150,7 @@ function reviewBodyHtml(d: ReviewData): string {
       ${d.region ? metaRow("Region", esc(d.region)) : ""}
       ${metaRow("Resume", `${esc(d.resumeName || "?")} ${d.resumeStandard === false ? "(tailored)" : "(standard)"}`)}
       ${metaRow("Posting", link)}
+      ${metaRow("Screenshot", "attached (full page, as filled)")}
     </table>
 
     <h3 style="font-size:15px;border-bottom:2px solid #e5e7eb;padding-bottom:6px;margin:0 0 12px 0">Application answers</h3>
@@ -159,6 +160,102 @@ function reviewBodyHtml(d: ReviewData): string {
     <div style="font-size:13px;margin-bottom:8px">Posting: ${link}</div>
     <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;white-space:pre-wrap;font-size:13px;color:#374151;max-height:none">${jd}</div>
   </div>`;
+}
+
+/** What a blocked / stopped-before-review job reports for debugging. */
+export interface BlockedData {
+  company: string;
+  title: string;
+  code?: string;
+  applyUrl: string;
+  blockedRequired: string[]; // required fields still empty (why we stopped)
+  unknown: string[]; // fields no answer could be produced for
+  filledCount: number;
+  turns: number;
+}
+
+export function blockedSubject(d: BlockedData): string {
+  const why = d.blockedRequired[0] ? `blocked: ${d.blockedRequired.join(", ")}` : "stopped before review";
+  return `⛔ Not submitted — ${d.title} @ ${d.company} [${d.code || ""}] — ${why}`;
+}
+
+function blockedBody(d: BlockedData): string {
+  return [
+    "This application could NOT be completed, so nothing was submitted and nothing is",
+    "queued for approval. No reply is needed — this is a debugging notice.",
+    "",
+    `Company:  ${d.company}`,
+    `Role:     ${d.title}`,
+    `Posting:  ${d.applyUrl}`,
+    d.code ? `Code:     ${d.code}` : "",
+    `Progress: ${d.filledCount} field(s) filled over ${d.turns} turn(s)`,
+    "",
+    d.blockedRequired.length
+      ? `Required fields still empty (why it stopped):\n${d.blockedRequired.map((f) => `  - ${f}`).join("\n")}`
+      : "Stopped before reaching the Review step.",
+    "",
+    d.unknown.length ? `No answer available for:\n${d.unknown.map((f) => `  - ${f}`).join("\n")}` : "",
+    "",
+    "The attached screenshot is the full page as the run left it.",
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+}
+
+function blockedBodyHtml(d: BlockedData): string {
+  const link = `<a href="${esc(d.applyUrl)}" style="color:#2563eb;text-decoration:none">${esc(d.applyUrl)}</a>`;
+  const list = (items: string[]) =>
+    `<ul style="margin:6px 0 0 0;padding-left:20px;color:#1f2937">${items.map((f) => `<li style="margin:2px 0">${esc(f)}</li>`).join("")}</ul>`;
+
+  return `<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:720px;margin:0 auto;color:#111827;line-height:1.5">
+    <h2 style="margin:0 0 4px 0;font-size:20px">${esc(d.title)}</h2>
+    <div style="color:#6b7280;margin-bottom:14px">${esc(d.company)}${d.code ? ` &middot; <span style="font-family:monospace">${esc(d.code)}</span>` : ""}</div>
+
+    <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 14px;margin-bottom:16px">
+      <div style="font-weight:700;color:#991b1b;margin-bottom:4px">Not submitted — could not complete the form</div>
+      <div style="color:#7f1d1d;font-size:14px">
+        Nothing was submitted and nothing is queued. <b>No reply needed</b> — this is a debugging
+        notice so you can see the form without digging through the run logs.
+      </div>
+    </div>
+
+    <table style="border-collapse:collapse;font-size:14px;margin-bottom:18px">
+      <tr><td style="padding:2px 12px 2px 0;color:#6b7280;white-space:nowrap">Progress</td><td style="padding:2px 0">${d.filledCount} field(s) filled over ${d.turns} turn(s)</td></tr>
+      <tr><td style="padding:2px 12px 2px 0;color:#6b7280;white-space:nowrap">Posting</td><td style="padding:2px 0">${link}</td></tr>
+      <tr><td style="padding:2px 12px 2px 0;color:#6b7280;white-space:nowrap">Screenshot</td><td style="padding:2px 0">attached (full page, as the run left it)</td></tr>
+    </table>
+
+    ${
+      d.blockedRequired.length
+        ? `<h3 style="font-size:15px;border-bottom:2px solid #e5e7eb;padding-bottom:6px;margin:0 0 8px 0">Required fields still empty</h3>${list(d.blockedRequired)}`
+        : `<h3 style="font-size:15px;border-bottom:2px solid #e5e7eb;padding-bottom:6px;margin:0 0 8px 0">Stopped before the Review step</h3>`
+    }
+    ${
+      d.unknown.length
+        ? `<h3 style="font-size:15px;border-bottom:2px solid #e5e7eb;padding-bottom:6px;margin:22px 0 8px 0">No answer available for</h3>${list(d.unknown)}`
+        : ""
+    }
+  </div>`;
+}
+
+/**
+ * Email the debugging notice for a job that stopped before Review, with the
+ * full-page screenshot attached. Deliberately carries NO approve/skip wording: a
+ * blocked job is never queued, so no reply can act on it.
+ */
+export async function sendBlockedEmail(d: BlockedData, attachPath?: string): Promise<string> {
+  const args = [
+    "-a", gogAccount(),
+    "gmail", "send",
+    "--from", gogAccount(),
+    "--to", reviewTo(),
+    "--subject", blockedSubject(d),
+    "--body", blockedBody(d),
+    "--body-html", blockedBodyHtml(d),
+  ];
+  if (attachPath) args.push("--attach", attachPath);
+  const { code, out } = await gog(args, 90000);
+  return code === 0 ? "sent" : `send failed: ${out.slice(0, 200)}`;
 }
 
 /** Send the review email (HTML + plain-text), optionally attaching the review screenshot. */
