@@ -111,6 +111,7 @@ function buildPrompt(snapshot: PageSnapshot, ctx: AgentContext): { system: strin
     "Rules:",
     "- Never invent facts (names, numbers, employers, dates) not supported by the provided data.",
     "- For select/radio fields, the value MUST be exactly one of the given options.",
+    '- EXCEPTION — a field with "searchableTypeahead": true is a type-to-search box whose "optionsSample" is only the first few of thousands of choices (e.g. every university in the world). Answer with the candidate\'s REAL value (their actual school, city, employer) even when it does not appear in the sample, and do NOT set needsHuman merely because it is missing from the sample. The value is matched against the live filtered list when it is entered.',
     "- For checkboxes, value is 'Yes' or 'No'.",
     "- OPEN-ENDED free-text fields (e.g. 'Why do you want to work here?', 'Tell us about yourself', cover letter, 'What interests you'): DRAFT a concise, specific, first-person answer (~80-150 words) grounded in the candidate's real resume experience and the job description. Set draft=true, needsHuman=false, confidence around 0.7. Do not fabricate experience — only use what's in the resume.",
     "- SENSITIVE fields (work authorization, sponsorship, citizenship, demographics, disability, veteran, criminal history, salary, DOB, SSN): answer ONLY if the curated Q&A or profile clearly provides it; otherwise set needsHuman=true and leave value empty. Never guess these.",
@@ -125,7 +126,12 @@ function buildPrompt(snapshot: PageSnapshot, ctx: AgentContext): { system: strin
     label: f.label,
     type: f.type,
     required: f.required,
-    options: f.options,
+    // A type-to-filter combobox only reveals a slice of its choices before you type
+    // (Greenhouse's School field: 100 entries starting at "Aalborg University"). Passing
+    // that slice as `options` made the model obey the "must be exactly one of the given
+    // options" rule and defer the field as needsHuman whenever the real answer wasn't in
+    // the slice — which silently blocked the whole job. Send it as a labelled sample.
+    ...(f.searchable ? { searchableTypeahead: true, optionsSample: f.options?.slice(0, 10) } : { options: f.options }),
     sensitive: f.sensitive ?? isSensitive(f.label),
   }));
 
@@ -159,7 +165,9 @@ async function callAirouter(system: string, user: string): Promise<string> {
     // 2048 truncated mid-array on 20+ field pages (each drafted free-text answer runs
     // ~150 words), which used to lose every answer in the turn to a parse error.
     body: JSON.stringify({ model, max_tokens: 8192, system, messages: [{ role: "user", content: user }] }),
-    signal: AbortSignal.timeout(120000),
+    // 120s aborted on 64-field pages (CTC), dropping us to the weaker fallback for no
+    // reason — a big field list with drafted free-text legitimately takes longer.
+    signal: AbortSignal.timeout(240000),
   });
   if (!res.ok) throw new Error(`AIROUTER HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const json = (await res.json()) as { content?: Array<{ text?: string }> };
@@ -179,7 +187,11 @@ async function callGemini(system: string, user: string): Promise<string> {
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: system }] },
         contents: [{ parts: [{ text: user }] }],
-        generationConfig: { temperature: 0.2, maxOutputTokens: 8192 },
+        // gemini-2.5-flash reasons by default and charges that against maxOutputTokens,
+        // so on a 64-field page it burned the whole budget thinking and returned just
+        // "```json" with no array at all. Reasoning off, and a budget big enough for a
+        // long field list.
+        generationConfig: { temperature: 0.2, maxOutputTokens: 16384, thinkingConfig: { thinkingBudget: 0 } },
       }),
       signal: AbortSignal.timeout(120000),
     },
@@ -239,6 +251,26 @@ export class LlmAgent implements Agent {
         needsHuman = true;
         confidence = 0;
       }
+      // Guardrail: a bare "Yes"/"No" in a FREE-TEXT field is almost always a yes/no
+      // curated answer bleeding into a question that wants real content — e.g. the
+      // curated "Do you have a preferred name? → No" landing in Lever's text field
+      // "Preferred Name | What would you like us to call you?", which then submits the
+      // literal word "No" as the candidate's name. Only accept it when the label
+      // actually reads as a yes/no question (auxiliary-verb opener, or an "if yes/no"
+      // follow-up); otherwise defer rather than write nonsense into the application.
+      if ((field.type === "text" || field.type === "textarea") && /^(yes|no)\.?$/i.test(value.trim())) {
+        const label = field.label.toLowerCase();
+        const yesNoQuestion =
+          /^(do|does|did|are|is|was|were|have|has|had|will|would|can|could|should|may|must|shall)\b/.test(label) ||
+          /\bif (yes|no)\b/.test(label);
+        if (!yesNoQuestion) {
+          console.warn(`  [agent] ignoring bare "${value.trim()}" for free-text field "${field.label.slice(0, 60)}" — needs a real answer.`);
+          needsHuman = true;
+          value = "";
+          confidence = 0;
+        }
+      }
+
       // Guardrail: select value must map to a real option. Accept an exact match,
       // or the answer as the option's leading token before a comma/paren/dash — so
       // curated "No" maps to "No, I don't have a disability" — without loose
