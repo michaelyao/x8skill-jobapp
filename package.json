@@ -1,0 +1,30 @@
+{
+  "name": "x8skill-jobapp",
+  "version": "1.0.0",
+  "description": "Playwright + TypeScript job application automation",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "start": "tsx src/index.ts",
+    "approvals": "tsx src/approvals.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/michaelyao/x8skill-jobapp.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/michaelyao/x8skill-jobapp/issues"
+  },
+  "homepage": "https://github.com/michaelyao/x8skill-jobapp#readme",
+  "dependencies": {
+    "@types/node": "^25.5.0",
+    "playwright": "^1.58.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

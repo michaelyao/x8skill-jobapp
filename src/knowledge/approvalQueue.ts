@@ -1,0 +1,111 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import { DATA_DIR } from "../config.js";
+import type { FilledAnswer } from "../agent/types.js";
+
+const QUEUE_PATH = path.join(DATA_DIR, "pending-approvals.json");
+
+export type PendingStatus = "awaiting_approval" | "submitted" | "skipped" | "error";
+
+/**
+ * One application that reached Review and is waiting for the user's emailed
+ * APPROVE/SKIP reply. Approval can take days, so this is persisted and processed
+ * later by the Phase-B poller — the fill run does NOT block on it.
+ */
+export interface PendingEntry {
+  key: string; // primary key: job code, else identity key
+  code?: string;
+  identityKey: string;
+  externalJobId?: string;
+  ats: string;
+  company: string;
+  title: string;
+  applyUrl: string;
+  location?: string;
+  region?: string;
+  resumeName?: string;
+  resumeStandard?: boolean;
+  jobDescription?: string;
+  filledFields: string[];
+  answers?: FilledAnswer[]; // structured answers to replay on submit (== what was approved)
+  reviewSentAt: string; // ISO
+  updatedAt: string; // ISO
+  status: PendingStatus;
+  attempts: number; // Phase-B submit attempts
+  processedReplyIds?: string[]; // reply message ids already acted on (avoid re-triggering)
+  lastError?: string;
+}
+
+async function readQueue(): Promise<PendingEntry[]> {
+  try {
+    const raw = await fs.readFile(QUEUE_PATH, "utf8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as PendingEntry[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeQueue(entries: PendingEntry[]): Promise<void> {
+  await fs.mkdir(DATA_DIR, { recursive: true });
+  await fs.writeFile(QUEUE_PATH, JSON.stringify(entries, null, 2));
+}
+
+export async function loadPendingQueue(): Promise<PendingEntry[]> {
+  return readQueue();
+}
+
+export async function listAwaiting(): Promise<PendingEntry[]> {
+  return (await readQueue()).filter((e) => e.status === "awaiting_approval");
+}
+
+/** Add or refresh a pending entry (re-running a job just updates its record). */
+export async function upsertPending(
+  entry: Omit<PendingEntry, "updatedAt" | "attempts" | "status"> & { status?: PendingStatus; attempts?: number },
+): Promise<PendingEntry> {
+  const entries = await readQueue();
+  const now = new Date().toISOString();
+  const idx = entries.findIndex((e) => e.key === entry.key);
+  const prev = idx >= 0 ? entries[idx] : undefined;
+  const merged: PendingEntry = {
+    ...(prev ?? {}),
+    ...entry,
+    status: entry.status ?? prev?.status ?? "awaiting_approval",
+    attempts: entry.attempts ?? prev?.attempts ?? 0,
+    updatedAt: now,
+  };
+  if (idx >= 0) entries[idx] = merged;
+  else entries.push(merged);
+  await writeQueue(entries);
+  return merged;
+}
+
+/** Record a reply message id as acted-on so it never re-triggers on later polls. */
+export async function markReplyProcessed(key: string, messageId: string): Promise<void> {
+  const entries = await readQueue();
+  const idx = entries.findIndex((e) => e.key === key);
+  if (idx < 0) return;
+  const ids = new Set(entries[idx].processedReplyIds ?? []);
+  ids.add(messageId);
+  entries[idx] = { ...entries[idx], processedReplyIds: [...ids], updatedAt: new Date().toISOString() };
+  await writeQueue(entries);
+}
+
+/** Update the status (and optionally attempts/error) of a pending entry by key. */
+export async function updatePendingStatus(
+  key: string,
+  status: PendingStatus,
+  extra: { attempts?: number; lastError?: string } = {},
+): Promise<void> {
+  const entries = await readQueue();
+  const idx = entries.findIndex((e) => e.key === key);
+  if (idx < 0) return;
+  entries[idx] = {
+    ...entries[idx],
+    status,
+    updatedAt: new Date().toISOString(),
+    ...(extra.attempts != null ? { attempts: extra.attempts } : {}),
+    ...(extra.lastError != null ? { lastError: extra.lastError } : {}),
+  };
+  await writeQueue(entries);
+}

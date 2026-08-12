@@ -1,0 +1,35 @@
+node_modules/
+dist/
+logs/
+data/
+.DS_Store
+.env
+.x8note.config
+
+# Browser profiles — these hold live Google/ATS session cookies, Login Data and
+# Trust Tokens. Ignore the WHOLE directory: ".auth/" alone missed the timestamped
+# ".auth.bak-*" copies the runner leaves behind (~250MB of credentials each).
+playwright/
+
+# personal files — never commit resume, transcript, profile text, or Q&A
+*.pdf
+text version.txt
+Q&A.txt
+# generated from Q&A.txt — contains home address and EEO self-ID answers
+Q&A.md
+nathan resume 2026.md
+nathan resume 2026.txt
+resumes.config
+
+# run artifacts (per-run logs at the repo root; logs/ covers the run dirs)
+*.log
+
+# generated job data — rebuilt each run from job_sites.txt
+internships_summer2027.csv
+internships_summer2027.md
+available_openings.md
+
+# ad-hoc DOM-inspection scratch; the keepers live in src/debug/
+_*.mjs
+_*.ts
+

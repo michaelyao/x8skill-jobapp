@@ -1,0 +1,274 @@
+import type { Agent, AgentContext, FieldAnswer, FieldSpec, PageSnapshot } from "./types.js";
+
+// Legal / demographic / compensation fields we must never free-guess. The agent
+// may answer these only from curated Q&A or profile data; otherwise it defers to
+// a human (needsHuman) and the turn loop routes them to learning mode.
+const SENSITIVE =
+  /work autho|authoriz|sponsor|visa|citizen|\brace\b|ethnic|hispanic|latino|\bgender\b|\bsex\b|disab|veteran|felony|criminal|conviction|salary|compensation expectation|expected pay|date of birth|social security|\bssn\b/i;
+
+export function isSensitive(label: string): boolean {
+  return SENSITIVE.test(label);
+}
+
+// Self-identification / EEO / disability questions: NEVER auto-answer these —
+// always leave them blank for the human to complete, even if curated data exists.
+const EEO_SELF_ID =
+  /disabilit|impairment|substantially limits|major life activit|\bveteran\b|protected veteran|\brace\b|ethnic|racial|gender identity|how do you identify|sexual orientation|self.?identif|transgender|pronoun/i;
+
+export function isSelfIdentification(label: string): boolean {
+  return EEO_SELF_ID.test(label);
+}
+
+/** Index just past the last top-level `{...}` that closed, ignoring braces in strings. */
+function lastCompleteObjectEnd(text: string): number {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let end = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) end = i + 1;
+    }
+  }
+  return end;
+}
+
+/**
+ * Pull the JSON array out of a model reply, tolerating ``` fences and a reply that
+ * was cut off mid-array by the token limit. `repaired` means we closed a truncated
+ * array and some field answers were lost (the caller logs it — never silent).
+ */
+export function stripToJson(text: string): { json: string; repaired: boolean } {
+  let body = text.trim();
+  // Strip an opening fence even when the CLOSING fence never arrived — requiring the
+  // pair left a literal "```json" in the payload and lost the whole turn to a parse error.
+  const open = body.match(/^```(?:json)?[ \t]*\r?\n?/i);
+  if (open) {
+    body = body.slice(open[0].length);
+    const close = body.lastIndexOf("```");
+    if (close >= 0) body = body.slice(0, close);
+  } else {
+    const fenced = body.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenced) body = fenced[1];
+  }
+  const start = body.indexOf("[");
+  if (start < 0) return { json: body, repaired: false };
+  const end = body.lastIndexOf("]");
+  if (end > start) return { json: body.slice(start, end + 1), repaired: false };
+  // Array never closed (hit max_tokens mid-answer): keep the objects that arrived
+  // whole and close it, so we fill what we got instead of dropping every field.
+  const arr = body.slice(start);
+  const cut = lastCompleteObjectEnd(arr);
+  return cut > 0 ? { json: `${arr.slice(0, cut)}]`, repaired: true } : { json: arr, repaired: false };
+}
+
+/** Compact profile summary handed to the LLM as grounding. */
+function profileSummary(ctx: AgentContext): string {
+  const p = ctx.profile;
+  const bits = [
+    p.firstName && `First name: ${p.firstName}`,
+    p.lastName && `Last name: ${p.lastName}`,
+    p.email && `Email: ${p.email}`,
+    p.phone && `Phone: ${p.phone}`,
+    p.linkedin && `LinkedIn: ${p.linkedin}`,
+    p.github && `GitHub: ${p.github}`,
+    p.gpa && `GPA: ${p.gpa}`,
+    p.school && `School: ${p.school}`,
+  ].filter(Boolean);
+  return bits.join("\n");
+}
+
+/** Companies the candidate has worked for, from the resume's "### Company — ..." headings. */
+export function extractEmployers(resumeText: string): string[] {
+  const employers: string[] = [];
+  for (const m of resumeText.matchAll(/^#{2,4}\s+(.+?)\s+[—–-]\s+/gm)) {
+    const name = m[1].trim();
+    if (name && !/education|skills|work experience|award/i.test(name)) employers.push(name);
+  }
+  return [...new Set(employers)];
+}
+
+function curatedSummary(ctx: AgentContext): string {
+  return ctx.answers
+    .map((a) => `Q: ${a.question}\nA: ${Array.isArray(a.answer) ? a.answer.join(", ") : a.answer}`)
+    .join("\n\n");
+}
+
+function buildPrompt(snapshot: PageSnapshot, ctx: AgentContext): { system: string; user: string } {
+  const system = [
+    "You are filling a job application form on behalf of a candidate.",
+    "For each field, produce the best answer grounded ONLY in the candidate's resume, profile, and curated Q&A provided.",
+    "Rules:",
+    "- Never invent facts (names, numbers, employers, dates) not supported by the provided data.",
+    "- For select/radio fields, the value MUST be exactly one of the given options.",
+    "- For checkboxes, value is 'Yes' or 'No'.",
+    "- OPEN-ENDED free-text fields (e.g. 'Why do you want to work here?', 'Tell us about yourself', cover letter, 'What interests you'): DRAFT a concise, specific, first-person answer (~80-150 words) grounded in the candidate's real resume experience and the job description. Set draft=true, needsHuman=false, confidence around 0.7. Do not fabricate experience — only use what's in the resume.",
+    "- SENSITIVE fields (work authorization, sponsorship, citizenship, demographics, disability, veteran, criminal history, salary, DOB, SSN): answer ONLY if the curated Q&A or profile clearly provides it; otherwise set needsHuman=true and leave value empty. Never guess these.",
+    "- For factual fields (name, email, phone, school, dates): use the provided data. If it is genuinely absent, set needsHuman=true and leave value empty — do NOT guess.",
+    "- For 'have you previously worked for X / are you a former employee of X / do you work for X' questions: answer Yes ONLY if X (or its parent/subsidiary) appears in the candidate's Employment history below; otherwise No. Do NOT rely on any generic curated answer for this.",
+    "- Do NOT answer or reference any submit button.",
+    'Respond with ONLY a JSON array: [{"key":"...","value":"...","confidence":0.0-1.0,"needsHuman":false,"draft":false,"reasoning":"short"}]. One object per field, using the exact keys given.',
+  ].join("\n");
+
+  const fieldsForLlm = snapshot.fields.map((f) => ({
+    key: f.key,
+    label: f.label,
+    type: f.type,
+    required: f.required,
+    options: f.options,
+    sensitive: f.sensitive ?? isSensitive(f.label),
+  }));
+
+  const user = [
+    `Company: ${ctx.company}`,
+    `Role: ${ctx.title}`,
+    ctx.changeInstruction
+      ? `\n*** USER CORRECTION (highest priority — the user reviewed a prior draft and asked for these changes; apply them exactly, overriding any conflicting default): ***\n${ctx.changeInstruction}`
+      : "",
+    ctx.jobDescription ? `\nJob description (context):\n${ctx.jobDescription.slice(0, 3000)}` : "",
+    `\nCandidate profile:\n${profileSummary(ctx)}`,
+    `\nEmployment history (companies the candidate HAS worked for):\n${extractEmployers(ctx.resumeText).join(", ") || "(none parsed)"}`,
+    `\nCandidate resume:\n${ctx.resumeText.slice(0, 6000)}`,
+    ctx.answers.length ? `\nCurated Q&A (authoritative, especially for sensitive fields):\n${curatedSummary(ctx)}` : "",
+    `\nFields to answer (JSON):\n${JSON.stringify(fieldsForLlm, null, 2)}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return { system, user };
+}
+
+async function callAirouter(system: string, user: string): Promise<string> {
+  const endpoint = process.env.AIROUTER_API_ENDPOINT;
+  const key = process.env.AIROUTER_API_KEY;
+  const model = process.env.AIROUTER_MODEL_NAME || "sonnet";
+  if (!endpoint || !key) throw new Error("AIROUTER not configured");
+  const res = await fetch(`${endpoint.replace(/\/+$/, "")}/v1/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+    // 2048 truncated mid-array on 20+ field pages (each drafted free-text answer runs
+    // ~150 words), which used to lose every answer in the turn to a parse error.
+    body: JSON.stringify({ model, max_tokens: 8192, system, messages: [{ role: "user", content: user }] }),
+    signal: AbortSignal.timeout(120000),
+  });
+  if (!res.ok) throw new Error(`AIROUTER HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const json = (await res.json()) as { content?: Array<{ text?: string }> };
+  const text = (json.content || []).map((c) => c.text || "").join("");
+  if (!text) throw new Error("AIROUTER returned empty content");
+  return text;
+}
+
+async function callGemini(system: string, user: string): Promise<string> {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) throw new Error("GEMINI_API_KEY not configured");
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: system }] },
+        contents: [{ parts: [{ text: user }] }],
+        generationConfig: { temperature: 0.2, maxOutputTokens: 8192 },
+      }),
+      signal: AbortSignal.timeout(120000),
+    },
+  );
+  if (!res.ok) throw new Error(`Gemini HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const json = (await res.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+  const text = (json.candidates?.[0]?.content?.parts || []).map((p) => p.text || "").join("");
+  if (!text) throw new Error("Gemini returned empty content");
+  return text;
+}
+
+/** LLM-primary agent: AIROUTER first, Gemini as backup, with sensitive guardrails. */
+export class LlmAgent implements Agent {
+  async decide(snapshot: PageSnapshot, ctx: AgentContext): Promise<FieldAnswer[]> {
+    if (snapshot.fields.length === 0) return [];
+    const { system, user } = buildPrompt(snapshot, ctx);
+
+    let raw: string;
+    let provider: string;
+    try {
+      raw = await callAirouter(system, user);
+      provider = "airouter";
+    } catch (airouterError) {
+      console.warn(`  [agent] AIROUTER failed (${(airouterError as Error).message}); falling back to Gemini.`);
+      raw = await callGemini(system, user);
+      provider = "gemini";
+    }
+
+    let parsed: Array<Partial<FieldAnswer>>;
+    const { json, repaired } = stripToJson(raw);
+    try {
+      parsed = JSON.parse(json);
+    } catch {
+      throw new Error(`[agent] Could not parse ${provider} response as JSON: ${raw.slice(0, 200)}`);
+    }
+    if (repaired) {
+      console.warn(
+        `  [agent] ${provider} reply was cut off mid-array — recovered ${parsed.length} of ${snapshot.fields.length} field answer(s); the rest fall to the retry pass.`,
+      );
+    }
+
+    const byKey = new Map(snapshot.fields.map((f) => [f.key, f]));
+    const answers: FieldAnswer[] = [];
+    for (const item of parsed) {
+      const field = item.key != null ? byKey.get(String(item.key)) : undefined;
+      if (!field) continue;
+      let value = item.value == null ? "" : String(item.value);
+      let needsHuman = Boolean(item.needsHuman);
+      let confidence = typeof item.confidence === "number" ? item.confidence : 0;
+      const draft = Boolean(item.draft);
+
+      // Guardrail: sensitive/EEO fields (work-auth, sponsorship, gender, race,
+      // veteran, disability, salary) are answered ONLY from the curated Q&A /
+      // profile — never fabricated. If the model returned no grounded value,
+      // defer to the human rather than guess.
+      if ((field.sensitive ?? isSensitive(field.label)) && !value) {
+        needsHuman = true;
+        confidence = 0;
+      }
+      // Guardrail: select value must map to a real option. Accept an exact match,
+      // or the answer as the option's leading token before a comma/paren/dash — so
+      // curated "No" maps to "No, I don't have a disability" — without loose
+      // substring matches (e.g. "No" ✗ "Now employed"). Otherwise defer.
+      if (field.options && field.options.length && value) {
+        const lv = value.trim().toLowerCase();
+        const lead = (o: string) => o.split(/[,(:—–-]/)[0].trim().toLowerCase();
+        const match =
+          field.options.find((o) => o.toLowerCase() === lv) ||
+          field.options.find((o) => lead(o) === lv) ||
+          field.options.find((o) => lv.length >= 4 && o.toLowerCase().includes(lv));
+        if (!match) {
+          // A type-to-filter combobox (School / Discipline typeahead) exposed only an
+          // async slice of its options, so "no match" here means "not in the sample",
+          // not "not a real option". Keep the value: fillReactSelect types to filter
+          // and can ONLY click an option that actually exists, so a bad value fails
+          // loudly at fill time instead of being silently skipped as needsHuman.
+          if (field.searchable) {
+            confidence = Math.min(confidence, 0.5);
+          } else {
+            needsHuman = true;
+            confidence = Math.min(confidence, 0.3);
+          }
+        } else {
+          value = match;
+        }
+      }
+      answers.push({ key: field.key, value, confidence, needsHuman, draft, source: "llm", reasoning: item.reasoning });
+    }
+    console.log(`  [agent] ${provider} answered ${answers.length}/${snapshot.fields.length} fields.`);
+    return answers;
+  }
+}
