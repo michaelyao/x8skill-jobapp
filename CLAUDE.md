@@ -145,6 +145,39 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   east coast → `4716 Ellsworth Ave Apt 703, Pittsburgh PA 15213`. Resume autofill usually picks
   the right one; override when wrong.
 
+## Job identity — what makes two listings "the same job"
+
+An ATS posting id identifies a **listing**, not a **job**. The same opening is often posted
+through more than one channel, each with its own id, so ATS ids alone allow applying twice.
+Identity is therefore layered, strongest first, and every layer is stored per job in
+`data/applications.json` (history) and `data/pending-approvals.json` (in-flight state).
+
+| Signal | Field | Strength | Availability (measured on live postings) |
+|---|---|---|---|
+| Employer's requisition id | `companyReqId` | **Spans ATS** — the only signal that catches the same job on a second board | Workday nearly always (`R73630`, `R265684`); Greenhouse sometimes (`JR11987`); Lever/Ashby never |
+| ATS posting id | `externalJobId` | Exact listing | Greenhouse `/jobs/<n>`, Ashby/Lever UUID, else `sha1(url)` |
+| `company::externalJobId` | `identityKey` | Exact listing; the ledger's primary key | always |
+| Normalized apply URL | `normalizedApplyUrl` | Exact listing | always |
+| 6-letter code | `code` | Human/email handle, `fnv1a(url)`; the ONLY thing approval replies match | from the CSV build |
+| Company + title (+ location, description overlap) | — | **Suspicion only, never a decision** | always |
+
+- `sameJob()` matches on **any** hard route, so a job stays recognisable when one identifier
+  changes. The requisition id is an *additional* route — `identityKey` stays ATS-derived so
+  records written before requisition ids existed keep matching. No ledger migration.
+- **Requisition ids are usually only in the page body**, so identity is *upgraded* after the
+  posting opens (`withRequisitionId`), not fixed at CSV-read time. Anything downstream must
+  work when it is `undefined`.
+- `findCrossAtsDuplicate` hard-blocks the case ATS ids cannot see: a **different** listing,
+  already submitted, sharing this employer's requisition id.
+- **Never hard-block on company + title.** RTX posts two distinct "Software Engineer Intern"
+  requisitions (Burnsville MN and Largo FL); merging them would silently drop a real
+  application. `classifyJobMatch` returns `possibly_same_job` with a confidence score and
+  `needsHumanConfirmation`, and the review email asks the user — approving submits it as a
+  separate application, `SKIP` treats it as the same job.
+- Bare all-digit strings are only accepted as requisition ids when **labelled** ("Job ID:
+  01865635"); unlabelled digits collide with years, salaries and counts. Unlabelled matches
+  require a letter prefix (`R`/`JR`/`REQ`). See `src/debug/reqIdCases.ts`.
+
 ## Playbook — diagnosing a field that won't fill
 
 Most failures here are *form-reading* failures, not logic failures. The log line tells you

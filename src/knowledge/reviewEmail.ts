@@ -7,6 +7,20 @@ export interface ReviewAnswer {
   draft?: boolean;
 }
 
+/**
+ * An unresolved "is this the same job?" question, with the confidence behind it. Emitted
+ * when a job matches an earlier one on company + title but shares no hard identifier, so
+ * it cannot be decided automatically without risking either a dropped application or a
+ * duplicate one.
+ */
+export interface DuplicateWarning {
+  confidence: number; // 0..1
+  basis: string;
+  otherCode?: string;
+  otherUrl?: string;
+  otherStatus?: string;
+}
+
 /** The data an application review email / approval poll needs. */
 export interface ReviewData {
   company: string;
@@ -20,6 +34,8 @@ export interface ReviewData {
   jobDescription: string;
   filledFields: string[]; // "label: value" fallback rendering
   answers?: ReviewAnswer[]; // structured Q/A (preferred rendering)
+  companyReqId?: string;
+  duplicateWarning?: DuplicateWarning;
 }
 
 /** Outcome of scanning the inbox for the user's reply to a review email. */
@@ -143,12 +159,26 @@ function reviewBodyHtml(d: ReviewData): string {
       </div>
     </div>
 
+    ${
+      d.duplicateWarning
+        ? `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 14px;margin-bottom:16px">
+             <div style="font-weight:700;color:#1e40af;margin-bottom:4px">Possible duplicate — ${(d.duplicateWarning.confidence * 100).toFixed(0)}% confidence &middot; needs your call</div>
+             <div style="color:#1e3a8a;font-size:14px">
+               This looks like a job already in your records${d.duplicateWarning.otherCode ? ` (<span style="font-family:monospace">${esc(d.duplicateWarning.otherCode)}</span>${d.duplicateWarning.otherStatus ? `, ${esc(d.duplicateWarning.otherStatus)}` : ""})` : ""}, but they share no requisition or posting id, so it could equally be a second genuine opening.<br>
+               <span style="color:#1d4ed8">Basis: ${esc(d.duplicateWarning.basis)}</span>${d.duplicateWarning.otherUrl ? `<br><a href="${esc(d.duplicateWarning.otherUrl)}" style="color:#2563eb">compare the other posting</a>` : ""}<br>
+               Approving submits this as a separate application; reply <b>SKIP</b> if it is the same job.
+             </div>
+           </div>`
+        : ""
+    }
+
     <table style="border-collapse:collapse;font-size:14px;margin-bottom:18px">
       ${metaRow("Company", esc(d.company))}
       ${metaRow("Role", esc(d.title))}
       ${d.location ? metaRow("Location", esc(d.location)) : ""}
       ${d.region ? metaRow("Region", esc(d.region)) : ""}
       ${metaRow("Resume", `${esc(d.resumeName || "?")} ${d.resumeStandard === false ? "(tailored)" : "(standard)"}`)}
+      ${d.companyReqId ? metaRow("Requisition", `<span style="font-family:monospace">${esc(d.companyReqId)}</span>`) : ""}
       ${metaRow("Posting", link)}
       ${metaRow("Screenshot", "attached (full page, as filled)")}
     </table>

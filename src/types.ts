@@ -25,9 +25,16 @@ export interface JobIdentity {
   title: string;
   location: string;
   normalizedApplyUrl: string;
-  externalJobId: string;
+  externalJobId: string; // the ATS's id for this LISTING
   atsType: AtsType;
   identityKey: string;
+  /**
+   * The employer's own requisition id (Workday "R73630", Samsara "JR11987") when it can
+   * be found. This identifies the JOB rather than the listing, so it is the only signal
+   * that catches the same opening posted through two different ATS. Often only visible
+   * once the posting is open, so it is filled in later via withRequisitionId().
+   */
+  companyReqId?: string;
 }
 
 export interface SheetRow {
@@ -157,7 +164,8 @@ export interface ApplicationRecord {
   region?: string;
   applyUrl: string;
   ats: AtsType;
-  externalJobId?: string;
+  externalJobId?: string; // the ATS's id for the listing
+  companyReqId?: string; // the employer's own requisition id — matches across ATS
   status:
     | "prefilled_pending_submit"
     | "submitted"

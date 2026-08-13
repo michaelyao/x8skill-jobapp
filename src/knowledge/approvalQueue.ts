@@ -24,7 +24,8 @@ export interface PendingEntry {
   key: string; // primary key: job code, else identity key
   code?: string;
   identityKey: string;
-  externalJobId?: string;
+  externalJobId?: string; // the ATS's id for this listing
+  companyReqId?: string; // the employer's own requisition id — matches across ATS
   ats: string;
   company: string;
   title: string;

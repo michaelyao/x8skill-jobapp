@@ -7,7 +7,11 @@ import { LeverDriver } from "../agent/drivers/lever.js";
 import { runApplication } from "../agent/turnLoop.js";
 import { ReplayAgent } from "../agent/replayAgent.js";
 import { addLearnedAnswer } from "../knowledge/answerStore.js";
-import { recordApplication } from "../knowledge/applications.js";
+import {
+  classifyJobMatch,
+  findCrossAtsDuplicate,
+  recordApplication,
+} from "../knowledge/applications.js";
 import { upsertPending, updatePendingStatus } from "../knowledge/approvalQueue.js";
 import { resolveResumeForJob } from "../knowledge/resume.js";
 import { postApplicationNote, type X8NoteConfig } from "../knowledge/x8note.js";
@@ -18,7 +22,10 @@ import {
   sendReviewEmail,
   sendSubmittedEmail,
   waitForApproval,
+  type DuplicateWarning,
 } from "../knowledge/reviewEmail.js";
+import { findRequisitionId } from "./requisitionId.js";
+import { withRequisitionId } from "./jobIdentity.js";
 import { captureJobDescription, fetchGreenhouseJobDescription } from "../utils/jobDescription.js";
 import { askUserForField, confirmSubmit } from "../utils/prompts.js";
 import { normalizeQuestion } from "../utils/normalize.js";
@@ -108,6 +115,9 @@ export async function applyToJob(
   let resumeStandard: boolean | undefined;
   let submitted = false;
   let queued = false;
+  // Set when this job looks like one we already engaged but shares no hard identifier.
+  // Carried into the review email so the human — not this code — makes the call.
+  let duplicateWarning: DuplicateWarning | undefined;
 
   const record = async (
     status: ApplicationRecord["status"],
@@ -123,6 +133,7 @@ export async function applyToJob(
       applyUrl: job.applyUrl,
       ats: recordedAts,
       externalJobId: identity.externalJobId || undefined,
+      companyReqId: identity.companyReqId,
       status,
       lastRunDir: runDir,
       jobDescription: jobDescriptionResolved,
@@ -163,6 +174,46 @@ export async function applyToJob(
     }
 
     jobDescriptionResolved = await captureJobDescription(jobPage);
+
+    // Identity upgrade: find the EMPLOYER's own requisition id, which most postings print
+    // only in the page body. An ATS id identifies a listing; this identifies the job, so
+    // it is the one signal that recognises the same opening posted to a second board.
+    const discoveredReqId = findRequisitionId(job.applyUrl, `${pageText}\n${jobDescriptionResolved}`);
+    if (discoveredReqId && discoveredReqId !== identity.companyReqId) {
+      identity = withRequisitionId(identity, discoveredReqId);
+    }
+    if (identity.companyReqId) console.log(`  requisition id: ${identity.companyReqId}`);
+
+    // Hard guard: this exact job was already submitted through a DIFFERENT listing.
+    const crossAts = findCrossAtsDuplicate(applications, identity);
+    if (crossAts) {
+      console.log(
+        `  ⛔ same requisition (${identity.companyReqId}) was already submitted via ${crossAts.applyUrl} — not applying twice.`,
+      );
+      await record("already_applied_on_site", {
+        notes: [`duplicate of ${crossAts.code ?? crossAts.id} (same requisition id ${identity.companyReqId}) — already submitted`],
+      });
+      await jobPage.close().catch(() => undefined);
+      return finish("skipped_already_applied_on_site", [
+        `duplicate requisition ${identity.companyReqId} — already submitted via ${crossAts.applyUrl}`,
+      ], { alreadyApplied: true });
+    }
+
+    // Soft signal: same company + title with no shared identifier. Never decided here —
+    // it is scored and surfaced in the review email so a human resolves it.
+    const verdict = classifyJobMatch(applications, identity, jobDescriptionResolved);
+    if (verdict.decision === "possibly_same_job" && verdict.matched) {
+      duplicateWarning = {
+        confidence: verdict.confidence,
+        basis: verdict.basis,
+        otherCode: verdict.matched.code,
+        otherUrl: verdict.matched.applyUrl,
+        otherStatus: verdict.matched.status,
+      };
+      console.log(
+        `  ⚠ possible duplicate (confidence ${(verdict.confidence * 100).toFixed(0)}%) of ${verdict.matched.code ?? verdict.matched.id}: ${verdict.basis} — flagged for your review, not skipped.`,
+      );
+    }
 
     const resume = await resolveResumeForJob(job);
     resumeName = resume.name;
@@ -274,6 +325,8 @@ export async function applyToJob(
       jobDescription: jobDescriptionResolved,
       filledFields: result.filled,
       answers: result.answers.map((a) => ({ label: a.label, value: a.value, draft: a.draft })),
+      companyReqId: identity.companyReqId,
+      duplicateWarning,
     };
 
     const doSubmit = async () => {
@@ -314,6 +367,7 @@ export async function applyToJob(
           code: job.id,
           identityKey: identity.identityKey,
           externalJobId: identity.externalJobId || undefined,
+          companyReqId: identity.companyReqId,
           ats: recordedAts,
           company: job.company,
           title: job.title,

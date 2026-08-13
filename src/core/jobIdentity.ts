@@ -1,4 +1,5 @@
 import { normalizeCompany, normalizeUrl, stableHash } from "../utils/normalize.js";
+import { reqIdFromUrl } from "./requisitionId.js";
 import type { AtsType, DedupeDecision, JobIdentity, JobListing, SheetRow } from "../types.js";
 
 export function detectAtsType(url: string): AtsType {
@@ -62,8 +63,21 @@ export function buildJobIdentity(job: JobListing): JobIdentity {
     normalizedApplyUrl,
     externalJobId,
     atsType,
+    // identityKey stays ATS-derived so it keeps matching records written before
+    // requisition ids existed. The requisition id is an ADDITIONAL match route in
+    // sameJob(), not a replacement — no migration of the ledger required.
     identityKey: `${normalizeCompany(job.company)}::${externalJobId}`,
+    companyReqId: reqIdFromUrl(normalizedApplyUrl),
   };
+}
+
+/**
+ * Attach a requisition id discovered after the posting was opened (most employers only
+ * print it in the page body). Returns a new identity — never mutates the original.
+ */
+export function withRequisitionId(identity: JobIdentity, companyReqId: string | undefined): JobIdentity {
+  if (!companyReqId || companyReqId === identity.companyReqId) return identity;
+  return { ...identity, companyReqId };
 }
 
 export function decideDedupe(identity: JobIdentity, rows: SheetRow[]): DedupeDecision {
