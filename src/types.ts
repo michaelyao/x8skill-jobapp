@@ -166,6 +166,13 @@ export interface ApplicationRecord {
   ats: AtsType;
   externalJobId?: string; // the ATS's id for the listing
   companyReqId?: string; // the employer's own requisition id — matches across ATS
+  /**
+   * The description text is NOT stored inline in the ledger — it lives in this file, next
+   * to the application, and is loaded on demand. Inline copies meant rewriting the entire
+   * ledger after every job (~81 GB of writes across a 2000-job run).
+   */
+  jobDescriptionFile?: string;
+  jobDescriptionChars?: number; // so a glance at the ledger shows whether text was captured
   status:
     | "prefilled_pending_submit"
     | "submitted"

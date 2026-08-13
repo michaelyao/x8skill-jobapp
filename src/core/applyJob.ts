@@ -10,6 +10,7 @@ import { addLearnedAnswer } from "../knowledge/answerStore.js";
 import {
   classifyJobMatch,
   findCrossAtsDuplicate,
+  readSavedJobDescription,
   recordApplication,
 } from "../knowledge/applications.js";
 import { upsertPending, updatePendingStatus } from "../knowledge/approvalQueue.js";
@@ -174,6 +175,16 @@ export async function applyToJob(
     }
 
     jobDescriptionResolved = await captureJobDescription(jobPage);
+    if (!jobDescriptionResolved) {
+      // Visited before? Reuse the text saved next to that application rather than
+      // proceeding with nothing — the LLM's drafted answers and the review email both
+      // depend on it, and re-scraping a page that already failed rarely helps.
+      const previously = await readSavedJobDescription(identity.identityKey);
+      if (previously) {
+        jobDescriptionResolved = previously;
+        console.log(`  job description: reused ${previously.length} chars saved locally`);
+      }
+    }
 
     // Identity upgrade: find the EMPLOYER's own requisition id, which most postings print
     // only in the page body. An ATS id identifies a listing; this identifies the job, so
@@ -201,7 +212,7 @@ export async function applyToJob(
 
     // Soft signal: same company + title with no shared identifier. Never decided here —
     // it is scored and surfaced in the review email so a human resolves it.
-    const verdict = classifyJobMatch(applications, identity, jobDescriptionResolved);
+    const verdict = await classifyJobMatch(applications, identity, jobDescriptionResolved);
     if (verdict.decision === "possibly_same_job" && verdict.matched) {
       duplicateWarning = {
         confidence: verdict.confidence,

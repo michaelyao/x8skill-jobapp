@@ -178,6 +178,29 @@ Identity is therefore layered, strongest first, and every layer is stored per jo
   01865635"); unlabelled digits collide with years, salaries and counts. Unlabelled matches
   require a letter prefix (`R`/`JR`/`REQ`). See `src/debug/reqIdCases.ts`.
 
+## Job descriptions — captured once, saved as text, compared from disk
+
+- **One copy on disk, next to the application**: `data/applications/<job>/job-description.txt`.
+  The ledger holds only `jobDescriptionFile` + `jobDescriptionChars`. Storing the text inline
+  meant rewriting the whole ledger after every job — measured at ~21 KB/record with real
+  descriptions, i.e. a 41 MB file and ~81 GB of writes across a 2000-job run, for text
+  already saved beside the application.
+- **Never re-open a browser to compare descriptions.** Comparison reads the saved files.
+  Candidates are pre-filtered by company + title first (max 3 records across the real
+  ledger), so only a couple of small files are read per job.
+- **A failed capture must never erase a saved description.** `recordApplication` keeps
+  whichever copy is longer, and `applyToJob` falls back to the saved text when a re-run
+  captures nothing, so the LLM and the review email still get context.
+- **Cost is not the comparison, it's the writes.** Measured with a real 8.7 KB description:
+  one new job against 2000 saved descriptions is ~21 ms (7.9 µs per comparison) — 1-vs-N,
+  never N-vs-N. All-pairs over 2000 would be ~16 s and is only ever needed for a one-off
+  backfill.
+- `page.evaluate()` treats a **string** argument as an expression, so a script must be an
+  invoked IIFE — `"(() => {…})()"`. Passing `"() => {…}"` evaluates to a function object
+  that is never called and silently returns `undefined`; that bug left 32 of the first 33
+  applications with no description at all, which also starved the LLM prompt behind every
+  drafted free-text answer.
+
 ## Playbook — diagnosing a field that won't fill
 
 Most failures here are *form-reading* failures, not logic failures. The log line tells you

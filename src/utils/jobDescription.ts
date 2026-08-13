@@ -45,8 +45,12 @@ export async function fetchGreenhouseJobDescription(page: Page, applyUrl: string
  */
 export async function captureJobDescription(page: Page): Promise<string> {
   try {
-    // String form so tsx/esbuild doesn't inject helpers unavailable in the page.
-    const text = (await page.evaluate(`() => {
+    // String form so tsx/esbuild doesn't inject helpers unavailable in the page — and it
+    // MUST be an invoked IIFE. page.evaluate() treats a string as an expression, so
+    // "() => {...}" only ever evaluated to a function object that was never called: this
+    // returned undefined for every posting, which is why 32 of the first 33 applications
+    // recorded no description at all.
+    const text = (await page.evaluate(`(() => {
       const selectors = ["[data-automation-id='jobPostingDescription']", "main", "article", "[role='main']", "#content", ".job"];
       for (const selector of selectors) {
         const el = document.querySelector(selector);
@@ -54,8 +58,8 @@ export async function captureJobDescription(page: Page): Promise<string> {
         if (value && value.length > 200) return value;
       }
       return (document.body && document.body.innerText || "").trim();
-    }`)) as string;
-    return text.replace(/\n{3,}/g, "\n\n").slice(0, 20000);
+    })()`)) as string;
+    return (text || "").replace(/\n{3,}/g, "\n\n").slice(0, 20000);
   } catch {
     return "";
   }

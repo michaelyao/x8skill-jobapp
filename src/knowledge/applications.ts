@@ -113,11 +113,11 @@ export function findCrossAtsDuplicate(
 }
 
 /** Classify this job against the ledger, reporting confidence instead of a bare boolean. */
-export function classifyJobMatch(
+export async function classifyJobMatch(
   records: ApplicationRecord[],
   identity: JobIdentity,
   jobDescription?: string,
-): JobMatchVerdict {
+): Promise<JobMatchVerdict> {
   // Hard identifiers. The requisition id is the strongest: it is the employer's own id,
   // so it holds even when the same job is posted through a different ATS.
   for (const record of records) {
@@ -137,7 +137,7 @@ export function classifyJobMatch(
   }
 
   // No hard identifier. Fall back to the soft signals, which can only ever raise a question.
-  const suspicions = findDuplicateSuspicions(records, identity, jobDescription);
+  const suspicions = await findDuplicateSuspicions(records, identity, jobDescription);
   if (suspicions.length === 0) {
     return { decision: "distinct", confidence: 0, basis: "no matching identifier or title", needsHumanConfirmation: false, suspicions: [] };
   }
@@ -169,11 +169,11 @@ export function classifyJobMatch(
  * description similarity are what separate them, and neither is reliable enough to
  * auto-skip an application on — a human decides.
  */
-export function findDuplicateSuspicions(
+export async function findDuplicateSuspicions(
   records: ApplicationRecord[],
   identity: JobIdentity,
   jobDescription?: string,
-): DuplicateSuspicion[] {
+): Promise<DuplicateSuspicion[]> {
   const out: DuplicateSuspicion[] = [];
   for (const record of records) {
     if (sameJob(record, identity)) continue; // already a hard match; not a "suspicion"
@@ -182,7 +182,11 @@ export function findDuplicateSuspicions(
     const sameLocation =
       !!record.location && !!identity.location &&
       record.location.trim().toLowerCase() === identity.location.trim().toLowerCase();
-    const overlap = jobDescription && record.jobDescription ? textOverlap(jobDescription, record.jobDescription) : undefined;
+    // Company + title already narrowed this to a handful of candidates (max 3 across the
+    // real ledger), so reading their saved text costs almost nothing — and it reads the
+    // LOCAL file, never the live page.
+    const other = record.jobDescription || (await readSavedJobDescription(record.id));
+    const overlap = jobDescription && other ? textOverlap(jobDescription, other) : undefined;
     const bits = ["same company + title"];
     if (sameLocation) bits.push("same location");
     else if (record.location || identity.location) bits.push(`different location (${record.location || "?"} vs ${identity.location || "?"})`);
@@ -209,6 +213,35 @@ function normalize(url: string): string {
   return url.trim().replace(/[?#].*$/, "").replace(/\/+$/, "").toLowerCase();
 }
 
+const JD_FILENAME = "job-description.txt";
+/** Header lines writeText prepends: "Company — Title", the URL, then a blank line. */
+const JD_HEADER_LINES = 3;
+
+/** Where this application's artifacts live. */
+export function applicationDir(id: string): string {
+  return path.join(APPLICATIONS_DIR, safeId(id));
+}
+
+/**
+ * Read the job description we saved when the posting was last visited. This is the ONLY
+ * source used for comparisons — nothing re-opens a browser to compare descriptions, and
+ * the ledger no longer carries the text inline.
+ */
+export async function readSavedJobDescription(id: string): Promise<string> {
+  try {
+    const raw = await fs.readFile(path.join(applicationDir(id), JD_FILENAME), "utf8");
+    const body = raw.split("\n").slice(JD_HEADER_LINES).join("\n").trim();
+    return body === "(no description captured)" ? "" : body;
+  } catch {
+    return ""; // never visited, or the file was removed
+  }
+}
+
+/** Ledger form of a record: metadata only, description left on disk. */
+function slimForLedger(record: ApplicationRecord): ApplicationRecord {
+  return { ...record, jobDescription: "" };
+}
+
 /**
  * Upsert an application into the ledger (keyed by id) and write a per-application
  * folder with the job description and the fields we filled. Returns the full,
@@ -230,16 +263,30 @@ export async function recordApplication(
     ? records.map((r) => (r.id === entry.id ? record : r))
     : [...records, record];
 
-  await writeJson(APPLICATIONS_JSON_PATH, next);
-
-  // Per-application artifacts: human-readable JD + machine-readable record.
+  // The job description lives in ONE place on disk: the per-application text file.
+  // Keeping a copy inline in applications.json meant the whole ledger was rewritten
+  // after every job — ~41 MB × 2000 jobs ≈ 81 GB of writes for a full run — for text
+  // that was already saved next to the application.
   const dir = path.join(APPLICATIONS_DIR, safeId(record.id));
   await fs.mkdir(dir, { recursive: true });
+
+  // Never let a failed capture erase a description we already visited and saved. A
+  // re-run whose scrape comes back short keeps the better text on disk.
+  const saved = await readSavedJobDescription(record.id);
+  const description = (record.jobDescription || "").length >= saved.length ? record.jobDescription || "" : saved;
+  record.jobDescription = description; // in-memory record keeps the text for this run
+  record.jobDescriptionChars = description.length;
+  record.jobDescriptionFile = path.relative(process.cwd(), path.join(dir, JD_FILENAME));
+
   await writeText(
-    path.join(dir, "job-description.txt"),
-    `${record.company} — ${record.title}\n${record.applyUrl}\n\n${record.jobDescription || "(no description captured)"}\n`,
+    path.join(dir, JD_FILENAME),
+    `${record.company} — ${record.title}\n${record.applyUrl}\n\n${description || "(no description captured)"}\n`,
   );
   await writeJson(path.join(dir, "application.json"), record);
+
+  // Persist the ledger WITHOUT the inline description; callers keep the full record in
+  // memory for this run, and later runs load the text lazily from the file above.
+  await writeJson(APPLICATIONS_JSON_PATH, next.map(slimForLedger));
 
   return next;
 }
