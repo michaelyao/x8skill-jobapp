@@ -7,9 +7,10 @@ import { LlmAgent } from "./agent/llmAgent.js";
 import { applyToJob, type ApplyDeps } from "./core/applyJob.js";
 import { buildJobIdentity } from "./core/jobIdentity.js";
 import { loadAnswers } from "./knowledge/answerStore.js";
-import { loadApplications } from "./knowledge/applications.js";
+import { hasSubmittedBefore, loadApplications } from "./knowledge/applications.js";
 import {
   listAwaiting,
+  loadPendingQueue,
   markReplyProcessed,
   updatePendingStatus,
   type PendingEntry,
@@ -53,17 +54,29 @@ function jobFromEntry(entry: PendingEntry): FilteredJob {
 const LOCK_PATH = path.join(DATA_DIR, ".approvals.lock");
 const LOCK_STALE_MS = 30 * 60 * 1000; // a run older than this is presumed dead
 
-/** Prevent overlapping poller runs (cron may fire while a prior run is active). */
+/**
+ * Prevent overlapping poller runs (cron may fire while a prior run is active).
+ * Creates the lock with "wx", which fails if it already exists — the check and the
+ * claim are one atomic operation, so two pollers starting together cannot both win
+ * (a stat-then-write would let both through and submit the same job twice).
+ */
 function acquireLock(): boolean {
-  try {
-    const stat = fs.statSync(LOCK_PATH);
-    if (Date.now() - stat.mtimeMs < LOCK_STALE_MS) return false; // fresh lock held
-  } catch {
-    /* no lock file — free to take it */
-  }
   fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(LOCK_PATH, String(process.pid));
-  return true;
+  try {
+    const fd = fs.openSync(LOCK_PATH, "wx");
+    fs.writeFileSync(fd, String(process.pid));
+    fs.closeSync(fd);
+    return true;
+  } catch {
+    try {
+      const stat = fs.statSync(LOCK_PATH);
+      if (Date.now() - stat.mtimeMs < LOCK_STALE_MS) return false; // a live run holds it
+      fs.writeFileSync(LOCK_PATH, String(process.pid)); // stale — the owner is dead
+      return true;
+    } catch {
+      return false; // cannot determine ownership: never risk a concurrent submit
+    }
+  }
 }
 function releaseLock(): void {
   try {
@@ -87,6 +100,16 @@ async function main(): Promise<void> {
 }
 
 async function runPoll(): Promise<void> {
+  // An entry left in "submitting" means a previous run clicked submit but never
+  // recorded the outcome. It is deliberately NOT retried — report it so it can be
+  // confirmed on the ATS by hand, then corrected with markSubmitted / requeue.
+  const stuck = (await loadPendingQueue()).filter((e) => e.status === "submitting");
+  for (const e of stuck) {
+    console.log(
+      `  ⚠️  [${e.code ?? e.key}] ${e.company} is stuck mid-submit (last touched ${e.updatedAt}). NOT retried — verify on the ATS: ${e.applyUrl}`,
+    );
+  }
+
   const awaiting = await listAwaiting();
   if (awaiting.length === 0) {
     console.log("Approval poller: nothing awaiting approval.");
@@ -144,9 +167,24 @@ async function runPoll(): Promise<void> {
   try {
     // Clean approvals → replay the approved answers exactly and submit.
     for (const { entry, reply } of toApprove) {
-      console.log(`Submitting approved [${entry.code ?? entry.key}] ${entry.company} - ${entry.title}`);
+      const label = entry.code ?? entry.key;
       const job = jobFromEntry(entry);
       const identity = buildJobIdentity(job);
+
+      // Cross-check the application ledger before touching a live form. The queue and
+      // the ledger are written separately, so if they ever disagree the ledger's
+      // "submitted" wins — re-submitting is not undoable, waiting is.
+      if (hasSubmittedBefore(applications, identity)) {
+        if (reply.messageId) await markReplyProcessed(entry.key, reply.messageId);
+        await updatePendingStatus(entry.key, "submitted", { lastError: "already submitted per local ledger" });
+        console.log(`  ⏭  [${label}] the ledger already records this as submitted — NOT submitting again.`);
+        continue;
+      }
+
+      console.log(`Submitting approved [${label}] ${entry.company} - ${entry.title}`);
+      // Write-ahead marker: if this process dies after the click but before the result
+      // is recorded, the entry stays "submitting" and no later poll will re-submit it.
+      await updatePendingStatus(entry.key, "submitting", { attempts: (entry.attempts ?? 0) + 1 });
       const outcome = await applyToJob(job, identity, answers, applications, deps, {
         mode: "submit",
         interactive: false,
@@ -160,19 +198,21 @@ async function runPoll(): Promise<void> {
       if (outcome.submitted) {
         if (reply.messageId) await markReplyProcessed(entry.key, reply.messageId);
         await updatePendingStatus(entry.key, "submitted", { attempts });
-        console.log(`  ✅ [${entry.code ?? entry.key}] submitted.`);
+        console.log(`  ✅ [${label}] submitted.`);
       } else if (outcome.alreadyApplied) {
         if (reply.messageId) await markReplyProcessed(entry.key, reply.messageId);
         await updatePendingStatus(entry.key, "submitted", { attempts, lastError: "already applied on site" });
-        console.log(`  ✅ [${entry.code ?? entry.key}] already applied on site — marking submitted.`);
+        console.log(`  ✅ [${label}] already applied on site — marking submitted.`);
       } else {
         const err = outcome.reachedReview
           ? "submit control not found"
           : `did not reach review on replay${outcome.blockedRequired?.length ? ` (blocked: ${outcome.blockedRequired.join("; ")})` : ""}`;
-        // Keep it awaiting so the next cron retries, up to a cap; then give up.
+        // Nothing was submitted, so it is safe to hand this back to the queue: reset to
+        // awaiting (clearing the write-ahead "submitting") and leave the reply
+        // unprocessed so the same APPROVE drives a retry, up to a cap.
         const status = attempts >= MAX_ATTEMPTS ? "error" : "awaiting_approval";
         await updatePendingStatus(entry.key, status, { attempts, lastError: err });
-        console.log(`  ⚠️ [${entry.code ?? entry.key}] not submitted (attempt ${attempts}/${MAX_ATTEMPTS}): ${err} — ${status === "error" ? "giving up" : "will retry"}.`);
+        console.log(`  ⚠️ [${label}] not submitted (attempt ${attempts}/${MAX_ATTEMPTS}): ${err} — ${status === "error" ? "giving up" : "will retry"}.`);
       }
     }
 

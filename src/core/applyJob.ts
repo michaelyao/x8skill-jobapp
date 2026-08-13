@@ -8,7 +8,7 @@ import { runApplication } from "../agent/turnLoop.js";
 import { ReplayAgent } from "../agent/replayAgent.js";
 import { addLearnedAnswer } from "../knowledge/answerStore.js";
 import { recordApplication } from "../knowledge/applications.js";
-import { upsertPending } from "../knowledge/approvalQueue.js";
+import { upsertPending, updatePendingStatus } from "../knowledge/approvalQueue.js";
 import { resolveResumeForJob } from "../knowledge/resume.js";
 import { postApplicationNote, type X8NoteConfig } from "../knowledge/x8note.js";
 import {
@@ -329,6 +329,13 @@ export async function applyToJob(
         });
         queued = true;
         console.log("  → queued for approval (poller will submit once you reply APPROVE).");
+      } else {
+        // Submitted during the fill run (terminal confirmation or grace-wait approval):
+        // close out any existing queue entry. Leaving it "awaiting_approval" is exactly
+        // how a job gets submitted TWICE — the cron poller would later find the same
+        // APPROVE reply still unprocessed and replay the submit against a live form.
+        // No-ops when the job was never queued.
+        await updatePendingStatus(job.id || identity.identityKey, "submitted");
       }
     }
 

@@ -113,6 +113,24 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   - **SKIP** → dropped.
   A lockfile + profile-busy guard keep the poller from colliding with an active fill run. Submit still
   happens ONLY on an emailed APPROVE (or the terminal grace-wait "submit").
+- **Never submit the same application twice.** The poller runs unattended every 15 min
+  (`install-cron.sh`), so every layer below must hold. Do not remove any of them:
+  1. `listAwaiting()` returns ONLY `awaiting_approval` — a `submitted` entry can never be picked up.
+  2. **A submit during a fill run closes out the queue entry.** `applyJob` marks the entry
+     `submitted` when a terminal confirmation or grace-wait approval submits. Skipping this is
+     how a terminal-approved job gets submitted again by cron, which finds the same APPROVE
+     reply still unprocessed.
+  3. **Write-ahead `submitting`.** Set immediately BEFORE the submit attempt. If the run dies
+     between the click and recording the result, the entry stays `submitting`, is excluded from
+     `listAwaiting()`, and is NEVER auto-retried — the poller reports it for manual confirmation
+     on the ATS. Only a genuine "nothing was submitted" outcome resets it to `awaiting_approval`
+     (which leaves the reply unprocessed, so the retry path still works).
+  4. **Ledger cross-check.** `hasSubmittedBefore` is consulted before touching a live form; if
+     the ledger and the queue disagree, `submitted` wins. Re-submitting is not undoable.
+  5. **Atomic lock.** `data/.approvals.lock` is created with `wx` so the check and the claim are
+     one operation — a stat-then-write race would let two pollers submit the same job.
+  6. `processedReplyIds` stops one reply from ever acting twice, and the driver's
+     `isAlreadyApplied` page check is the last line of defence.
 - **Approval matches the UNIQUE CODE ONLY — never company name.** `checkApprovalOnce` requires the
   job's 6-letter code to appear in the reply. Matching by company cross-contaminates roles at the
   same employer: an approval for one (e.g. Cybernetic Labs WVJGTG) would submit another (KDUGRO).

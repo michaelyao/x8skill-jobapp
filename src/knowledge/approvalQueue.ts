@@ -5,7 +5,15 @@ import type { FilledAnswer } from "../agent/types.js";
 
 const QUEUE_PATH = path.join(DATA_DIR, "pending-approvals.json");
 
-export type PendingStatus = "awaiting_approval" | "submitted" | "skipped" | "error";
+/**
+ * "submitting" is a write-ahead marker: set immediately BEFORE a submit is attempted
+ * and replaced by the real outcome after. If a run dies mid-submit, the entry is left
+ * in this state — and because listAwaiting() only returns "awaiting_approval", it is
+ * never picked up and re-submitted automatically. An entry still "submitting" on a
+ * later poll means "we clicked, but never recorded the result": a human must confirm
+ * on the ATS before it moves on. This is the guard against double submission.
+ */
+export type PendingStatus = "awaiting_approval" | "submitting" | "submitted" | "skipped" | "error";
 
 /**
  * One application that reached Review and is waiting for the user's emailed
