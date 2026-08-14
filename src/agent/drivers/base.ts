@@ -483,12 +483,11 @@ export abstract class GenericDriver implements AtsDriver {
       );
       if ((await marker.count().catch(() => 0)) > 0) return true;
     }
-    // react-select keeps the chosen label in the control's own text; a Workday prompt that
-    // committed clears its search input, so a non-empty input value alone proves nothing.
-    const aria = await control.getAttribute("aria-expanded").catch(() => null);
-    if (aria === "true") return false; // menu still open → nothing was taken
-    const own = ((await control.inputValue().catch(() => "")) || "").trim();
-    return own.length > 0 && !/^(select one|select\.\.\.|select|search)$/i.test(own);
+    // Deliberately NOT falling back to "the input has text in it". That is precisely the
+    // failure state on a Workday prompt: the box reads "LinkedIn" while Workday still
+    // reports the field required and empty, and accepting it produced a checkmark for a
+    // field that was never set. No selection marker → report failure and let the gate act.
+    return false;
   }
 
   async uploadDocuments(root: Root, resumePath: string): Promise<void> {
