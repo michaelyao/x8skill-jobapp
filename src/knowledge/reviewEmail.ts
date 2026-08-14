@@ -376,14 +376,24 @@ export async function checkApprovalOnce(
     for (const mid of [...msgIds].reverse()) {
       if (ignore.has(mid)) continue;
       const msg = await gog(["-a", gogAccount(), "gmail", "get", mid, "-j", "--format", "full"]);
-      let parsed: { body?: string; message?: { labelIds?: string[] } };
+      let parsed: {
+        body?: string;
+        message?: { labelIds?: string[]; payload?: { headers?: Array<{ name: string; value: string }> } };
+      };
       try {
         parsed = JSON.parse(msg.out);
       } catch {
         continue;
       }
-      // Skip our own outgoing copies (the review email we sent to ourselves).
-      if ((parsed.message?.labelIds ?? []).includes("SENT")) continue;
+      const labels = parsed.message?.labelIds ?? [];
+      const subject =
+        (parsed.message?.payload?.headers ?? []).find((h) => h.name.toLowerCase() === "subject")?.value ?? "";
+      // Skip the review email WE sent — not everything this account sent. The review goes
+      // to myao@ as well as nyao2@, so replying from myao@ produces a message labelled
+      // SENT; excluding SENT outright silently ignored those approvals. Our own outgoing
+      // copy is the one that is not a reply, so the subject is what separates them.
+      const isOurOutgoingCopy = labels.includes("SENT") && !/^\s*re:/i.test(subject);
+      if (isOurOutgoingCopy) continue;
       const body = String(parsed.body ?? "");
       // Require the UNIQUE code in the reply — never company (see SAFETY note above).
       if (!body.toLowerCase().includes(code)) continue;

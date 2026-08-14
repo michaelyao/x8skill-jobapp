@@ -131,6 +131,14 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
      one operation — a stat-then-write race would let two pollers submit the same job.
   6. `processedReplyIds` stops one reply from ever acting twice, and the driver's
      `isAlreadyApplied` page check is the last line of defence.
+- **An APPROVE sent from the monitored account counts.** The review email goes to both
+  `nyao2@` and `myao@studiox8.com`, so a reply written from `myao@` is labelled `SENT` by
+  Gmail. Skipping every `SENT` message — the old behaviour — silently ignored those
+  approvals. The message to skip is OUR OWN outgoing review copy, and the subject is what
+  separates them: our copy is not a reply (`Review & Approve: …`), a reply is (`Re: …`).
+  Never widen this back to "skip all SENT", and never drop the check entirely — our own
+  review body contains the word APPROVE in its instructions, so reading it as a reply
+  would auto-act on every job.
 - **Approval matches the UNIQUE CODE ONLY — never company name.** `checkApprovalOnce` requires the
   job's 6-letter code to appear in the reply. Matching by company cross-contaminates roles at the
   same employer: an approval for one (e.g. Cybernetic Labs WVJGTG) would submit another (KDUGRO).
