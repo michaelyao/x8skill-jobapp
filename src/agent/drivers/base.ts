@@ -151,11 +151,17 @@ export abstract class GenericDriver implements AtsDriver {
         else if (nameAttr) key = '[name="' + nameAttr + '"]';
         else { const dk = "f" + (i++); c.setAttribute("data-agent-key", dk); key = '[data-agent-key="' + dk + '"]'; }
         let label = labelFor(c).slice(0, 140);
-        const isReactSelect = c.getAttribute("role") === "combobox" || !!c.closest('[class*="select__"]');
+        // Workday "prompt" fields are multi-selects whose control is a BARE <input> — no
+        // role, no select__ class — so they were read as free text: no options captured, the
+        // agent answered from general knowledge ("LinkedIn" when the list only offers
+        // Advertising / Employee Referral / Job Board), and fill() typed it in. Workday then
+        // reported "0 items selected" and refused to advance.
+        const wdPrompt = !!c.closest('[data-automation-id="multiSelectContainer"], [data-automation-id="multiselectInputContainer"]');
+        const isReactSelect = c.getAttribute("role") === "combobox" || !!c.closest('[class*="select__"]') || wdPrompt;
         // A type-to-filter combobox (react-select input; Greenhouse's School /
         // Discipline typeahead) only renders an async SLICE of its real options when
         // opened, so whatever we capture is a sample — never a complete allowlist.
-        const searchable = isReactSelect && tag === "input" && !c.readOnly && !c.disabled;
+        const searchable = isReactSelect && tag === "input" && !c.readOnly && !c.disabled && !wdPrompt;
         let type = tag === "textarea" ? "textarea" : tag === "select" ? "single_select" : rawType === "checkbox" ? "checkbox" : "text";
         if (isReactSelect) type = "single_select";
         // Date fields (native date input, or a text picker with a date placeholder
@@ -197,6 +203,21 @@ export abstract class GenericDriver implements AtsDriver {
         if (isReactSelect) {
           const shell = c.closest('[class*="select__control"]') || c.closest('[class*="select__container"]') || c.closest('[class*="select-shell"]');
           filled = !!(shell && shell.querySelector('[class*="single-value"], [class*="multi-value"]'));
+          if (!filled) {
+            // Workday: a committed value is a selectedItem row inside the form field, and the
+            // prompt label reads "N items selected". Looking only for react-select's marker
+            // reported Country Phone Code as empty when it was in fact selected, so the gate
+            // blocked a field that was already answered.
+            var wdBox = c.closest('[data-automation-id^="formField"]');
+            if (wdBox) {
+              if (wdBox.querySelector('[data-automation-id="selectedItem"]')) filled = true;
+              else {
+                var pl = wdBox.querySelector('[data-automation-id="promptSelectionLabel"]');
+                var pm = pl && (pl.innerText || "").match(/(\\d+)\\s+items?\\s+selected/i);
+                if (pm && +pm[1] > 0) filled = true;
+              }
+            }
+          }
         } else if (tag === "select") {
           const sel = c.options[c.selectedIndex];
           const txt = sel ? (sel.textContent || "").trim() : "";
@@ -267,10 +288,16 @@ export abstract class GenericDriver implements AtsDriver {
       opts = await this.scopedOptions(root, keySelector, control);
     }
     const count = await opts.count().catch(() => 0);
+    const seen = new Set<string>();
     const list: string[] = [];
     for (let i = 0; i < count; i += 1) {
       const t = ((await opts.nth(i).innerText().catch(() => "")) || "").trim();
-      if (t && !/^select(\.\.\.| one)?$/i.test(t)) list.push(t);
+      // Workday renders the same option as menuItem, promptLeafNode AND promptOption, so the
+      // raw list arrives in triplicate.
+      if (t && !/^select(\.\.\.| one)?$/i.test(t) && !seen.has(t.toLowerCase())) {
+        seen.add(t.toLowerCase());
+        list.push(t);
+      }
     }
     await page.keyboard.press("Escape").catch(() => undefined);
     await page.waitForTimeout(120);
@@ -279,6 +306,12 @@ export abstract class GenericDriver implements AtsDriver {
 
   /** Options locator scoped to THIS control's own react-select container (not a neighbor's). */
   protected async scopedOptions(root: Root, keySelector: string, control: Locator): Promise<Locator> {
+    // Workday first, and ONLY its promptOption rows. Measured on a live prompt: clicking the
+    // role="option" node (data-automation-id="menuItem") does nothing — "0 items selected" —
+    // while clicking promptOption commits ("1 item selected"). menuItem precedes promptOption
+    // in DOM order, so a selector matching both always clicked the dead one.
+    const wdOpen = root.locator('[data-automation-id="activeListContainer"] [data-automation-id="promptOption"]');
+    if ((await wdOpen.count().catch(() => 0)) > 0) return wdOpen;
     const container = root
       .locator(keySelector)
       .locator('xpath=ancestor-or-self::*[contains(@class,"select__container") or contains(@class,"select-shell") or contains(@class,"select__control")][1]');
@@ -295,10 +328,12 @@ export abstract class GenericDriver implements AtsDriver {
       (await control.getAttribute("aria-owns").catch(() => null));
     if (menuId) return root.locator(`[id="${menuId}"] [role="option"], [id="${menuId}"] [class*="select__option"]`);
     // Workday renders its prompt list in a popup outside the field with no aria-controls.
-    // Only one prompt can be open at a time (Escape is pressed before opening), so an
-    // active popup belongs to this control.
-    const prompt = root.locator('[data-automation-id="promptOption"]');
-    if ((await prompt.count().catch(() => 0)) > 0) return prompt;
+    // Scope to the OPEN menu (activeListContainer): a bare global promptOption query also
+    // matched the neighbouring field's committed pills, which live in selectedItemList —
+    // that leaked "United States of America (+1)" from Country Phone Code into the options
+    // offered for "How Did You Hear About Us?".
+    const open = root.locator('[data-automation-id="activeListContainer"]').locator(OPTION_SELECTOR);
+    if ((await open.count().catch(() => 0)) > 0) return open;
     return inContainer;
   }
 
@@ -431,6 +466,10 @@ export abstract class GenericDriver implements AtsDriver {
       if (attempt === 1) {
         await control.press("ArrowDown").catch(() => undefined); // open without filtering
       } else {
+        // Clear first. Workday's prompt keeps whatever is in its searchBox between attempts,
+        // so a retry appended the text to itself ("Job BoardJob Board"), which matched no
+        // option at all and turned a recoverable miss into a permanent failure.
+        await control.fill("").catch(() => undefined);
         await control.pressSequentially(value.slice(0, 30), { delay: 20 }).catch(() => undefined);
       }
       // Async option lists (Greenhouse's school/discipline typeahead re-fetches per
@@ -457,12 +496,23 @@ export abstract class GenericDriver implements AtsDriver {
         await page.keyboard.press("Escape").catch(() => undefined);
         continue; // options present but no match on this render — retry
       }
-      await opts.nth(idx).click().catch(() => undefined);
+      // Click the option by its own TEXT, not by index: Workday nests several nodes per
+      // option, so an index taken from the text list can land on a sibling that does nothing.
+      const byText = opts.filter({ hasText: texts[idx] }).first();
+      const target = (await byText.count().catch(() => 0)) > 0 ? byText : opts.nth(idx);
+      await target.click().catch(() => undefined);
       await page.waitForTimeout(350);
       // Confirm a real SELECTION exists, not just text sitting in the search box. A Workday
       // prompt shows the typed string while still reporting the field empty, so a click
       // that failed to commit used to be reported as success — the field then never got
       // retried and never blocked.
+      if (await this.hasSelection(root, keySelector, control)) return true;
+      // Keyboard commit. Verified on a live Workday prompt: clicking the visible row can
+      // leave "0 items selected", while ArrowDown + Enter commits ("1 item selected").
+      await control.press("ArrowDown").catch(() => undefined);
+      await page.waitForTimeout(300);
+      await control.press("Enter").catch(() => undefined);
+      await page.waitForTimeout(600);
       if (await this.hasSelection(root, keySelector, control)) return true;
       await page.keyboard.press("Escape").catch(() => undefined);
     }

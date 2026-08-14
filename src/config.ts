@@ -4,7 +4,9 @@ import path from "node:path";
 export const ROOT_DIR = process.cwd();
 export const DATA_DIR = path.join(ROOT_DIR, "data");
 export const LOGS_DIR = path.join(ROOT_DIR, "logs");
-export const AUTH_DIR = path.join(ROOT_DIR, "playwright", ".auth");
+// Chrome is single-instance per user-data-dir, so a debug session cannot share the profile
+// with an active fill run. AUTH_DIR lets a throwaway profile be used instead.
+export const AUTH_DIR = process.env.AUTH_DIR || path.join(ROOT_DIR, "playwright", ".auth");
 
 export const SIMPLIFY_URL =
   "https://github.com/SimplifyJobs/Summer2026-Internships/blob/dev/README.md#-software-engineering-internship-roles";
