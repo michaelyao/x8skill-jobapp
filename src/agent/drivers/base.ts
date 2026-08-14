@@ -167,12 +167,30 @@ export abstract class GenericDriver implements AtsDriver {
         // A checkbox that is one of several in the same field group is part of a
         // "select all that apply" list — the GROUP may be required (pick >=1) but no
         // individual box is. Only a lone checkbox (consent) stays individually required.
-        if (rawType === "checkbox" && required) {
+        if (rawType === "checkbox") {
           const nm = c.getAttribute("name");
           const sameName = nm ? controls.filter((x) => x.getAttribute("name") === nm && (x.getAttribute("type") || "").toLowerCase() === "checkbox").length : 1;
           const grp = c.closest('[data-automation-id^="formField"], [role="group"], fieldset, [class*="fieldEntry" i], [class*="field-entry" i], [class*="application-question" i], [class*="application" i]');
           const grpCount = grp ? grp.querySelectorAll('input[type="checkbox"]').length : 1;
-          if (sameName > 1 || grpCount > 1) required = false;
+          const inGroup = sameName > 1 || grpCount > 1;
+          if (inGroup && required) required = false;
+          // Carry the GROUP's question into each option's label. Without it a
+          // "select all that apply" list arrives as bare options — "Computer Science",
+          // "Physics", "IMO or EGMO" — and nothing can tell what is being asked, so every
+          // one of them came back unanswered.
+          if (inGroup && grp) {
+            let q = "";
+            const lab = grp.querySelector('legend, [data-automation-id="richText"], label, [class*="label" i]');
+            if (lab && lab.innerText) q = lab.innerText;
+            if (!q) q = grp.innerText || "";
+            // Strip the option labels out of the container text so only the question is left.
+            for (const box of grp.querySelectorAll('input[type="checkbox"]')) {
+              const t = labelFor(box);
+              if (t) q = q.split(t).join(" ");
+            }
+            q = q.replace(/\\*/g, " ").replace(/\\brequired\\b/gi, " ").replace(/\\s+/g, " ").trim();
+            if (q && q.toLowerCase() !== label.toLowerCase()) label = (q.slice(0, 110) + " — " + label).slice(0, 190);
+          }
         }
         // Does the control currently hold a value? (used to gate advancing on empty required fields)
         let filled;
@@ -264,13 +282,23 @@ export abstract class GenericDriver implements AtsDriver {
     const container = root
       .locator(keySelector)
       .locator('xpath=ancestor-or-self::*[contains(@class,"select__container") or contains(@class,"select-shell") or contains(@class,"select__control")][1]');
-    const inContainer = container.locator('[class*="select__option"], [role="option"]');
+    // promptOption is Workday's option row; without it the only candidates found were
+    // react-select's, so a Workday prompt got the value TYPED into its search box and
+    // never selected — the box then read "LinkedIn" while Workday still called the field
+    // empty ("is required and must have a value").
+    const OPTION_SELECTOR = '[class*="select__option"], [role="option"], [data-automation-id="promptOption"]';
+    const inContainer = container.locator(OPTION_SELECTOR);
     if ((await inContainer.count().catch(() => 0)) > 0) return inContainer;
     // Menu portaled outside the container → scope by the id it controls (never global).
     const menuId =
       (await control.getAttribute("aria-controls").catch(() => null)) ||
       (await control.getAttribute("aria-owns").catch(() => null));
     if (menuId) return root.locator(`[id="${menuId}"] [role="option"], [id="${menuId}"] [class*="select__option"]`);
+    // Workday renders its prompt list in a popup outside the field with no aria-controls.
+    // Only one prompt can be open at a time (Escape is pressed before opening), so an
+    // active popup belongs to this control.
+    const prompt = root.locator('[data-automation-id="promptOption"]');
+    if ((await prompt.count().catch(() => 0)) > 0) return prompt;
     return inContainer;
   }
 
@@ -430,11 +458,37 @@ export abstract class GenericDriver implements AtsDriver {
         continue; // options present but no match on this render — retry
       }
       await opts.nth(idx).click().catch(() => undefined);
-      await page.waitForTimeout(250);
-      return true;
+      await page.waitForTimeout(350);
+      // Confirm a real SELECTION exists, not just text sitting in the search box. A Workday
+      // prompt shows the typed string while still reporting the field empty, so a click
+      // that failed to commit used to be reported as success — the field then never got
+      // retried and never blocked.
+      if (await this.hasSelection(root, keySelector, control)) return true;
+      await page.keyboard.press("Escape").catch(() => undefined);
     }
     await page.keyboard.press("Escape").catch(() => undefined);
     return false;
+  }
+
+  /** Does this combobox hold a committed value (a react-select value or a Workday pill)? */
+  protected async hasSelection(root: Root, keySelector: string | undefined, control: Locator): Promise<boolean> {
+    if (keySelector) {
+      const shell = root
+        .locator(keySelector)
+        .locator(
+          'xpath=ancestor-or-self::*[contains(@class,"select__control") or contains(@class,"select__container") or contains(@class,"select-shell") or @data-automation-id="formField" or starts-with(@data-automation-id,"formField")][1]',
+        );
+      const marker = shell.locator(
+        '[class*="single-value"], [class*="multi-value"], [data-automation-id="selectedItem"], [data-automation-id*="pill" i], [data-automation-id="selectedItemList"] li',
+      );
+      if ((await marker.count().catch(() => 0)) > 0) return true;
+    }
+    // react-select keeps the chosen label in the control's own text; a Workday prompt that
+    // committed clears its search input, so a non-empty input value alone proves nothing.
+    const aria = await control.getAttribute("aria-expanded").catch(() => null);
+    if (aria === "true") return false; // menu still open → nothing was taken
+    const own = ((await control.inputValue().catch(() => "")) || "").trim();
+    return own.length > 0 && !/^(select one|select\.\.\.|select|search)$/i.test(own);
   }
 
   async uploadDocuments(root: Root, resumePath: string): Promise<void> {
