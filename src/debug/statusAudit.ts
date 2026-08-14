@@ -42,6 +42,12 @@ const QUEUE_EQUIV: Record<string, string[]> = {
   prefilled_pending_submit: ["awaiting_approval", "submitting", "skipped", "error"],
 };
 
+// Only statuses that represent a real application get an x8note note (see
+// applyJob's record()). A dead posting or a skip has nothing worth storing, so the
+// absence of a note for those is correct — counting it as drift made the audit report 23
+// false mismatches the moment expired postings started being recorded.
+const NOTE_EXPECTED = new Set(["prefilled_pending_submit", "submitted", "already_applied_on_site"]);
+
 let mismatches = 0;
 console.log(`${"code".padEnd(8)} ${"ledger".padEnd(26)} ${"queue".padEnd(18)} x8note`);
 for (const r of records) {
@@ -49,7 +55,7 @@ for (const r of records) {
   const q = queueByCode.get(code);
   const stage = stageByCode.get(code);
   const queueOk = !q || (QUEUE_EQUIV[r.status] ?? []).includes(q);
-  const noteOk = !cfg || stage === r.status;
+  const noteOk = !cfg || !NOTE_EXPECTED.has(r.status) ? true : stage === r.status;
   if (!queueOk || !noteOk) mismatches += 1;
   const flag = !queueOk || !noteOk ? "  ← MISMATCH" : "";
   if (flag || process.env.VERBOSE === "1") {
@@ -57,7 +63,11 @@ for (const r of records) {
   }
 }
 const submitted = records.filter((r) => r.status === "submitted" || r.status === "already_applied_on_site").length;
+const expectNote = records.filter((r) => NOTE_EXPECTED.has(r.status)).length;
+const byStatus: Record<string, number> = {};
+for (const r of records) byStatus[r.status] = (byStatus[r.status] ?? 0) + 1;
 console.log(
   `\n${records.length} application(s): ${submitted} submitted, ${records.length - submitted} not.\n` +
-    `${stageByCode.size} carry an x8note stage label. Mismatches: ${mismatches}`,
+    `${JSON.stringify(byStatus)}\n` +
+    `${stageByCode.size} x8note stage label(s) for ${expectNote} record(s) that should have one. Mismatches: ${mismatches}`,
 );

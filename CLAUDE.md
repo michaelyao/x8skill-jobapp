@@ -2,13 +2,14 @@
 
 ## What this project does
 
-Playwright + TypeScript automation that applies to US software engineering internships from the
-[Simplify Summer 2026 list](https://github.com/SimplifyJobs/Summer2026-Internships).
+Playwright + TypeScript automation that applies to US software engineering internships
+(Summer 2027) from the trackers listed in `job_sites.txt` — Simplify, vanshb03, interndock.
 
-It reads fresh job listings (posted 0–1 days ago), checks a private Google Sheets tracker for
-already-applied jobs, then autofills Workday / Ashby / Greenhouse forms using local profile data
-and a learned Q&A store. **It never clicks the final submit button** — the user reviews and submits
-manually.
+It builds a job list, skips anything already engaged (see the identity rules below), then fills
+Workday / Greenhouse / Ashby / Lever forms from local profile data, the resume, and a learned
+Q&A store. It stops at the Review step and **emails the filled application for approval**.
+Submission happens ONLY on an emailed `APPROVE` (replayed exactly) or a typed terminal
+confirmation — never automatically.
 
 ## Running
 
@@ -153,126 +154,47 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   east coast → `4716 Ellsworth Ave Apt 703, Pittsburgh PA 15213`. Resume autofill usually picks
   the right one; override when wrong.
 
-## Job identity — what makes two listings "the same job"
+## Job identity, storage and failure modes
 
-An ATS posting id identifies a **listing**, not a **job**. The same opening is often posted
-through more than one channel, each with its own id, so ATS ids alone allow applying twice.
-Identity is therefore layered, strongest first, and every layer is stored per job in
-`data/applications.json` (history) and `data/pending-approvals.json` (in-flight state).
+The reasoning, the measurements and the per-bug history live in **[DESIGN.md](DESIGN.md)** —
+sections 4 (identity), 12 (storage) and 15 (failure modes). Keep that file in step with any
+change here; do not duplicate its narrative back into this file. The rules that must hold:
 
-| Signal | Field | Strength | Availability (measured on live postings) |
-|---|---|---|---|
-| Employer's requisition id | `companyReqId` | **Spans ATS** — the only signal that catches the same job on a second board | Workday nearly always (`R73630`, `R265684`); Greenhouse sometimes (`JR11987`); Lever/Ashby never |
-| ATS posting id | `externalJobId` | Exact listing | Greenhouse `/jobs/<n>`, Ashby/Lever UUID, else `sha1(url)` |
-| `company::externalJobId` | `identityKey` | Exact listing; the ledger's primary key | always |
-| Normalized apply URL | `normalizedApplyUrl` | Exact listing | always |
-| 6-letter code | `code` | Human/email handle, `fnv1a(url)`; the ONLY thing approval replies match | from the CSV build |
-| Company + title (+ location, description overlap) | — | **Suspicion only, never a decision** | always |
-
-- `sameJob()` matches on **any** hard route, so a job stays recognisable when one identifier
-  changes. The requisition id is an *additional* route — `identityKey` stays ATS-derived so
-  records written before requisition ids existed keep matching. No ledger migration.
-- **Requisition ids are usually only in the page body**, so identity is *upgraded* after the
-  posting opens (`withRequisitionId`), not fixed at CSV-read time. Anything downstream must
-  work when it is `undefined`.
-- `findCrossAtsDuplicate` hard-blocks the case ATS ids cannot see: a **different** listing,
-  already submitted, sharing this employer's requisition id.
+- **Identity is layered and redundant.** `sameJob()` matches on ANY of: company + requisition
+  id, `identityKey`, `externalJobId`, normalized apply URL. The requisition id is an
+  ADDITIONAL route, never a replacement — `identityKey` stays ATS-derived so old records keep
+  matching without migration.
+- **Requisition ids are discovered after the page opens** (`withRequisitionId`), because most
+  employers print them only in the body. Every caller must work when it is `undefined`.
+- **`findCrossAtsDuplicate` hard-blocks** a different listing, already submitted, sharing the
+  employer's requisition id.
 - **Never hard-block on company + title.** RTX posts two distinct "Software Engineer Intern"
-  requisitions (Burnsville MN and Largo FL); merging them would silently drop a real
-  application. `classifyJobMatch` returns `possibly_same_job` with a confidence score and
-  `needsHumanConfirmation`, and the review email asks the user — approving submits it as a
-  separate application, `SKIP` treats it as the same job.
-- Bare all-digit strings are only accepted as requisition ids when **labelled** ("Job ID:
-  01865635"); unlabelled digits collide with years, salaries and counts. Unlabelled matches
-  require a letter prefix (`R`/`JR`/`REQ`). See `src/debug/reqIdCases.ts`.
-
-## Storage — x8note is the single store for application content
-
-`data/applications.json` holds **operational state only** (identity, status, pointers);
-the x8note `jobdescription` notebook holds **content** (full job description, the answers
-exactly as emailed, resume info). There is deliberately no second copy of the content —
-two stores drift, and a duplicated JD store would need sync rules nobody can keep straight.
-
-- **One note per posting.** Write with `save-article` + `upsert: true` keyed on the apply
-  URL. `POST /api/notes` only skips a duplicate when title AND content are >90% similar,
-  and our bodies embed status + timestamp + answers — so every run created another note:
-  96 notes for 35 jobs, one posting had 18. Do not go back to `POST /api/notes`.
-- **A writer without content must never overwrite content.** `postApplicationNote` reads
-  the stored description back before writing whenever it has none. Without this, a re-sync
-  from the metadata-only ledger wiped 30 freshly captured descriptions in a single pass —
-  that regression is why the guard exists.
-- **Labels are the schema and are exact-match only** (no prefix/wildcard): `jobid_<CODE>`,
-  `req_<REQID>`, `source_<ats>`, `stage_<status>`, company, `internship`, `summer 2027`.
-  Mint them only in `noteLabels()`. `save-article` MERGES labels, which would accumulate
-  every stage a job was ever in, so labels are then `PUT` explicitly (PUT replaces).
-- **`by-label` for exact lookup, `search` for meaning.** by-label is immediately
-  consistent; search lags ~2 s and must never be used right after a write. Search is the
-  duplicate signal for Lever/Ashby, which publish no requisition id.
-- **Always pass `notebook`** — the token does not scope reads (it is a write boundary
-  only), so an unscoped read spans the whole server.
-- `save-article` returns `data.noteId`, not `data.id` like `POST /api/notes`.
-- Scripts: `resyncX8Notes.ts` (push ledger → notes), `backfillDescriptions.ts` (visit
-  postings read-only to capture missing descriptions), `pruneX8Notes.ts` (remove duplicate
-  notes, keeping the copy that actually has a description).
-- `page.evaluate()` treats a **string** argument as an expression, so a script must be an
-  invoked IIFE — `"(() => {…})()"`. Passing `"() => {…}"` returns `undefined` silently;
-  that bug left 32 of the first 33 applications with no description and starved the LLM
-  prompt behind every drafted free-text answer.
-
-## Playbook — diagnosing a field that won't fill
-
-Most failures here are *form-reading* failures, not logic failures. The log line tells you
-which kind, and each kind has a different cause. Read this table before touching code.
-
-| Log signature | What it means | Where to look |
-|---|---|---|
-| `✗ could not fill: X` | An answer existed; the driver's fill returned false | `fill()` / `fillReactSelect` in `drivers/base.ts` |
-| `answered N/N fields` but **no ✓ and no ✗** for X | The answer was discarded as `needsHuman` and silently skipped (non-interactive runs have no `onLearn`) | the guardrails in `llmAgent.ts` — usually the option-allowlist check |
-| `✓ X` then X is in `still empty — retry pass` | Fill claimed success but the re-read says empty; the widget rejected the value | `read()`'s `filled` detection, or a value the widget silently reverted |
-| Label is a raw `name` attribute (`cards[<uuid>][field5]`, `formField-…`) | Every `labelFor()` path missed; it fell through to `name` | `labelFor()` in the `READ_SCRIPT` |
-| `Could not parse <provider> response as JSON` | Usually the reply was **truncated**, not malformed — check whether it ends mid-object | `max_tokens` first, then `stripToJson` |
-
-**Method that works — never guess at DOM structure:**
-
-1. Get the posting URL from the queue or `logs/<run>/filtered-jobs.json`.
-2. Write a throwaway Playwright script (`_t_*.ts` — gitignored) that opens the live form and
-   dumps the ancestor chain, classes, `role`, `aria-*`, and label candidates for the field.
-3. Then verify with the **real driver**, not a reimplementation: `driver.read()` → check the
-   `FieldSpec`, `driver.fill()` → re-read and confirm `filled` plus the value the control shows.
-   A fix isn't done until the re-read agrees.
-4. Delete the scratch script; keep anything durable as a `src/debug/` script.
-
-**Async ("searchable") comboboxes — the big one.** A type-to-filter combobox serves only a
-*slice* of its options before you type: Greenhouse's School field returns 100 alphabetical
-entries starting at "Aalborg University". So:
-
-- A captured option list is a **sample, never an allowlist**. `FieldSpec.searchable` marks these;
-  the agent must not reject an answer for missing the sample.
-- Rejecting-by-sample is invisible: it becomes `needsHuman`, which non-interactive runs skip
-  silently, and the required-field gate then blocks the whole job on one field.
-- Never widen a guardrail without keeping a real gate. It stays safe here because
-  `fillReactSelect` can only ever **click an option that exists** — a wrong value fails loudly
-  instead of being typed in as free text.
-- Menus resolve asynchronously and render `Loading...` first. **Poll for options**; a fixed wait
-  is a race that reads zero options and looks like "the menu never opened".
-
-**Label reading.** Each ATS hangs the question text somewhere different, and the option-stripping
-step (which removes option text like "Yes"/"No" from a radio group's question) can erase a wrong
-guess down to an empty string, which then falls through to the raw `name`. Known containers:
-`[data-automation-id^="formField"]` (Workday), `[class*="fieldEntry"]` (Ashby),
-`[class*="application-question"]` (Lever — text is in a sibling `.application-label`, so the
-control's own container holds only the option list).
-
-**Retrying a job after a fix.** A blocked run is recorded `prefilled_pending_submit`, which
-`hasAppliedBefore` treats as engaged — so it is skipped forever and a form fix would only ever
-help *new* postings. Use `JOB_ID=<CODE> FORCE_RETRY=1` to re-open it. `FORCE_RETRY` cannot
-override a `submitted` / `already_applied_on_site` record (that would duplicate a real
-application) and does not override a tracker-sheet match.
-
-**LLM replies.** Field-heavy pages with drafted free-text blow past a small `max_tokens` and get
-cut mid-array; the parse error is the symptom, the token limit is the cause. `stripToJson`
-tolerates an unpaired ``` fence and repairs a truncated array by keeping the objects that arrived
-whole — and logs what it recovered, because a silent partial fill looks like a complete one.
+  requisitions. `classifyJobMatch` returns confidence + `needsHumanConfirmation`, and the
+  review email asks the user.
+- **Unlabelled digits are not requisition ids** — bare matches need an `R`/`JR`/`REQ` prefix;
+  labelled ones may be all digits. Cases: `src/debug/reqIdCases.ts`.
+- **`data/applications.json` is operational state; x8note holds the content.** One store per
+  job, no second copy of the description.
+- **One x8note note per posting**: `save-article` + `upsert: true` keyed on the apply URL, with
+  the job CODE in the title (title-only matching merged two different Palantir roles). Never
+  go back to `POST /api/notes`.
+- **A writer without content must never overwrite content** — `postApplicationNote` reads the
+  stored description back when it has none. This exists because a re-sync wiped 30 captured
+  descriptions.
+- **Labels are the schema, exact-match only**: `jobid_`, `req_`, `source_`, `stage_`, company.
+  Mint them only in `noteLabels()`; `PUT` them after `save-article` (which merges).
+- **Always pass `notebook` on reads** — the token is a write boundary, not a read boundary.
+- **`by-label` for exact lookup, `search` for meaning** (search lags ~2 s; never search
+  straight after a write).
+- **Nothing reports success without verification.** A fill returns true only when a re-read /
+  selection marker confirms it. Returning true after a click is what made a required Workday
+  field show a checkmark while staying empty for 18 turns.
+- **Labels must carry their question.** Lever cards, checkbox groups and bare `Month`/`Year`
+  sub-fields each broke because the option lost its question and the agent answered blind.
+- **`page.evaluate()` takes a STRING and it must be an invoked IIFE** — `"(() => {…})()"`.
+  A non-invoked arrow silently returns `undefined`.
+- **Keep the two outcome lists separate**: `unknown` (never attempted) vs `failedToFill`
+  (attempted, refused). Both are logged; neither is silent.
 
 ## Workday-specific implementation notes
 
@@ -306,19 +228,8 @@ job posting page
   → My Information page (form filling begins)
 ```
 
-## Milestones (from DESIGN.md)
+## Reference
 
-- [x] M1 — TypeScript + Playwright setup, profile parsing, Simplify ingestion
-- [x] M2 — Tracker sheet reading, job identity, dedupe
-- [x] M3 — Base adapter, Workday with auth + learning mode
-  - [x] Full auth flow mapped (Create Account → Sign In link → Sign In modal)
-  - [x] `click_filter` data-automation-id for Sign In button
-  - [x] `pageFooterNextButton` for Save and Continue
-  - [x] `pageFooterSubmitButton` for final Submit detection
-  - [x] Resume upload in auth flow (after sign-in)
-  - [x] Combobox handling for "How Did You Hear About Us?"
-  - [x] Gemini API key wired in `.env` (for future semantic matching)
-  - [ ] Address override when autofill picks wrong coast
-  - [ ] Full end-to-end test against a fresh Workday job
-- [ ] M4 — Ashby + Greenhouse polished, screenshots on error
-- [ ] M5 — Matching refinement, prep for skill packaging
+- **[DESIGN.md](DESIGN.md)** — how the system works and why each guard exists (read this
+  before changing form reading, identity, approval or storage).
+- **[README.md](README.md)** — quick start and flags.

@@ -1,33 +1,64 @@
-# Job Application Automation
+# x8skill-jobapp
 
-This project uses Playwright + TypeScript to:
+Playwright + TypeScript automation that applies to US software-engineering internships
+(Summer 2027) on **Workday, Greenhouse, Ashby and Lever**.
 
-- read the Simplify Summer 2026 Software Engineering Internship Roles table
-- keep only `0d` and `1d` postings
-- keep US and remote-compatible roles
-- compare against the private Google Sheet in a real browser session
-- skip jobs that already appear applied
-- open new jobs and prefill supported ATS pages
-- stop before final submit
+It builds a job list from the trackers in `job_sites.txt`, skips anything already applied to,
+opens each posting, fills the form from your profile / resume / curated Q&A — and then **stops
+at the Review step and emails you the filled application**.
+
+**Nothing is submitted without your approval.** You reply `APPROVE` (or `SKIP`, or describe a
+change) and a background poller submits the exact answers you approved.
 
 ## Run
 
-Install dependencies:
-
 ```bash
 npm install
+npm start                 # fill jobs, email each one for approval
+npm run approvals         # process replies: submit approved, re-fill changes
+npm run check             # type-check
 ```
 
-Start the app:
+Useful flags — the full table is in [DESIGN.md](DESIGN.md#14-operating-it):
 
 ```bash
-npm start
+NO_SUBMIT=1 npm start                    # never submit during the fill, only email + queue
+JOB_ID=DVDFRR FORCE_RETRY=1 npm start    # re-run one job by its code
+SKIP_REFRESH=1 npm start                 # reuse the job list instead of rebuilding
+MAX_JOBS=3 npm start                     # small test run
 ```
 
-## Notes
+Install the 15-minute approval poller so approvals submit on their own:
 
-- The Google Sheet is private, so the script uses headed Playwright and your live Google login session.
-- Playwright uses a dedicated Chrome profile at `playwright/.auth/` instead of your normal everyday Chrome profile.
-- Learned answers are written to `data/answers.json` and `Q&A.md`.
-- The script must never click a final submit button.
-- The first run may require browser login and selector tuning on live ATS pages.
+```bash
+./install-cron.sh
+```
+
+## How approval works
+
+1. A run fills a job, reaches Review, and emails you the answers plus a screenshot.
+2. You reply **APPROVE** / **SKIP** / or describe a change ("use the Pittsburgh address").
+3. The poller replays the approved answers exactly and submits — so what is submitted is what
+   you approved. Replies are matched to a job by its 6-letter code only.
+
+If a job can't be completed, you get a debug email with the screenshot and the reason instead.
+
+## Where things live
+
+| Path | What |
+|---|---|
+| `data/applications.json` | operational state: identity, status, per-run notes |
+| `data/pending-approvals.json` | in-flight approval queue |
+| `data/answers.json`, `Q&A.txt` | learned + seed answers (adding one fixes every future form) |
+| x8note `jobdescription` notebook | the application content: full job description, answers as emailed |
+| `logs/<run>/` | per-run summary and screenshots |
+
+## Local files you need (not committed)
+
+`.env` (credentials + API keys), `.x8note.config`, your resume PDF, `unofficial_academic_record.pdf`,
+`Q&A.txt`, and a resume markdown/text file. See [DESIGN.md](DESIGN.md) for the details.
+
+## Docs
+
+- **[DESIGN.md](DESIGN.md)** — how the system actually works, and why each guard exists.
+- **CLAUDE.md** — the invariants and per-ATS quirks not to break.
