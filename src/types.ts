@@ -173,6 +173,18 @@ export interface ApplicationRecord {
    */
   jobDescriptionFile?: string;
   jobDescriptionChars?: number; // so a glance at the ledger shows whether text was captured
+  /** Structured answers, exactly what the review email showed. Kept in the per-application
+   *  record and the x8note note; stripped from the ledger to keep it metadata-only.
+   *  Structural rather than importing FilledAnswer — agent/types.ts imports this file. */
+  answers?: Array<{ label: string; value: string; draft?: boolean }>;
+  duplicateWarning?: {
+    confidence: number;
+    basis: string;
+    otherCode?: string;
+    otherUrl?: string;
+    otherStatus?: string;
+  };
+  x8noteId?: string; // the note this application is stored in
   status:
     | "prefilled_pending_submit"
     | "submitted"

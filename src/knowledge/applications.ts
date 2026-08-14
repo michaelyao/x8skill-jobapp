@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
-import path from "node:path";
-import { APPLICATIONS_DIR, APPLICATIONS_JSON_PATH } from "../config.js";
-import { writeJson, writeText } from "../utils/log.js";
+import { APPLICATIONS_JSON_PATH } from "../config.js";
+import { writeJson } from "../utils/log.js";
 import { normalizeCompany } from "../utils/normalize.js";
 import type { ApplicationRecord, JobIdentity } from "../types.js";
 
@@ -11,10 +10,6 @@ const ENGAGED_STATUSES = new Set<ApplicationRecord["status"]>([
   "prefilled_pending_submit",
   "already_applied_on_site",
 ]);
-
-function safeId(id: string): string {
-  return id.replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 80) || "job";
-}
 
 /** Load the persistent application ledger (empty array if it doesn't exist yet). */
 export async function loadApplications(): Promise<ApplicationRecord[]> {
@@ -51,17 +46,6 @@ function sameJob(record: ApplicationRecord, identity: JobIdentity): boolean {
     (!!identity.externalJobId && record.externalJobId === identity.externalJobId) ||
     (!!identity.normalizedApplyUrl && normalize(record.applyUrl) === identity.normalizedApplyUrl)
   );
-}
-
-/** Word-overlap ratio (Jaccard) of two texts — 0..1. Cheap and dependency-free. */
-function textOverlap(a: string, b: string): number {
-  const words = (s: string) => new Set(s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 3));
-  const wa = words(a);
-  const wb = words(b);
-  if (wa.size === 0 || wb.size === 0) return 0;
-  let shared = 0;
-  for (const w of wa) if (wb.has(w)) shared += 1;
-  return shared / (wa.size + wb.size - shared);
 }
 
 const normalizeTitle = (t: string): string =>
@@ -113,11 +97,11 @@ export function findCrossAtsDuplicate(
 }
 
 /** Classify this job against the ledger, reporting confidence instead of a bare boolean. */
-export async function classifyJobMatch(
+export function classifyJobMatch(
   records: ApplicationRecord[],
   identity: JobIdentity,
-  jobDescription?: string,
-): Promise<JobMatchVerdict> {
+  semanticScoreFor?: (record: ApplicationRecord) => number | undefined,
+): JobMatchVerdict {
   // Hard identifiers. The requisition id is the strongest: it is the employer's own id,
   // so it holds even when the same job is posted through a different ATS.
   for (const record of records) {
@@ -137,7 +121,7 @@ export async function classifyJobMatch(
   }
 
   // No hard identifier. Fall back to the soft signals, which can only ever raise a question.
-  const suspicions = await findDuplicateSuspicions(records, identity, jobDescription);
+  const suspicions = findDuplicateSuspicions(records, identity, semanticScoreFor);
   if (suspicions.length === 0) {
     return { decision: "distinct", confidence: 0, basis: "no matching identifier or title", needsHumanConfirmation: false, suspicions: [] };
   }
@@ -169,11 +153,11 @@ export async function classifyJobMatch(
  * description similarity are what separate them, and neither is reliable enough to
  * auto-skip an application on — a human decides.
  */
-export async function findDuplicateSuspicions(
+export function findDuplicateSuspicions(
   records: ApplicationRecord[],
   identity: JobIdentity,
-  jobDescription?: string,
-): Promise<DuplicateSuspicion[]> {
+  semanticScoreFor?: (record: ApplicationRecord) => number | undefined,
+): DuplicateSuspicion[] {
   const out: DuplicateSuspicion[] = [];
   for (const record of records) {
     if (sameJob(record, identity)) continue; // already a hard match; not a "suspicion"
@@ -182,15 +166,13 @@ export async function findDuplicateSuspicions(
     const sameLocation =
       !!record.location && !!identity.location &&
       record.location.trim().toLowerCase() === identity.location.trim().toLowerCase();
-    // Company + title already narrowed this to a handful of candidates (max 3 across the
-    // real ledger), so reading their saved text costs almost nothing — and it reads the
-    // LOCAL file, never the live page.
-    const other = record.jobDescription || (await readSavedJobDescription(record.id));
-    const overlap = jobDescription && other ? textOverlap(jobDescription, other) : undefined;
+    // Corroboration comes from x8note's semantic search (supplied by the caller), not from
+    // comparing stored text here — the notebook is the only place descriptions live.
+    const overlap = semanticScoreFor?.(record);
     const bits = ["same company + title"];
     if (sameLocation) bits.push("same location");
     else if (record.location || identity.location) bits.push(`different location (${record.location || "?"} vs ${identity.location || "?"})`);
-    if (overlap !== undefined) bits.push(`description overlap ${(overlap * 100).toFixed(0)}%`);
+    if (overlap !== undefined) bits.push(`semantic similarity ${overlap.toFixed(2)}`);
     out.push({ record, reason: bits.join(", "), descriptionOverlap: overlap });
   }
   return out;
@@ -213,33 +195,12 @@ function normalize(url: string): string {
   return url.trim().replace(/[?#].*$/, "").replace(/\/+$/, "").toLowerCase();
 }
 
-const JD_FILENAME = "job-description.txt";
-/** Header lines writeText prepends: "Company — Title", the URL, then a blank line. */
-const JD_HEADER_LINES = 3;
-
-/** Where this application's artifacts live. */
-export function applicationDir(id: string): string {
-  return path.join(APPLICATIONS_DIR, safeId(id));
-}
-
 /**
- * Read the job description we saved when the posting was last visited. This is the ONLY
- * source used for comparisons — nothing re-opens a browser to compare descriptions, and
- * the ledger no longer carries the text inline.
+ * Ledger form of a record: operational state only. The description, the answers and the
+ * resume text live in the x8note note — one store, so nothing can drift.
  */
-export async function readSavedJobDescription(id: string): Promise<string> {
-  try {
-    const raw = await fs.readFile(path.join(applicationDir(id), JD_FILENAME), "utf8");
-    const body = raw.split("\n").slice(JD_HEADER_LINES).join("\n").trim();
-    return body === "(no description captured)" ? "" : body;
-  } catch {
-    return ""; // never visited, or the file was removed
-  }
-}
-
-/** Ledger form of a record: metadata only, description left on disk. */
 function slimForLedger(record: ApplicationRecord): ApplicationRecord {
-  return { ...record, jobDescription: "" };
+  return { ...record, jobDescription: "", answers: undefined, resumeContent: undefined };
 }
 
 /**
@@ -263,29 +224,12 @@ export async function recordApplication(
     ? records.map((r) => (r.id === entry.id ? record : r))
     : [...records, record];
 
-  // The job description lives in ONE place on disk: the per-application text file.
-  // Keeping a copy inline in applications.json meant the whole ledger was rewritten
-  // after every job — ~41 MB × 2000 jobs ≈ 81 GB of writes for a full run — for text
-  // that was already saved next to the application.
-  const dir = path.join(APPLICATIONS_DIR, safeId(record.id));
-  await fs.mkdir(dir, { recursive: true });
+  record.jobDescriptionChars = (record.jobDescription || "").length;
 
-  // Never let a failed capture erase a description we already visited and saved. A
-  // re-run whose scrape comes back short keeps the better text on disk.
-  const saved = await readSavedJobDescription(record.id);
-  const description = (record.jobDescription || "").length >= saved.length ? record.jobDescription || "" : saved;
-  record.jobDescription = description; // in-memory record keeps the text for this run
-  record.jobDescriptionChars = description.length;
-  record.jobDescriptionFile = path.relative(process.cwd(), path.join(dir, JD_FILENAME));
-
-  await writeText(
-    path.join(dir, JD_FILENAME),
-    `${record.company} — ${record.title}\n${record.applyUrl}\n\n${description || "(no description captured)"}\n`,
-  );
-  await writeJson(path.join(dir, "application.json"), record);
-
-  // Persist the ledger WITHOUT the inline description; callers keep the full record in
-  // memory for this run, and later runs load the text lazily from the file above.
+  // The ledger is LOCAL OPERATIONAL STATE only — identity, status, pointers. The content
+  // (description, answers, resume) lives in exactly one place, the x8note note, so there
+  // is no second copy to drift out of sync. Keeping the text here also meant rewriting
+  // the whole ledger after every job: ~21 KB/record × 2000 jobs ≈ 81 GB of writes.
   await writeJson(APPLICATIONS_JSON_PATH, next.map(slimForLedger));
 
   return next;

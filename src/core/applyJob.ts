@@ -10,12 +10,16 @@ import { addLearnedAnswer } from "../knowledge/answerStore.js";
 import {
   classifyJobMatch,
   findCrossAtsDuplicate,
-  readSavedJobDescription,
   recordApplication,
 } from "../knowledge/applications.js";
 import { upsertPending, updatePendingStatus } from "../knowledge/approvalQueue.js";
 import { resolveResumeForJob } from "../knowledge/resume.js";
-import { postApplicationNote, type X8NoteConfig } from "../knowledge/x8note.js";
+import {
+  fetchStoredJobDescription,
+  findSimilarPostings,
+  postApplicationNote,
+  type X8NoteConfig,
+} from "../knowledge/x8note.js";
 import {
   checkApprovalOnce,
   reviewTo,
@@ -122,7 +126,13 @@ export async function applyToJob(
 
   const record = async (
     status: ApplicationRecord["status"],
-    extra: { filledFields?: string[]; unknownQuestions?: string[]; notes?: string[]; resume?: Awaited<ReturnType<typeof resolveResumeForJob>> } = {},
+    extra: {
+      filledFields?: string[];
+      unknownQuestions?: string[];
+      notes?: string[];
+      resume?: Awaited<ReturnType<typeof resolveResumeForJob>>;
+      answers?: FilledAnswer[];
+    } = {},
   ) => {
     applications = await recordApplication(applications, {
       id: identity.identityKey,
@@ -144,10 +154,20 @@ export async function applyToJob(
       resumeStandard: extra.resume?.isStandard ?? resumeStandard,
       resumeContent: extra.resume && !extra.resume.isStandard ? extra.resume.contentText : undefined,
       notes: [...notes, ...(extra.notes ?? [])],
+      // The note carries the same material the review email shows.
+      answers: extra.answers?.map((a) => ({ label: a.label, value: a.value, draft: a.draft })),
+      duplicateWarning,
     });
     if (x8note && (status === "prefilled_pending_submit" || status === "already_applied_on_site" || status === "submitted")) {
       const saved = applications.find((entry) => entry.id === identity.identityKey);
-      if (saved) console.log(`  x8note: ${await postApplicationNote(x8note, saved)}`);
+      if (saved) {
+        // x8note is the only store for the description and answers, so a failed write
+        // loses them until the posting is visited again — retry once before giving up.
+        let result = await postApplicationNote(x8note, saved);
+        if (!result.noteId) result = await postApplicationNote(x8note, saved);
+        if (result.noteId) saved.x8noteId = result.noteId;
+        console.log(`  x8note: ${result.status}${result.noteId ? "" : " — content NOT stored, re-run this job to retry"}`);
+      }
     }
   };
 
@@ -175,14 +195,15 @@ export async function applyToJob(
     }
 
     jobDescriptionResolved = await captureJobDescription(jobPage);
-    if (!jobDescriptionResolved) {
-      // Visited before? Reuse the text saved next to that application rather than
-      // proceeding with nothing — the LLM's drafted answers and the review email both
-      // depend on it, and re-scraping a page that already failed rarely helps.
-      const previously = await readSavedJobDescription(identity.identityKey);
+    if (!jobDescriptionResolved && x8note && job.id) {
+      // Visited before? x8note is the single store, so read the description back from
+      // this job's note rather than proceeding with nothing — the LLM's drafted answers
+      // and the review email both depend on it, and re-scraping a page that already
+      // failed rarely helps. by-label is immediately consistent, unlike search.
+      const previously = await fetchStoredJobDescription(x8note, job.id);
       if (previously) {
         jobDescriptionResolved = previously;
-        console.log(`  job description: reused ${previously.length} chars saved locally`);
+        console.log(`  job description: reused ${previously.length} chars stored in x8note`);
       }
     }
 
@@ -212,7 +233,24 @@ export async function applyToJob(
 
     // Soft signal: same company + title with no shared identifier. Never decided here —
     // it is scored and surfaced in the review email so a human resolves it.
-    const verdict = await classifyJobMatch(applications, identity, jobDescriptionResolved);
+    // Ask x8note which stored postings are semantically close. This is the corroborating
+    // signal for Lever and Ashby, which publish no requisition id — without it those ATS
+    // have nothing but company+title to go on. Failures return [] and simply weaken the
+    // signal; a duplicate check that cannot run must never block an application.
+    let semanticHits: Awaited<ReturnType<typeof findSimilarPostings>> = [];
+    if (x8note && !identity.companyReqId) {
+      semanticHits = await findSimilarPostings(x8note, `${job.title} ${job.company} ${jobDescriptionResolved.slice(0, 400)}`, {
+        excludeLabel: job.id ? `jobid_${job.id}` : undefined,
+      });
+      if (semanticHits.length) {
+        console.log(`  x8note: ${semanticHits.length} semantically similar posting(s), top ${semanticHits[0].score.toFixed(2)} "${semanticHits[0].title}"`);
+      }
+    }
+    // Map a hit back to the ledger record it belongs to, via its jobid_<CODE> label.
+    const scoreForRecord = (r: ApplicationRecord): number | undefined =>
+      semanticHits.find((hit) => r.code && hit.keywords.some((k) => k.toLowerCase() === `jobid_${r.code}`.toLowerCase()))?.score;
+
+    const verdict = classifyJobMatch(applications, identity, scoreForRecord);
     if (verdict.decision === "possibly_same_job" && verdict.matched) {
       duplicateWarning = {
         confidence: verdict.confidence,
@@ -307,6 +345,7 @@ export async function applyToJob(
       await record("prefilled_pending_submit", {
         filledFields: result.filled,
         unknownQuestions: result.unknown,
+        answers: result.answers,
         resume,
         notes: [
           `turns: ${result.turns}`,
@@ -408,6 +447,7 @@ export async function applyToJob(
     await record(status, {
       filledFields: result.filled,
       unknownQuestions: result.unknown,
+      answers: result.answers,
       resume,
       notes: [
         `turns: ${result.turns}`,

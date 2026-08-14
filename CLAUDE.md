@@ -178,28 +178,38 @@ Identity is therefore layered, strongest first, and every layer is stored per jo
   01865635"); unlabelled digits collide with years, salaries and counts. Unlabelled matches
   require a letter prefix (`R`/`JR`/`REQ`). See `src/debug/reqIdCases.ts`.
 
-## Job descriptions — captured once, saved as text, compared from disk
+## Storage — x8note is the single store for application content
 
-- **One copy on disk, next to the application**: `data/applications/<job>/job-description.txt`.
-  The ledger holds only `jobDescriptionFile` + `jobDescriptionChars`. Storing the text inline
-  meant rewriting the whole ledger after every job — measured at ~21 KB/record with real
-  descriptions, i.e. a 41 MB file and ~81 GB of writes across a 2000-job run, for text
-  already saved beside the application.
-- **Never re-open a browser to compare descriptions.** Comparison reads the saved files.
-  Candidates are pre-filtered by company + title first (max 3 records across the real
-  ledger), so only a couple of small files are read per job.
-- **A failed capture must never erase a saved description.** `recordApplication` keeps
-  whichever copy is longer, and `applyToJob` falls back to the saved text when a re-run
-  captures nothing, so the LLM and the review email still get context.
-- **Cost is not the comparison, it's the writes.** Measured with a real 8.7 KB description:
-  one new job against 2000 saved descriptions is ~21 ms (7.9 µs per comparison) — 1-vs-N,
-  never N-vs-N. All-pairs over 2000 would be ~16 s and is only ever needed for a one-off
-  backfill.
+`data/applications.json` holds **operational state only** (identity, status, pointers);
+the x8note `jobdescription` notebook holds **content** (full job description, the answers
+exactly as emailed, resume info). There is deliberately no second copy of the content —
+two stores drift, and a duplicated JD store would need sync rules nobody can keep straight.
+
+- **One note per posting.** Write with `save-article` + `upsert: true` keyed on the apply
+  URL. `POST /api/notes` only skips a duplicate when title AND content are >90% similar,
+  and our bodies embed status + timestamp + answers — so every run created another note:
+  96 notes for 35 jobs, one posting had 18. Do not go back to `POST /api/notes`.
+- **A writer without content must never overwrite content.** `postApplicationNote` reads
+  the stored description back before writing whenever it has none. Without this, a re-sync
+  from the metadata-only ledger wiped 30 freshly captured descriptions in a single pass —
+  that regression is why the guard exists.
+- **Labels are the schema and are exact-match only** (no prefix/wildcard): `jobid_<CODE>`,
+  `req_<REQID>`, `source_<ats>`, `stage_<status>`, company, `internship`, `summer 2027`.
+  Mint them only in `noteLabels()`. `save-article` MERGES labels, which would accumulate
+  every stage a job was ever in, so labels are then `PUT` explicitly (PUT replaces).
+- **`by-label` for exact lookup, `search` for meaning.** by-label is immediately
+  consistent; search lags ~2 s and must never be used right after a write. Search is the
+  duplicate signal for Lever/Ashby, which publish no requisition id.
+- **Always pass `notebook`** — the token does not scope reads (it is a write boundary
+  only), so an unscoped read spans the whole server.
+- `save-article` returns `data.noteId`, not `data.id` like `POST /api/notes`.
+- Scripts: `resyncX8Notes.ts` (push ledger → notes), `backfillDescriptions.ts` (visit
+  postings read-only to capture missing descriptions), `pruneX8Notes.ts` (remove duplicate
+  notes, keeping the copy that actually has a description).
 - `page.evaluate()` treats a **string** argument as an expression, so a script must be an
-  invoked IIFE — `"(() => {…})()"`. Passing `"() => {…}"` evaluates to a function object
-  that is never called and silently returns `undefined`; that bug left 32 of the first 33
-  applications with no description at all, which also starved the LLM prompt behind every
-  drafted free-text answer.
+  invoked IIFE — `"(() => {…})()"`. Passing `"() => {…}"` returns `undefined` silently;
+  that bug left 32 of the first 33 applications with no description and starved the LLM
+  prompt behind every drafted free-text answer.
 
 ## Playbook — diagnosing a field that won't fill
 
