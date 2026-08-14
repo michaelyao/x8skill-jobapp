@@ -99,6 +99,7 @@ export abstract class GenericDriver implements AtsDriver {
       const controls = [...document.querySelectorAll("input:not([type=hidden]):not([type=file]), textarea, select")].filter(isVisible);
       const out = [];
       let i = 0;
+      let gi = 0;
       const seenRadio = {};
       for (const c of controls) {
         // Skip known bot-trap/honeypot fields (must stay empty).
@@ -173,10 +174,32 @@ export abstract class GenericDriver implements AtsDriver {
         // A checkbox that is one of several in the same field group is part of a
         // "select all that apply" list — the GROUP may be required (pick >=1) but no
         // individual box is. Only a lone checkbox (consent) stays individually required.
+        var groupKey = "";
+        var groupLabel = "";
+        var groupRequired = false;
         if (rawType === "checkbox") {
           const nm = c.getAttribute("name");
           const sameName = nm ? controls.filter((x) => x.getAttribute("name") === nm && (x.getAttribute("type") || "").toLowerCase() === "checkbox").length : 1;
-          const grp = c.closest('[data-automation-id^="formField"], [role="group"], fieldset, [class*="fieldEntry" i], [class*="field-entry" i], [class*="application-question" i], [class*="application" i]');
+          // Find the nearest ancestor that actually holds more than one checkbox, rather
+          // than trusting a fixed list of container classes. Workday puts each box of its
+          // "Please check one of the boxes below" group in its OWN formField wrapper, so the
+          // fixed-list lookup saw a group of one: the question was never attached, the agent
+          // treated each box as an independent yes/no and said No to all three, and the
+          // required "pick exactly one" ended up with nothing picked.
+          let grp = c.closest('[data-automation-id^="formField"], [role="group"], fieldset, [class*="fieldEntry" i], [class*="field-entry" i], [class*="application-question" i], [class*="application" i]');
+          if (!grp || grp.querySelectorAll('input[type="checkbox"]').length < 2) {
+            let up = c.parentElement;
+            for (let lvl = 0; lvl < 8 && up; lvl += 1) {
+              // Only accept a container holding NOTHING BUT checkboxes — that is an option
+              // list. Climbing on any ancestor with two checkboxes swept up unrelated fields
+              // from elsewhere on the page and mislabelled them as one question's options.
+              const others = up.querySelectorAll('input:not([type=checkbox]):not([type=hidden]), select, textarea').length;
+              const boxes = up.querySelectorAll('input[type="checkbox"]').length;
+              if (boxes >= 2 && boxes <= 15 && others === 0) { grp = up; break; }
+              if (others > 0) break; // left this question's subtree — stop climbing
+              up = up.parentElement;
+            }
+          }
           const grpCount = grp ? grp.querySelectorAll('input[type="checkbox"]').length : 1;
           const inGroup = sameName > 1 || grpCount > 1;
           if (inGroup && required) required = false;
@@ -194,8 +217,16 @@ export abstract class GenericDriver implements AtsDriver {
               const t = labelFor(box);
               if (t) q = q.split(t).join(" ");
             }
+            var rawQ = q;
             q = q.replace(/\\*/g, " ").replace(/\\brequired\\b/gi, " ").replace(/\\s+/g, " ").trim();
             if (q && q.toLowerCase() !== label.toLowerCase()) label = (q.slice(0, 110) + " — " + label).slice(0, 190);
+            // The GROUP can be required even though no single box is ("Please check one of
+            // the boxes below:*"). Carry that so the gate can insist on at least one tick
+            // instead of accepting three untouched boxes as answered.
+            if (!grp.getAttribute("data-agent-group")) grp.setAttribute("data-agent-group", "g" + (gi++));
+            groupKey = grp.getAttribute("data-agent-group");
+            groupLabel = q.slice(0, 110);
+            groupRequired = /\\*/.test(rawQ) || /\\brequired\\b/i.test(rawQ);
           }
         }
         // Does the control currently hold a value? (used to gate advancing on empty required fields)
@@ -227,7 +258,7 @@ export abstract class GenericDriver implements AtsDriver {
         } else {
           filled = (c.value || "").trim() !== "";
         }
-        out.push({ key, label, type, options, required, widget: isReactSelect ? "react-select" : "", searchable, filled });
+        out.push({ key, label, type, options, required, widget: isReactSelect ? "react-select" : "", searchable, filled, groupKey, groupLabel, groupRequired });
       }
       return out;
     })()`;
@@ -240,6 +271,9 @@ export abstract class GenericDriver implements AtsDriver {
       widget: string;
       searchable?: boolean;
       filled: boolean;
+      groupKey?: string;
+      groupLabel?: string;
+      groupRequired?: boolean;
     }>;
 
     const fields: FieldSpec[] = rawFields
@@ -254,6 +288,9 @@ export abstract class GenericDriver implements AtsDriver {
         widget: f.widget === "react-select" ? "react-select" : undefined,
         searchable: f.searchable || undefined,
         filled: f.filled,
+        groupKey: f.groupKey || undefined,
+        groupLabel: f.groupLabel || undefined,
+        groupRequired: f.groupRequired || undefined,
       }));
 
     // For custom dropdowns (react-select etc.), capture the real options so the

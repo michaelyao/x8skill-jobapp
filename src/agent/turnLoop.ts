@@ -57,6 +57,25 @@ export async function runApplication(
    * combobox reporting success without verifying) escaped the gate: it was neither
    * retried nor blocked, and the loop span every remaining turn on the same page.
    */
+  /**
+   * Required checkbox GROUPS with nothing ticked. "Please check one of the boxes below:*"
+   * marks the question required while no individual box is, so per-field checks accept
+   * three untouched boxes as answered — which is how a Workday Self Identify page reported
+   * every option filled and then refused to advance. Reported as one entry per group.
+   */
+  const missingGroups = (fields: FieldSpec[]): FieldSpec[] => {
+    const groups = new Map<string, FieldSpec[]>();
+    for (const f of fields) if (f.groupKey && f.groupRequired) groups.set(f.groupKey, [...(groups.get(f.groupKey) ?? []), f]);
+    const out: FieldSpec[] = [];
+    for (const [, members] of groups) {
+      if (members.some((m) => m.filled === true)) continue;
+      const label = members[0].groupLabel || members[0].label;
+      if (filledLabels.has(`group:${label}`)) continue; // we ticked one this run
+      out.push({ ...members[0], label, required: true, filled: false });
+    }
+    return out;
+  };
+
   const stillMissing = (fields: FieldSpec[]): FieldSpec[] =>
     fields.filter((f) => {
       if (!f.required || f.filled !== false) return false;
@@ -115,6 +134,10 @@ export async function runApplication(
       if (ok) {
         filled.push(`${field.label}: ${answer.value}${answer.draft ? " (DRAFT)" : ""}`);
         filledLabels.add(field.label);
+        // A ticked box satisfies its whole group; an untouched one ("No") does not.
+        if (field.groupKey && field.groupLabel && /^(yes|true|checked)/i.test(answer.value.trim())) {
+          filledLabels.add(`group:${field.groupLabel}`);
+        }
         answersByLabel.set(field.label, { label: field.label, type: field.type, value: answer.value, widget: field.widget, draft: answer.draft });
         if (answer.draft) drafts.push(field.label);
         console.log(`    ✓ ${field.label}${answer.draft ? " (DRAFT — review)" : ""}`);
@@ -148,13 +171,13 @@ export async function runApplication(
     // stragglers — a field can miss the first pass (options captured late, an
     // option that didn't match, a value that failed to stick).
     let after = await driver.read(root);
-    let missing = stillMissing(after.fields);
+    let missing = [...stillMissing(after.fields), ...missingGroups(after.fields)];
     for (let attempt = 0; attempt < 2 && missing.length > 0; attempt += 1) {
       console.log(`  ${missing.length} required field(s) still empty — retry pass ${attempt + 1}: ${missing.map((f) => f.label).join(" | ")}`);
       await fillFields(missing, attempt === 1); // enable learning on the final pass
       await page.waitForTimeout(500);
       after = await driver.read(root);
-      missing = stillMissing(after.fields);
+      missing = [...stillMissing(after.fields), ...missingGroups(after.fields)];
     }
 
     if (after.submitReady) {

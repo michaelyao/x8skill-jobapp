@@ -12,6 +12,12 @@ export interface FieldSpec {
   sensitive?: boolean; // legal/demographic/compensation — guarded
   widget?: "react-select" | "workday-select"; // custom combobox (click-open-pick), not a native control
   searchable?: boolean; // type-to-filter combobox → `options` is an async SAMPLE, not an allowlist
+  /** Checkbox groups: every option of one question shares a groupKey. The GROUP can be
+   *  required ("Please check one of the boxes below:*") while no individual box is, so the
+   *  gate has to check the group, not the boxes. */
+  groupKey?: string;
+  groupLabel?: string;
+  groupRequired?: boolean;
   filled?: boolean; // does the control currently hold a value? (undefined = couldn't tell)
 }
 
