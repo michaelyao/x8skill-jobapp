@@ -4,11 +4,17 @@ import { writeJson } from "../utils/log.js";
 import { normalizeCompany } from "../utils/normalize.js";
 import type { ApplicationRecord, JobIdentity } from "../types.js";
 
-// Statuses that mean "we've already engaged this job" — used for cross-run dedupe
-// so a later run doesn't re-open a job we already prefilled.
+// Statuses that mean "we've already engaged this job" — used for cross-run dedupe so a
+// later run doesn't re-open a job we already prefilled.
+//
+// "submitted" belongs here: without it a completed application was re-opened and re-filled
+// on the next sweep, emailing a fresh review for work already finished. Nothing could
+// double-submit (the poller cross-checks the ledger), but it wasted a slot per job and put
+// misleading approve-me mail in the inbox.
 const ENGAGED_STATUSES = new Set<ApplicationRecord["status"]>([
   "prefilled_pending_submit",
   "already_applied_on_site",
+  "submitted",
 ]);
 
 /** Load the persistent application ledger (empty array if it doesn't exist yet). */
@@ -214,6 +220,12 @@ export async function recordApplication(
 ): Promise<ApplicationRecord[]> {
   const now = new Date().toISOString();
   const existing = records.find((record) => record.id === entry.id);
+  // An application that actually went in never becomes un-submitted. Re-opening a job
+  // records the fill outcome, which downgraded "submitted" to "prefilled_pending_submit"
+  // and lost the fact that it was already done — caught by statusAudit on a live sweep.
+  if (existing && SUBMITTED_STATUSES.has(existing.status) && !SUBMITTED_STATUSES.has(entry.status)) {
+    entry = { ...entry, status: existing.status };
+  }
   const record: ApplicationRecord = {
     ...entry,
     firstSeenAt: existing?.firstSeenAt ?? now,
