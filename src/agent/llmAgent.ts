@@ -116,9 +116,10 @@ function buildPrompt(snapshot: PageSnapshot, ctx: AgentContext): { system: strin
     "- OPEN-ENDED free-text fields (e.g. 'Why do you want to work here?', 'Tell us about yourself', cover letter, 'What interests you'): DRAFT a concise, specific, first-person answer (~80-150 words) grounded in the candidate's real resume experience and the job description. Set draft=true, needsHuman=false, confidence around 0.7. Do not fabricate experience — only use what's in the resume.",
     "- SENSITIVE fields (work authorization, sponsorship, citizenship, demographics, disability, veteran, criminal history, salary, DOB, SSN): answer ONLY if the curated Q&A or profile clearly provides it; otherwise set needsHuman=true and leave value empty. Never guess these.",
     "- For factual fields (name, email, phone, school, dates): use the provided data. If it is genuinely absent, set needsHuman=true and leave value empty — do NOT guess.",
+    '- If an OPTIONAL field asks for something the candidate simply does not have (a phone extension, a middle name, a second address, a portfolio they lack), the correct answer is EMPTY: set "blank": true with an empty value and needsHuman=false. Do not set needsHuman for these — nothing needs to be asked, there is genuinely nothing to enter.',
     "- For 'have you previously worked for X / are you a former employee of X / do you work for X' questions: answer Yes ONLY if X (or its parent/subsidiary) appears in the candidate's Employment history below; otherwise No. Do NOT rely on any generic curated answer for this.",
     "- Do NOT answer or reference any submit button.",
-    'Respond with ONLY a JSON array: [{"key":"...","value":"...","confidence":0.0-1.0,"needsHuman":false,"draft":false,"reasoning":"short"}]. One object per field, using the exact keys given.',
+    'Respond with ONLY a JSON array: [{"key":"...","value":"...","confidence":0.0-1.0,"needsHuman":false,"draft":false,"blank":false,"reasoning":"short"}]. One object per field, using the exact keys given.',
   ].join("\n");
 
   const fieldsForLlm = snapshot.fields.map((f) => ({
@@ -242,6 +243,7 @@ export class LlmAgent implements Agent {
       let needsHuman = Boolean(item.needsHuman);
       let confidence = typeof item.confidence === "number" ? item.confidence : 0;
       const draft = Boolean(item.draft);
+      const blank = Boolean(item.blank);
 
       // Guardrail: sensitive/EEO fields (work-auth, sponsorship, gender, race,
       // veteran, disability, salary) are answered ONLY from the curated Q&A /
@@ -298,7 +300,7 @@ export class LlmAgent implements Agent {
           value = match;
         }
       }
-      answers.push({ key: field.key, value, confidence, needsHuman, draft, source: "llm", reasoning: item.reasoning });
+      answers.push({ key: field.key, value, confidence, needsHuman, draft, blank, source: "llm", reasoning: item.reasoning });
     }
     console.log(`  [agent] ${provider} answered ${answers.length}/${snapshot.fields.length} fields.`);
     return answers;

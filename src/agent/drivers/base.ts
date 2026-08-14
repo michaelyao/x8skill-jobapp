@@ -290,11 +290,23 @@ export abstract class GenericDriver implements AtsDriver {
     }
     if (field.type === "date") return this.fillDate(locator, value);
     if (field.type === "checkbox") {
-      if (/^(yes|true|i agree|agree|i acknowledge)/i.test(value.trim())) {
-        await locator.check().catch(() => undefined);
-        return true;
+      // "No" on a checkbox is a REAL answer, satisfied by leaving the box clear — it is not
+      // a failure to fill. Returning false for it put every Workday "I have a preferred
+      // name" into the review email's "no answer available" list, even though the answer
+      // (No) was known all along, and left the field looking unresolved.
+      const wantChecked = /^(yes|true|y|i agree|agree|i acknowledge|check)/i.test(value.trim());
+      const current = await locator.isChecked().catch(() => false);
+      if (current !== wantChecked) {
+        if (wantChecked) await locator.check({ force: true }).catch(() => undefined);
+        else await locator.uncheck({ force: true }).catch(() => undefined);
+        // Custom checkboxes hide the real input and only update on a click of the visible
+        // control, same as the radio handling below.
+        if ((await locator.isChecked().catch(() => current)) !== wantChecked) {
+          const id = await locator.getAttribute("id").catch(() => null);
+          if (id) await root.locator(`label[for="${id.replace(/"/g, '\\"')}"]`).first().click().catch(() => undefined);
+        }
       }
-      return false;
+      return (await locator.isChecked().catch(() => current)) === wantChecked;
     }
     if (field.type === "radio") {
       // Scope to actual radio inputs — a name-based group can also match a hidden

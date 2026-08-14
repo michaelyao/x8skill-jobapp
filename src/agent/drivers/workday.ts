@@ -515,8 +515,22 @@ export class WorkdayDriver extends GenericDriver {
       await page.keyboard?.press("Escape").catch(() => undefined);
       return false;
     }
+    const chosen = texts[idx];
     await options.nth(idx).click().catch(() => undefined);
-    await page.waitForTimeout?.(300);
+    await page.waitForTimeout?.(400);
+
+    // VERIFY. Returning true straight after the click was the reason "How Did You Hear
+    // About Us?*" showed a checkmark on every turn while staying empty: the click can
+    // silently miss (menu re-render, option scrolled out), and the turn loop trusted our
+    // claim, so the field was never retried and never blocked — one job span all 18 turns
+    // on the same page and reached no review.
+    const shown = ((await btn.innerText().catch(() => "")) || "").replace(/\s+/g, " ").trim();
+    const isPlaceholder = !shown || /^(select one|select\.\.\.|select|search|choose)$/i.test(shown);
+    if (isPlaceholder) {
+      await page.keyboard?.press("Escape").catch(() => undefined);
+      console.log(`[workday-select] "${field.label.slice(0, 40)}" did not take "${chosen}" — still showing "${shown}"`);
+      return false;
+    }
     return true;
   }
 

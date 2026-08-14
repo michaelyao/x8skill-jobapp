@@ -46,11 +46,28 @@ export async function runApplication(
   const unknown: string[] = [];
   let blockedRequired: string[] = [];
   const answers = () => [...answersByLabel.values()];
-  // A required field blocks only if it's confirmed empty AND we didn't successfully
-  // fill it. Workday's custom widgets (comboboxes, radios) often report filled=false
-  // on re-read even when set, so trust our own successful fill over the flaky signal.
+  // How many times a field we believe we filled has come back empty on re-read.
+  const disputed = new Map<string, number>();
+  const TRUST_LIMIT = 2;
+  /**
+   * A required field blocks if it reads empty and we have no credible claim to have
+   * filled it. Workday's custom widgets do sometimes report filled=false when they are
+   * in fact set, so a successful fill is trusted — but only for TRUST_LIMIT rounds.
+   * Trusting it forever is how a field that silently never took a value (a Workday
+   * combobox reporting success without verifying) escaped the gate: it was neither
+   * retried nor blocked, and the loop span every remaining turn on the same page.
+   */
   const stillMissing = (fields: FieldSpec[]): FieldSpec[] =>
-    fields.filter((f) => f.required && f.filled === false && !filledLabels.has(f.label));
+    fields.filter((f) => {
+      if (!f.required || f.filled !== false) return false;
+      if (!filledLabels.has(f.label)) return true;
+      const seen = (disputed.get(f.label) ?? 0) + 1;
+      disputed.set(f.label, seen);
+      if (seen <= TRUST_LIMIT) return false; // give the widget the benefit of the doubt
+      filledLabels.delete(f.label); // claim not credible any more — retry it, then block
+      console.log(`    ⚠ "${f.label.slice(0, 50)}" reported filled but reads empty ${seen}× — no longer trusting that`);
+      return true;
+    });
 
   await driver.openApplication(page);
   let root = await driver.resolveRoot(page);
@@ -67,6 +84,14 @@ export async function runApplication(
     const byKey = new Map(answers.map((a) => [a.key, a]));
     for (const field of fields) {
       const answer = byKey.get(field.key);
+      // A known blank is an ANSWER: an optional field the candidate genuinely has nothing
+      // for (a phone extension they do not have). Leave it empty and move on — listing it
+      // under "no answer available" implied we failed to work out something we knew.
+      if (answer?.blank && !answer.value && !field.required) {
+        filledLabels.add(field.label);
+        console.log(`    ✓ ${field.label} (left empty — nothing to enter)`);
+        continue;
+      }
       if (!answer || answer.needsHuman || !answer.value) {
         if (learn && opts.interactive && opts.onLearn) {
           const human = await opts.onLearn(field);
@@ -102,7 +127,9 @@ export async function runApplication(
 
   let turns = 0;
   let reachedReview = false;
-  let noProgress = 0; // consecutive turns that read no fields and filled nothing
+  let noProgress = 0; // consecutive turns that showed the same page and filled nothing new
+  const everFilled = new Set<string>(); // labels filled at any point, for progress detection
+  let lastSignature = "";
   for (let t = 0; t < maxTurns; t += 1) {
     turns = t + 1;
     root = await driver.resolveRoot(page); // re-resolve — the frame can change between pages
@@ -150,17 +177,23 @@ export async function runApplication(
       break;
     }
 
-    // Guard against a stuck step: if no NEW fields got filled this turn, we're
-    // not making progress (validation gate, unmatchable option, etc.).
-    if (filled.length === filledBefore) {
+    // Guard against a stuck step. Compare the LABELS filled and the page's field set, not
+    // the cumulative count: re-filling the same fields each turn kept `filled.length`
+    // rising, so this never fired and one job burned all 18 turns on an unchanged page.
+    void filledBefore;
+    const newLabels = [...filledLabels].filter((l) => !everFilled.has(l));
+    for (const l of newLabels) everFilled.add(l);
+    const signature = after.fields.map((f) => f.label).sort().join("|");
+    if (newLabels.length === 0 && signature === lastSignature) {
       noProgress += 1;
-      if (noProgress >= 3) {
-        console.log("  No new fields filled for 3 turns (stuck) — stopping.");
+      if (noProgress >= 2) {
+        console.log(`  Same ${after.fields.length} field(s) and nothing new filled for ${noProgress + 1} turns (stuck) — stopping.`);
         break;
       }
     } else {
       noProgress = 0;
     }
+    lastSignature = signature;
 
     if (!(await driver.next(root))) {
       console.log("  No next control — stopping.");

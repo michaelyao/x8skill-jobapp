@@ -42,6 +42,10 @@ export interface FieldAnswer {
   source: "llm" | "curated" | "profile";
   needsHuman?: boolean; // true → route to learning mode instead of auto-filling
   draft?: boolean; // true → LLM-drafted free-text (fill it, but flag for review)
+  /** true → the correct answer IS empty (an optional field the candidate has nothing for,
+   *  e.g. a phone extension they do not have). Distinct from needsHuman: it is answered,
+   *  and must not be reported as "no answer available". */
+  blank?: boolean;
   reasoning?: string;
 }
 
