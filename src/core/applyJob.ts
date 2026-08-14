@@ -339,6 +339,7 @@ export async function applyToJob(
             applyUrl: job.applyUrl,
             blockedRequired: result.blockedRequired,
             unknown: result.unknown,
+            failedToFill: result.failedToFill,
             filledCount: result.filled.length,
             turns: result.turns,
           },

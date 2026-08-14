@@ -199,7 +199,8 @@ export interface BlockedData {
   code?: string;
   applyUrl: string;
   blockedRequired: string[]; // required fields still empty (why we stopped)
-  unknown: string[]; // fields no answer could be produced for
+  unknown: string[]; // no answer available — never attempted
+  failedToFill?: string[]; // attempted, but the widget would not accept the value
   filledCount: number;
   turns: number;
 }
@@ -224,7 +225,8 @@ function blockedBody(d: BlockedData): string {
       ? `Required fields still empty (why it stopped):\n${d.blockedRequired.map((f) => `  - ${f}`).join("\n")}`
       : "Stopped before reaching the Review step.",
     "",
-    d.unknown.length ? `No answer available for:\n${d.unknown.map((f) => `  - ${f}`).join("\n")}` : "",
+    d.unknown.length ? `No answer available — never attempted, needs you:\n${d.unknown.map((f) => `  - ${f}`).join("\n")}` : "",
+    d.failedToFill?.length ? `Tried, but the field would not take the value:\n${d.failedToFill.map((f) => `  - ${f}`).join("\n")}` : "",
     "",
     "The attached screenshot is the full page as the run left it.",
   ]
@@ -262,7 +264,12 @@ function blockedBodyHtml(d: BlockedData): string {
     }
     ${
       d.unknown.length
-        ? `<h3 style="font-size:15px;border-bottom:2px solid #e5e7eb;padding-bottom:6px;margin:22px 0 8px 0">No answer available for</h3>${list(d.unknown)}`
+        ? `<h3 style="font-size:15px;border-bottom:2px solid #e5e7eb;padding-bottom:6px;margin:22px 0 8px 0">No answer available — never attempted, needs you</h3>${list(d.unknown)}`
+        : ""
+    }
+    ${
+      d.failedToFill?.length
+        ? `<h3 style="font-size:15px;border-bottom:2px solid #e5e7eb;padding-bottom:6px;margin:22px 0 8px 0">Tried, but the field would not take the value</h3>${list(d.failedToFill)}`
         : ""
     }
   </div>`;

@@ -15,7 +15,8 @@ export interface TurnLoopResult {
   filled: string[]; // "label: value" that were filled
   answers: FilledAnswer[]; // structured record of every filled field (for replay on submit)
   drafts: string[]; // labels of LLM-drafted free-text (review before submit)
-  unknown: string[]; // labels left for a human (sensitive/ungrounded)
+  unknown: string[]; // labels with NO answer available — never attempted, needs a human
+  failedToFill: string[]; // labels we DID attempt but the widget would not take the value
   reachedReview: boolean; // the Submit control was reached (we never click it)
   alreadyApplied: boolean;
   blockedRequired: string[]; // required fields still empty that blocked advancing
@@ -44,6 +45,7 @@ export async function runApplication(
   const filledLabels = new Set<string>(); // fields we successfully filled this run
   const drafts: string[] = [];
   const unknown: string[] = [];
+  const failedToFill: string[] = [];
   let blockedRequired: string[] = [];
   const answers = () => [...answersByLabel.values()];
   // How many times a field we believe we filled has come back empty on re-read.
@@ -91,7 +93,7 @@ export async function runApplication(
   await driver.openApplication(page);
   let root = await driver.resolveRoot(page);
   if (await driver.isAlreadyApplied(root)) {
-    return { turns: 0, filled, answers: answers(), drafts, unknown, reachedReview: false, alreadyApplied: true, blockedRequired };
+    return { turns: 0, filled, answers: answers(), drafts, unknown, failedToFill, reachedReview: false, alreadyApplied: true, blockedRequired };
   }
 
   // Fill one set of fields, recording results. Returns nothing — the caller
@@ -128,6 +130,10 @@ export async function runApplication(
           }
         }
         if (!unknown.includes(field.label)) unknown.push(field.label);
+        // Log it. This branch used to skip silently, which is why a field could vanish from
+        // the run with no trace and leave "no answer available" impossible to interpret —
+        // was it tried, or never reached?
+        console.log(`    – no answer available, left for you: ${field.label.slice(0, 70)}`);
         continue;
       }
       const ok = await driver.fill(root, field, answer).catch(() => false);
@@ -142,8 +148,8 @@ export async function runApplication(
         if (answer.draft) drafts.push(field.label);
         console.log(`    ✓ ${field.label}${answer.draft ? " (DRAFT — review)" : ""}`);
       } else {
-        if (!unknown.includes(field.label)) unknown.push(field.label);
-        console.log(`    ✗ could not fill: ${field.label}`);
+        if (!failedToFill.includes(field.label)) failedToFill.push(field.label);
+        console.log(`    ✗ tried but the field would not take it: ${field.label}`);
       }
     }
   };
@@ -210,6 +216,12 @@ export async function runApplication(
     if (newLabels.length === 0 && signature === lastSignature) {
       noProgress += 1;
       if (noProgress >= 2) {
+        // Report what the FORM says is wrong, not just that we stopped making progress.
+        const errors = (await driver.validationErrors?.(root).catch(() => [])) ?? [];
+        if (errors.length) {
+          blockedRequired = errors.map((e) => `form error: ${e}`);
+          console.log(`  Form is rejecting the page — ${errors.map((e) => `"${e}"`).join("; ")}`);
+        }
         console.log(`  Same ${after.fields.length} field(s) and nothing new filled for ${noProgress + 1} turns (stuck) — stopping.`);
         break;
       }
@@ -225,5 +237,5 @@ export async function runApplication(
     await page.waitForTimeout(1500);
   }
 
-  return { turns, filled, answers: answers(), drafts, unknown, reachedReview, alreadyApplied: false, blockedRequired };
+  return { turns, filled, answers: answers(), drafts, unknown, failedToFill, reachedReview, alreadyApplied: false, blockedRequired };
 }

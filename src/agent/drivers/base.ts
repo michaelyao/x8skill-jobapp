@@ -53,6 +53,29 @@ export abstract class GenericDriver implements AtsDriver {
     return false;
   }
 
+  /**
+   * Validation errors the FORM is showing. A page can be fully filled and still refuse to
+   * advance: Pentair rejected a work-history entry with "Must end before start date" after
+   * a start date of 12/2025 was written against an end of 4/2025, and the run reported only
+   * that it was stuck — the actual reason was on screen the whole time.
+   */
+  async validationErrors(root: Root): Promise<string[]> {
+    const SCRIPT = `(() => {
+      var out = [];
+      var nodes = document.querySelectorAll('[data-automation-id="errorMessage"], [data-automation-id*="error" i], [role="alert"], [class*="error" i]');
+      for (var i = 0; i < nodes.length && out.length < 8; i++) {
+        var el = nodes[i];
+        if (!(el.offsetParent !== null || el.getClientRects().length > 0)) continue;
+        var t = (el.innerText || "").replace(/\\s+/g, " ").trim();
+        if (!t || t.length > 200) continue;
+        if (!/error|must|required|invalid|cannot|can not|please/i.test(t)) continue;
+        if (out.indexOf(t) < 0) out.push(t);
+      }
+      return out;
+    })()`;
+    return (await root.evaluate(SCRIPT).catch(() => [])) as string[];
+  }
+
   /** Click the final Submit button. Only invoked after explicit user confirmation. */
   async submit(root: Root): Promise<boolean> {
     const btn = root.getByRole("button", { name: SUBMIT }).first();
@@ -152,6 +175,29 @@ export abstract class GenericDriver implements AtsDriver {
         else if (nameAttr) key = '[name="' + nameAttr + '"]';
         else { const dk = "f" + (i++); c.setAttribute("data-agent-key", dk); key = '[data-agent-key="' + dk + '"]'; }
         let label = labelFor(c).slice(0, 140);
+        // Bare sub-field labels are meaningless alone. A Workday experience page presents 44
+        // fields labelled "Month" and 52 labelled "Year" at once, so nothing told the agent
+        // WHICH entry or WHICH end of a date range it was filling: it wrote a start date of
+        // 12/2025 against an end date of 4/2025 and Workday refused with "Must end before
+        // start date". Prefix them with the nearest identifying ancestors.
+        if (/^(month|year|day|from|to)$/i.test(label)) {
+          const parts = [];
+          let up2 = c.parentElement;
+          for (let lv = 0; lv < 10 && up2 && parts.length < 2; lv += 1) {
+            let t2 = "";
+            const lg2 = up2.querySelector("legend, h2, h3, h4");
+            if (lg2 && lg2.innerText) t2 = lg2.innerText;
+            if (!t2) {
+              const aid3 = up2.getAttribute("data-automation-id") || "";
+              if (/^formField-/.test(aid3)) t2 = aid3.replace(/^formField-/, "").replace(/([a-z])([A-Z])/g, "$1 $2");
+              else if (/section/i.test(aid3)) t2 = aid3.replace(/([a-z])([A-Z])/g, "$1 $2");
+            }
+            t2 = (t2 || "").replace(/\s+/g, " ").trim();
+            if (t2 && t2.toLowerCase() !== label.toLowerCase() && parts.indexOf(t2) < 0) parts.unshift(t2.slice(0, 60));
+            up2 = up2.parentElement;
+          }
+          if (parts.length) label = (parts.join(" \u2014 ") + " \u2014 " + label).slice(0, 190);
+        }
         // Workday "prompt" fields are multi-selects whose control is a BARE <input> — no
         // role, no select__ class — so they were read as free text: no options captured, the
         // agent answered from general knowledge ("LinkedIn" when the list only offers

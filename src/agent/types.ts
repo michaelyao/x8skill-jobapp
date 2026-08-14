@@ -89,6 +89,8 @@ export interface AtsDriver {
   isAlreadyApplied(root: Root): Promise<boolean>;
   read(root: Root): Promise<PageSnapshot>;
   fill(root: Root, field: FieldSpec, answer: FieldAnswer): Promise<boolean>;
+  /** Validation messages the form itself is showing (why it refuses to advance). */
+  validationErrors?(root: Root): Promise<string[]>;
   uploadDocuments(root: Root, resumePath: string): Promise<void>;
   /** Advance to the next page/turn. Returns false if there is no next control. */
   next(root: Root): Promise<boolean>;
