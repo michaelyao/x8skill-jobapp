@@ -11,10 +11,15 @@ import type { ApplicationRecord, JobIdentity } from "../types.js";
 // on the next sweep, emailing a fresh review for work already finished. Nothing could
 // double-submit (the poller cross-checks the ledger), but it wasted a slot per job and put
 // misleading approve-me mail in the inbox.
+// "expired" is here so a dead posting is not re-opened on every sweep. 13 of the first 35
+// jobs in a full run were listings already known to be closed, ~7 minutes of re-checking
+// 404s that grows as the list ages. A posting that comes back is re-listed with a new URL
+// and code anyway; to force a re-check of one, use FORCE_RETRY.
 const ENGAGED_STATUSES = new Set<ApplicationRecord["status"]>([
   "prefilled_pending_submit",
   "already_applied_on_site",
   "submitted",
+  "expired",
 ]);
 
 /** Load the persistent application ledger (empty array if it doesn't exist yet). */
