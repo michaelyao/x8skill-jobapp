@@ -54,6 +54,11 @@ export function noteLabels(record: ApplicationRecord): string[] {
   ].filter(Boolean) as string[];
 }
 
+/** Note title — carries the job code so two same-titled postings cannot collide. */
+export function noteTitle(record: ApplicationRecord): string {
+  return `${record.title} @ ${record.company}${record.code ? ` [${record.code}]` : ""}`;
+}
+
 function resumeSection(record: ApplicationRecord): string {
   const name = record.resumeName || "unknown";
   if (record.resumeStandard !== false) {
@@ -161,7 +166,12 @@ export async function postApplicationNote(
       method: "POST",
       headers: headers(config),
       body: JSON.stringify({
-        title: `${record.title} @ ${record.company}`,
+        // The job code makes the title unique per posting. Without it, save-article fell
+        // back to matching on title when the URL did not match, so two DIFFERENT postings
+        // that happen to share a title at the same company collapsed into one note: the
+        // Palantir "Software Engineer Intern" listings QHKEQP and DWOXTX, where the second
+        // overwrote the first's content and labels while keeping the first's source_url.
+        title: noteTitle(record),
         content: noteMarkdown(toWrite),
         notebook: config.notebook,
         url: record.applyUrl, // the upsert key — one note per posting
