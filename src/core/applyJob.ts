@@ -190,6 +190,10 @@ export async function applyToJob(
     const pageText = (await jobPage.locator("body").innerText().catch(() => "")).toLowerCase();
     if (/doesn'?t exist|no longer (available|accepting|active)|posting (has )?closed|this job is not|job not found|job you requested was not found|position (is )?(no longer|has been) (open|filled|closed)|no jobs that fit|there are no jobs|0 jobs|page not found|n'existe pas|n'est plus|introuvable|no existe|ya no está/.test(pageText)) {
       console.log("  posting expired/closed — skipping.");
+      // Record it, or the sweep re-opens the same dead listing forever: nothing was
+      // written here before, so "expired" never reached the ledger and the skip in
+      // ENGAGED_STATUSES had nothing to match. No x8note note is created for this status.
+      await record("expired", { notes: ["posting expired/closed"] });
       await jobPage.close().catch(() => undefined);
       return finish("expired", ["posting expired/closed"]);
     }
