@@ -27,6 +27,9 @@ export interface RoundField {
 
 export interface Round {
   code: string;
+  /** True when the round was reconstructed from a queue entry rather than observed live —
+   *  the answers are real, but the field list is inferred, so a diff against it is partial. */
+  reconstructed?: boolean;
   phase: RoundPhase;
   at: string; // ISO
   url: string;
@@ -113,6 +116,49 @@ export function diffRounds(approved: Round, current: Round): RoundDiff {
   }
 
   return { added, removed, requiredChanged, reworded, unchanged };
+}
+
+export interface AnswerDiff {
+  changed: Array<{ label: string; before: string; after: string }>;
+  added: Array<{ label: string; value: string }>;
+  removed: Array<{ label: string; value: string }>;
+  unchanged: number;
+}
+
+/**
+ * What the ANSWERS did between two rounds — an edit in the console, a re-fill producing a
+ * different value, or an answer disappearing because its question did. This is the half of
+ * "what changed" that matters when the form itself did not.
+ */
+export function diffAnswers(before: Round, after: Round): AnswerDiff {
+  const beforeMap = new Map(before.answers.map((a) => [markerless(a.label), a]));
+  const afterMap = new Map(after.answers.map((a) => [markerless(a.label), a]));
+  const changed: AnswerDiff["changed"] = [];
+  const added: AnswerDiff["added"] = [];
+  const removed: AnswerDiff["removed"] = [];
+  let unchanged = 0;
+
+  for (const a of after.answers) {
+    const was = beforeMap.get(markerless(a.label));
+    if (!was) added.push({ label: a.label, value: a.value });
+    else if (was.value !== a.value) changed.push({ label: a.label, before: was.value, after: a.value });
+    else unchanged += 1;
+  }
+  for (const b of before.answers) {
+    if (!afterMap.has(markerless(b.label))) removed.push({ label: b.label, value: b.value });
+  }
+  return { changed, added, removed, unchanged };
+}
+
+/** Every job that has recorded history, newest activity first. */
+export async function listJobsWithRounds(): Promise<Array<{ code: string; rounds: number; latest: string }>> {
+  const dirs = await fs.readdir(ROUNDS_DIR).catch(() => []);
+  const out: Array<{ code: string; rounds: number; latest: string }> = [];
+  for (const dir of dirs) {
+    const files = (await fs.readdir(path.join(ROUNDS_DIR, dir)).catch(() => [])).filter((f) => f.endsWith(".json")).sort();
+    if (files.length) out.push({ code: dir, rounds: files.length, latest: files[files.length - 1] });
+  }
+  return out.sort((a, b) => b.latest.localeCompare(a.latest));
 }
 
 /** One-line summaries suitable for an error message or the console. */

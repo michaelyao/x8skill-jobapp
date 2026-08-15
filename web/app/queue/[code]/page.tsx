@@ -27,12 +27,17 @@ export default async function ReviewPage({ params }: { params: Promise<{ code: s
   }
 
   return (
-    <ReviewPanel
-      entry={JSON.parse(JSON.stringify(entry))}
-      description={description}
-      requisitionId={app?.companyReqId ?? entry.companyReqId}
-      role={user?.role ?? "reviewer"}
-      hasScreenshot={Boolean(app?.lastRunDir)}
-    />
+    <>
+      <ReviewPanel
+        entry={JSON.parse(JSON.stringify(entry))}
+        description={description}
+        requisitionId={app?.companyReqId ?? entry.companyReqId}
+        role={user?.role ?? "reviewer"}
+        hasScreenshot={Boolean(app?.lastRunDir)}
+      />
+      <p className="muted" style={{ fontSize: 13, marginTop: 14 }}>
+        <a href={`/history/${code}`}>History — every recorded copy of this application</a>
+      </p>
+    </>
   );
 }

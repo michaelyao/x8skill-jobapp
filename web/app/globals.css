@@ -182,3 +182,20 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .error { color: var(--bad); font-size: 13px; margin-top: 12px; }
 
 .empty { color: var(--muted); padding: 28px; text-align: center; border: 1px dashed var(--line); border-radius: var(--radius); }
+
+/* --- history diffs --- */
+/* The divergence highlight is the whole argument of a rewording: same prefix, different tail. */
+mark {
+  background: color-mix(in srgb, var(--warn) 30%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+details > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+  user-select: none;
+}
+details[open] > summary { margin-bottom: 4px; }
+h4 { margin: 14px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
