@@ -29,6 +29,27 @@ Both services are needed: the console queues your decisions, the worker carries 
 A console with no worker looks healthy but silently never submits anything — `web-start.sh`
 warns when that is the case, and `/api/health` reports the worker's state.
 
+### Run them permanently
+
+```bash
+./install-services.sh              # launchd agents: start at login, restart on crash
+./install-services.sh --uninstall
+```
+
+This also removes the `*/15` approvals cron entry — the worker does that job now, within
+seconds rather than up to fifteen minutes, and leaving both installed means two processes
+racing for the same Chrome profile.
+
+After a crash launchd waits **30 seconds** before restarting (`ThrottleInterval`, so a service
+that fails on startup does not spin). If you kill something and it seems gone, wait half a
+minute before concluding it is dead.
+
+```bash
+launchctl list | grep jobapp                                  # status
+launchctl kickstart -k gui/$(id -u)/com.studiox8.jobapp.web    # force a restart
+tail -f logs/web.log logs/worker.log
+```
+
 `web-start.sh` refuses to start twice, checks that `WEB_SESSION_SECRET` and at least one
 account exist, builds on first run, waits for the port, and reports the worker's state.
 `web-stop.sh` kills whatever holds the port — `pkill -f "next start"` misses it, because
