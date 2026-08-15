@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { DATA_DIR } from "../config.js";
 import type { FilledAnswer } from "../agent/types.js";
+import { writeJsonAtomic } from "../utils/atomicWrite.js";
 
 /**
  * The command queue: how the web console asks the worker to do something.
@@ -80,9 +81,9 @@ export async function enqueueCommand(cmd: Omit<Command, "id" | "createdAt"> & { 
   } as Command;
   // Sortable filename: the worker drains oldest-first.
   const name = `${full.createdAt.replace(/[:.]/g, "-")}-${full.id}.json`;
-  const tmp = path.join(COMMANDS_DIR, `.tmp-${name}`);
-  await fs.writeFile(tmp, JSON.stringify(full, null, 2));
-  await fs.rename(tmp, path.join(COMMANDS_DIR, name));
+  // fsynced before the rename: "approve this application" is consequential enough that it
+  // must survive a crash between the click and the worker picking it up.
+  await writeJsonAtomic(path.join(COMMANDS_DIR, name), full);
   return full;
 }
 
@@ -124,7 +125,7 @@ async function finish(file: string, result: CommandResult): Promise<void> {
   const target = path.join(COMMANDS_DONE_DIR, base);
   try {
     const body = JSON.parse(await fs.readFile(file, "utf8"));
-    await fs.writeFile(target, JSON.stringify({ ...body, result }, null, 2));
+    await writeJsonAtomic(target, { ...body, result });
     await fs.rm(file, { force: true });
   } catch {
     await fs.rename(file, target).catch(() => undefined);

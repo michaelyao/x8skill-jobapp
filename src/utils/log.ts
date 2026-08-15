@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { writeFileAtomic, writeJsonAtomic } from "./atomicWrite.js";
 import { LOGS_DIR } from "../config.js";
 import type { RunSummaryItem } from "../types.js";
 
@@ -13,13 +14,13 @@ export function makeRunDir(): string {
 }
 
 export async function writeJson(filePath: string, value: unknown): Promise<void> {
-  await ensureDir(path.dirname(filePath));
-  await fs.writeFile(filePath, JSON.stringify(value, null, 2) + "\n", "utf8");
+  // Atomic + fsynced: applications.json is the operational ledger, and a crash during an
+  // in-place write would corrupt every record in it, not just the one being updated.
+  await writeJsonAtomic(filePath, value);
 }
 
 export async function writeText(filePath: string, value: string): Promise<void> {
-  await ensureDir(path.dirname(filePath));
-  await fs.writeFile(filePath, value, "utf8");
+  await writeFileAtomic(filePath, value);
 }
 
 export async function writeSummaryMarkdown(filePath: string, items: RunSummaryItem[]): Promise<void> {

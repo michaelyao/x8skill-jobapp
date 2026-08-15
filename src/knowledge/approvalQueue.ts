@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { DATA_DIR } from "../config.js";
+import { writeJsonAtomic } from "../utils/atomicWrite.js";
 import type { FilledAnswer } from "../agent/types.js";
 
 const QUEUE_PATH = path.join(DATA_DIR, "pending-approvals.json");
@@ -65,8 +66,9 @@ async function readQueue(): Promise<PendingEntry[]> {
 }
 
 async function writeQueue(entries: PendingEntry[]): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(QUEUE_PATH, JSON.stringify(entries, null, 2));
+  // Every guard against double submission reads this file. A half-written queue would be
+  // worse than a lost command, so it is written atomically and fsynced.
+  await writeJsonAtomic(QUEUE_PATH, entries);
 }
 
 export async function loadPendingQueue(): Promise<PendingEntry[]> {
