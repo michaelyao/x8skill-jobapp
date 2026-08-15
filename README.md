@@ -14,10 +14,18 @@ change) and a background poller submits the exact answers you approved.
 
 ```bash
 npm install
-npm start                 # fill jobs, email each one for approval
-npm run approvals         # process replies: submit approved, re-fill changes
+npm start                 # fill jobs
+npm run worker            # the daemon that owns Chrome and executes console actions
 npm run check             # type-check
+
+./web-start.sh            # start the web console (0.0.0.0:8088)
+./web-stop.sh             # stop it
 ```
+
+`web-start.sh` refuses to start twice, checks that `WEB_SESSION_SECRET` and at least one
+account exist, builds on first run, waits for the port, and reports the worker's state.
+`web-stop.sh` kills whatever holds the port — `pkill -f "next start"` misses it, because
+the process re-execs as `next-server`.
 
 Useful flags — the full table is in [DESIGN.md](DESIGN.md#14-operating-it):
 
