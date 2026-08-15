@@ -29,6 +29,7 @@ import {
   waitForApproval,
   type DuplicateWarning,
 } from "../knowledge/reviewEmail.js";
+import { saveRound } from "../knowledge/rounds.js";
 import { findRequisitionId } from "./requisitionId.js";
 import { withRequisitionId } from "./jobIdentity.js";
 import { captureJobDescription, fetchGreenhouseJobDescription } from "../utils/jobDescription.js";
@@ -317,6 +318,19 @@ export async function applyToJob(
 
     if (!jobDescriptionResolved && driver.type === "greenhouse") {
       jobDescriptionResolved = await fetchGreenhouseJobDescription(jobPage, job.applyUrl);
+    }
+
+    // Preserve what THIS visit saw, before anything else can change: the pre-approval copy
+    // and the copy present at submit time are what settle "did the form change?".
+    if (job.id && result.observedFields.length) {
+      await saveRound({
+        code: job.id,
+        phase: opts.mode === "submit" ? "submit" : opts.changeInstruction ? "refill" : "fill",
+        url: job.applyUrl,
+        fields: result.observedFields.map((f) => ({ label: f.label, type: f.type, required: f.required, options: f.options })),
+        answers: result.answers.map((a) => ({ label: a.label, value: a.value, draft: a.draft })),
+        outcome: result.reachedReview ? "reached review" : `blocked: ${result.blockedRequired.join("; ") || "did not reach review"}`,
+      }).catch(() => undefined);
     }
 
     if (result.alreadyApplied) {

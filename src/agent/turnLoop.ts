@@ -17,6 +17,9 @@ export interface TurnLoopResult {
   drafts: string[]; // labels of LLM-drafted free-text (review before submit)
   unknown: string[]; // labels with NO answer available — never attempted, needs a human
   failedToFill: string[]; // labels we DID attempt but the widget would not take the value
+  /** Every field this visit saw, in order. Recorded so the form that was APPROVED can later
+   *  be diffed against the form present at submit time — evidence, not recollection. */
+  observedFields: FieldSpec[];
   reachedReview: boolean; // the Submit control was reached (we never click it)
   alreadyApplied: boolean;
   blockedRequired: string[]; // required fields still empty that blocked advancing
@@ -46,6 +49,7 @@ export async function runApplication(
   const drafts: string[] = [];
   const unknown: string[] = [];
   const failedToFill: string[] = [];
+  const observed = new Map<string, FieldSpec>(); // label+type → first sighting, insertion-ordered
   let blockedRequired: string[] = [];
   const answers = () => [...answersByLabel.values()];
   // How many times a field we believe we filled has come back empty on re-read.
@@ -93,7 +97,7 @@ export async function runApplication(
   await driver.openApplication(page);
   let root = await driver.resolveRoot(page);
   if (await driver.isAlreadyApplied(root)) {
-    return { turns: 0, filled, answers: answers(), drafts, unknown, failedToFill, reachedReview: false, alreadyApplied: true, blockedRequired };
+    return { turns: 0, filled, answers: answers(), drafts, unknown, failedToFill, observedFields: [], reachedReview: false, alreadyApplied: true, blockedRequired };
   }
 
   // Fill one set of fields, recording results. Returns nothing — the caller
@@ -172,6 +176,10 @@ export async function runApplication(
     }
 
     const snapshot = await driver.read(root);
+    for (const f of snapshot.fields) {
+      const k = `${f.label}\u0000${f.type}`;
+      if (!observed.has(k)) observed.set(k, f);
+    }
     console.log(`  [turn ${turns}] ${snapshot.fields.length} field(s), submitReady=${snapshot.submitReady}`);
     const filledBefore = filled.length;
 
@@ -244,5 +252,16 @@ export async function runApplication(
     await page.waitForTimeout(1500);
   }
 
-  return { turns, filled, answers: answers(), drafts, unknown, failedToFill, reachedReview, alreadyApplied: false, blockedRequired };
+  return {
+    turns,
+    filled,
+    answers: answers(),
+    drafts,
+    unknown,
+    failedToFill,
+    observedFields: [...observed.values()],
+    reachedReview,
+    alreadyApplied: false,
+    blockedRequired,
+  };
 }

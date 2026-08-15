@@ -3,6 +3,7 @@ import { buildJobIdentity } from "./jobIdentity.js";
 import { hasSubmittedBefore } from "../knowledge/applications.js";
 import { updatePendingStatus, type PendingEntry } from "../knowledge/approvalQueue.js";
 import { ReplayAgent } from "../agent/replayAgent.js";
+import { describeDiff, diffRounds, listRounds } from "../knowledge/rounds.js";
 import type { FilledAnswer } from "../agent/types.js";
 import type { AnswerEntry, ApplicationRecord, FilteredJob } from "../types.js";
 
@@ -104,10 +105,25 @@ export async function submitApprovedEntry(
   // question the approved answers do not cover cannot be resolved by retrying, it needs a
   // re-fill and a fresh review.
   const drifted = replayAgent.unmatchedRequired;
+  // Cite the recorded evidence rather than an interpretation: the round saved when the user
+  // approved, against the round just saved for this attempt. If they are identical, say so —
+  // that means the fault is ours, not the form's.
+  let evidence = "";
+  if (drifted.length && entry.code) {
+    const rounds = await listRounds(entry.code);
+    const current = [...rounds].reverse().find((r) => r.phase === "submit");
+    const approved = [...rounds].reverse().find((r) => r.phase !== "submit");
+    if (approved && current) {
+      const lines = describeDiff(diffRounds(approved, current));
+      evidence = lines.length
+        ? ` Form differences since ${approved.at}: ${lines.slice(0, 4).join(" | ")}${lines.length > 4 ? ` (+${lines.length - 4} more)` : ""}.`
+        : ` The form is UNCHANGED since ${approved.at} — so this is a fault in the replay, not the posting.`;
+    }
+  }
   const why = outcome.reachedReview
     ? "submit control not found"
     : drifted.length
-      ? `the form changed since you approved it — ${drifted.length} required question(s) have no approved answer: ${drifted.slice(0, 3).join("; ")}${drifted.length > 3 ? ` (+${drifted.length - 3})` : ""}. Re-fill this job to review it again.`
+      ? `${drifted.length} required question(s) have no approved answer: ${drifted.slice(0, 3).join("; ")}${drifted.length > 3 ? ` (+${drifted.length - 3})` : ""}.${evidence}`
       : `did not reach review on replay${outcome.blockedRequired?.length ? ` (blocked: ${outcome.blockedRequired.join("; ")})` : ""}`;
   const giveUp = attempts >= MAX_SUBMIT_ATTEMPTS;
   await updatePendingStatus(entry.key, giveUp ? "error" : "awaiting_approval", { attempts, lastError: why });
