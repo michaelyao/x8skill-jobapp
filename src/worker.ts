@@ -123,8 +123,8 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
     case "skip": {
       const entry = await findEntry(command.code);
       if (!entry) return { ok: false, message: `no queue entry for ${command.code}` };
-      await updatePendingStatus(entry.key, "skipped");
-      return { ok: true, message: `[${command.code}] skipped` };
+      await upsertPending({ ...entry, status: "skipped", approvedBy: command.actor ?? command.source, decidedAt: new Date().toISOString() });
+      return { ok: true, message: `[${command.code}] skipped${command.actor ? ` by ${command.actor}` : ""}` };
     }
 
     case "approve": {
@@ -149,8 +149,18 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
       // Persist edited answers BEFORE submitting, so what is recorded as approved is exactly
       // what gets replayed even if the process dies mid-way.
       if (command.answers?.length) {
-        await upsertPending({ ...entry, answers: command.answers, editedInConsoleAt: new Date().toISOString() });
+        await upsertPending({
+          ...entry,
+          answers: command.answers,
+          editedInConsoleAt: new Date().toISOString(),
+          editedBy: command.actor ?? command.source,
+        });
       }
+      await upsertPending({
+        ...((await findEntry(command.code)) ?? entry),
+        approvedBy: command.actor ?? command.source,
+        decidedAt: new Date().toISOString(),
+      });
 
       const started = await withBrowser();
       if (!started) return { ok: false, message: "browser busy — will retry on the next tick" };

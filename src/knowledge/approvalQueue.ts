@@ -49,6 +49,9 @@ export interface PendingEntry {
   /** Set when answers were edited in the console before approving. The edited answers ARE the
    *  approved ones (they are what the ReplayAgent replays). */
   editedInConsoleAt?: string;
+  editedBy?: string; // console account that edited the answers
+  approvedBy?: string; // console account that approved it ("email" when approved by reply)
+  decidedAt?: string; // ISO — when approve/skip was actioned
 }
 
 async function readQueue(): Promise<PendingEntry[]> {

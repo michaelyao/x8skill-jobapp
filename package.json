@@ -8,7 +8,8 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "start": "tsx src/index.ts",
     "approvals": "tsx src/approvals.ts",
-    "worker": "tsx src/worker.ts"
+    "worker": "tsx src/worker.ts",
+    "hash-password": "node tools/hash-password.mjs"
   },
   "repository": {
     "type": "git",

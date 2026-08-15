@@ -33,6 +33,9 @@ interface Base {
   id: string;
   createdAt: string; // ISO
   source: string; // "web" | "cli" | ...
+  /** Which console account asked for this. With more than one user, "who approved this" has
+   *  to be answerable from the record alone. */
+  actor?: string;
 }
 
 export type Command = Base &
