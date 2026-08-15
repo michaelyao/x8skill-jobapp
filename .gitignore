@@ -33,3 +33,10 @@ available_openings.md
 _*.mjs
 _*.ts
 
+
+# worker/console runtime state (regenerated)
+data/commands/
+data/worker-status.json
+data/.browser.lock
+web/.next/
+web/node_modules/

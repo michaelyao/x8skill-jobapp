@@ -43,6 +43,12 @@ export interface PendingEntry {
   attempts: number; // Phase-B submit attempts
   processedReplyIds?: string[]; // reply message ids already acted on (avoid re-triggering)
   lastError?: string;
+  /** Set when a review email was explicitly requested from the console. The Gmail scan only
+   *  considers entries with this set — email approval is opt-in per job, not automatic. */
+  emailRequestedAt?: string;
+  /** Set when answers were edited in the console before approving. The edited answers ARE the
+   *  approved ones (they are what the ReplayAgent replays). */
+  editedInConsoleAt?: string;
 }
 
 async function readQueue(): Promise<PendingEntry[]> {

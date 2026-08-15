@@ -1,0 +1,67 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import { DATA_DIR } from "../config.js";
+
+/**
+ * The worker's heartbeat, written every tick and read by the console. This is what makes the
+ * site show live progress ("submitting DVDFRR", "filling 12/61") instead of a static list.
+ *
+ * Deliberately a separate file from application state: the worker rewrites it constantly, and
+ * mixing that churn into applications.json would mean rewriting the whole ledger every few
+ * seconds.
+ */
+
+export const WORKER_STATUS_PATH = path.join(DATA_DIR, "worker-status.json");
+
+export interface WorkerStatus {
+  state: "idle" | "busy" | "stopped";
+  /** Human-readable, e.g. "submitting approved [DVDFRR] PDT Partners". */
+  activity?: string;
+  code?: string;
+  /** Set while a sweep is running so the console can show a progress bar. */
+  progress?: { done: number; total: number };
+  since: string; // ISO — when the current state began
+  lastTickAt: string; // ISO — staleness check: no tick for a while means the worker is down
+  lastError?: string;
+  pid: number;
+  /** Does the worker currently hold the browser? A manual CLI run must not start meanwhile. */
+  holdsBrowserLock: boolean;
+}
+
+let current: WorkerStatus = {
+  state: "idle",
+  since: new Date().toISOString(),
+  lastTickAt: new Date().toISOString(),
+  pid: process.pid,
+  holdsBrowserLock: false,
+};
+
+export async function writeWorkerStatus(patch: Partial<WorkerStatus> = {}): Promise<void> {
+  const stateChanged = patch.state !== undefined && patch.state !== current.state;
+  current = {
+    ...current,
+    ...patch,
+    pid: process.pid,
+    since: stateChanged ? new Date().toISOString() : current.since,
+    lastTickAt: new Date().toISOString(),
+  };
+  const tmp = `${WORKER_STATUS_PATH}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(current, null, 2)).catch(() => undefined);
+  await fs.rename(tmp, WORKER_STATUS_PATH).catch(() => undefined);
+}
+
+export async function readWorkerStatus(): Promise<WorkerStatus | null> {
+  try {
+    return JSON.parse(await fs.readFile(WORKER_STATUS_PATH, "utf8")) as WorkerStatus;
+  } catch {
+    return null;
+  }
+}
+
+/** A status older than this means the worker is not running, whatever the file says. */
+export const STALE_AFTER_MS = 60_000;
+
+export function isStale(status: WorkerStatus | null, now = Date.now()): boolean {
+  if (!status) return true;
+  return now - new Date(status.lastTickAt).getTime() > STALE_AFTER_MS;
+}
