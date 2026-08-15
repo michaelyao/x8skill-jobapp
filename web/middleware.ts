@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE } from "./lib/constants";
+import { publicUrl } from "./lib/publicUrl";
 
 /**
  * Gate every page and API route behind a session. Deliberately fails CLOSED: anything not
@@ -22,10 +23,12 @@ export function middleware(request: NextRequest) {
       headers: { "content-type": "application/json" },
     });
   }
-  const url = request.nextUrl.clone();
-  url.pathname = "/login";
-  url.search = pathname === "/" ? "" : `?next=${encodeURIComponent(pathname)}`;
-  return NextResponse.redirect(url);
+  // Redirect to the PUBLIC origin, not the address this process was reached on. Next's
+  // middleware requires an absolute Location, and deriving it from the request would send the
+  // browser to http://127.0.0.1:3010 behind the proxy — unreachable, and the http downgrade
+  // would drop the Secure session cookie.
+  const next = pathname === "/" ? "" : `?next=${encodeURIComponent(pathname)}`;
+  return NextResponse.redirect(publicUrl(request, `/login${next}`));
 }
 
 export const config = {

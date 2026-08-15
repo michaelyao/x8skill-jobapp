@@ -34,6 +34,38 @@ Install the 15-minute approval poller so approvals submit on their own:
 ./install-cron.sh
 ```
 
+## Serving it at job.studiox8.com
+
+The app binds to `127.0.0.1:3010` (override with `WEB_HOST` / `WEB_PORT`). Point your reverse
+proxy at it and set two things, or login will fail in confusing ways:
+
+```
+PUBLIC_URL=https://job.studiox8.com     # in .env — what the BROWSER uses
+```
+
+Without it, redirects are built from the address the app was reached on, so a sign-in bounce
+sends the browser to `http://127.0.0.1:3010` — unreachable, and the http downgrade drops the
+`Secure` session cookie. Next also sets `x-forwarded-proto: http` itself when the proxy does
+not, so `PUBLIC_URL` is the reliable fix rather than relying on headers.
+
+The proxy must also **disable buffering on `/api/stream`** (server-sent events) or live status
+appears frozen:
+
+```nginx
+location / {
+  proxy_pass http://127.0.0.1:3010;
+  proxy_set_header Host $host;
+  proxy_set_header X-Forwarded-Proto $scheme;
+}
+location /api/stream {
+  proxy_pass http://127.0.0.1:3010;
+  proxy_buffering off;
+  proxy_read_timeout 3600s;
+}
+```
+
+`GET /api/health` is the only unauthenticated route — use it for the proxy health check.
+
 ## How approval works
 
 1. A run fills a job, reaches Review, and emails you the answers plus a screenshot.

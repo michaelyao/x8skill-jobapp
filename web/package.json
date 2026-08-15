@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "JOBAPP_ROOT=$(cd .. && pwd) next dev -H 127.0.0.1 -p ${WEB_PORT:-3010}",
+    "dev": "JOBAPP_ROOT=$(cd .. && pwd) next dev -H ${WEB_HOST:-127.0.0.1} -p ${WEB_PORT:-3010}",
     "build": "JOBAPP_ROOT=$(cd .. && pwd) next build",
-    "start": "JOBAPP_ROOT=$(cd .. && pwd) next start -H 127.0.0.1 -p ${WEB_PORT:-3010}",
+    "start": "JOBAPP_ROOT=$(cd .. && pwd) next start -H ${WEB_HOST:-127.0.0.1} -p ${WEB_PORT:-3010}",
     "check": "tsc --noEmit"
   },
   "dependencies": {
