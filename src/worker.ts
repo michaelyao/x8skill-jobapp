@@ -12,6 +12,7 @@ import { hasSubmittedBefore, loadApplications } from "./knowledge/applications.j
 import {
   claimNextCommand,
   completeCommand,
+  releaseCommand,
   type Command,
 } from "./knowledge/commands.js";
 import { loadPendingQueue, updatePendingStatus, upsertPending, type PendingEntry } from "./knowledge/approvalQueue.js";
@@ -118,7 +119,7 @@ async function closeBrowser(): Promise<void> {
 const findEntry = async (code: string): Promise<PendingEntry | undefined> =>
   (await loadPendingQueue()).find((e) => e.code === code || e.key === code);
 
-async function runCommand(command: Command): Promise<{ ok: boolean; message: string }> {
+async function runCommand(command: Command): Promise<{ ok: boolean; message: string; defer?: boolean }> {
   switch (command.name) {
     case "skip": {
       const entry = await findEntry(command.code);
@@ -163,7 +164,7 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
       });
 
       const started = await withBrowser();
-      if (!started) return { ok: false, message: "browser busy — will retry on the next tick" };
+      if (!started) return { ok: false, defer: true, message: "browser busy — deferred, will retry on the next tick" };
 
       await writeWorkerStatus({
         state: "busy",
@@ -196,12 +197,19 @@ async function tick(): Promise<void> {
     if (!claimed) break;
     didWork = true;
     console.log(`worker: ${claimed.command.name} ${JSON.stringify(claimed.command).slice(0, 120)}`);
-    let result: { ok: boolean; message: string };
+    let result: { ok: boolean; message: string; defer?: boolean };
     try {
       result = await runCommand(claimed.command);
     } catch (error) {
       result = { ok: false, message: `threw: ${(error as Error).message.split("\n")[0]}` };
       await writeWorkerStatus({ lastError: result.message });
+    }
+    if (result.defer) {
+      // Put it back rather than recording an outcome: the work has not been done, and
+      // consuming it here would drop the user's approval while claiming it would retry.
+      console.log(`worker:   ⏸ ${result.message}`);
+      await releaseCommand(claimed.file);
+      break; // stop draining this tick — whatever blocks it blocks the rest too
     }
     console.log(`worker:   → ${result.ok ? "ok" : "FAILED"}: ${result.message}`);
     await completeCommand(claimed.file, result);
@@ -220,6 +228,15 @@ async function main(): Promise<void> {
   console.log(`worker: started (pid ${process.pid}), tick ${TICK_MS}ms`);
   await writeWorkerStatus({ state: "idle", activity: "waiting for commands" });
 
+  // Keep the heartbeat fresh WHILE a command runs. writeWorkerStatus() with no patch only
+  // refreshes lastTickAt, so state and activity are preserved. Without this the file is not
+  // touched for the whole of a submit — minutes — and the console declares the worker stale
+  // during precisely the operation the user is watching.
+  const heartbeat = setInterval(() => {
+    void writeWorkerStatus();
+  }, Math.min(TICK_MS, 10_000));
+  heartbeat.unref?.();
+
   for (const sig of ["SIGINT", "SIGTERM"] as const) {
     process.on(sig, () => {
       stopping = true;
@@ -237,6 +254,7 @@ async function main(): Promise<void> {
     await new Promise((r) => setTimeout(r, TICK_MS));
   }
 
+  clearInterval(heartbeat);
   await closeBrowser();
   await writeWorkerStatus({ state: "stopped", activity: "shut down" });
 }

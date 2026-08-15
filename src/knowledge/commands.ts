@@ -132,6 +132,18 @@ async function finish(file: string, result: CommandResult): Promise<void> {
   }
 }
 
+/**
+ * Put a claimed command BACK in the pending set, unexecuted.
+ *
+ * For deferrals — "the browser is busy right now" is not an outcome, it is a "not yet".
+ * Completing it instead silently threw away the user's intent while telling them it would be
+ * retried, so an approval could vanish with no trace but a done/ file saying it was fine.
+ */
+export async function releaseCommand(file: string): Promise<void> {
+  const original = file.replace(/\.claimed$/, "");
+  await fs.rename(file, original).catch(() => undefined);
+}
+
 /** Record the outcome and move the command out of the pending set. */
 export async function completeCommand(file: string, result: Omit<CommandResult, "finishedAt">): Promise<void> {
   await finish(file, { ...result, finishedAt: new Date().toISOString() });

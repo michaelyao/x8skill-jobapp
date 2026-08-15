@@ -2,6 +2,7 @@ import { applyToJob, type ApplyDeps } from "./applyJob.js";
 import { buildJobIdentity } from "./jobIdentity.js";
 import { hasSubmittedBefore } from "../knowledge/applications.js";
 import { updatePendingStatus, type PendingEntry } from "../knowledge/approvalQueue.js";
+import { ReplayAgent } from "../agent/replayAgent.js";
 import type { FilledAnswer } from "../agent/types.js";
 import type { AnswerEntry, ApplicationRecord, FilteredJob } from "../types.js";
 
@@ -74,11 +75,13 @@ export async function submitApprovedEntry(
   const attempts = (entry.attempts ?? 0) + 1;
   await updatePendingStatus(entry.key, "submitting", { attempts });
 
+  const replayAgent = new ReplayAgent(opts.replayAnswers ?? entry.answers ?? []);
   const outcome = await applyToJob(job, identity, answers, applications, ctx.deps, {
     mode: "submit",
     interactive: false,
     graceMs: 0,
     replayAnswers: opts.replayAnswers ?? entry.answers ?? [],
+    replayAgent,
     baseNotes: [opts.note],
   });
   answers = outcome.answers;
@@ -97,9 +100,15 @@ export async function submitApprovedEntry(
 
   // Nothing was submitted, so it is safe to hand back to the queue: reset to awaiting
   // (clearing the write-ahead marker) so the same approval can drive a retry, up to a cap.
+  // Distinguish "the form changed since you approved it" from a generic stall: a required
+  // question the approved answers do not cover cannot be resolved by retrying, it needs a
+  // re-fill and a fresh review.
+  const drifted = replayAgent.unmatchedRequired;
   const why = outcome.reachedReview
     ? "submit control not found"
-    : `did not reach review on replay${outcome.blockedRequired?.length ? ` (blocked: ${outcome.blockedRequired.join("; ")})` : ""}`;
+    : drifted.length
+      ? `the form changed since you approved it — ${drifted.length} required question(s) have no approved answer: ${drifted.slice(0, 3).join("; ")}${drifted.length > 3 ? ` (+${drifted.length - 3})` : ""}. Re-fill this job to review it again.`
+      : `did not reach review on replay${outcome.blockedRequired?.length ? ` (blocked: ${outcome.blockedRequired.join("; ")})` : ""}`;
   const giveUp = attempts >= MAX_SUBMIT_ATTEMPTS;
   await updatePendingStatus(entry.key, giveUp ? "error" : "awaiting_approval", { attempts, lastError: why });
   return {

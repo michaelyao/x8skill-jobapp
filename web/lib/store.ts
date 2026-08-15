@@ -41,6 +41,23 @@ export async function getOverview(): Promise<Overview> {
   };
 }
 
+/**
+ * The pid holding the Chrome profile, if it is alive. A truer liveness signal than the
+ * heartbeat: the heartbeat can freeze while the worker is deep inside a multi-minute submit,
+ * but the lock is held for exactly as long as a browser session is really open.
+ */
+export async function browserLockHolder(): Promise<number | null> {
+  try {
+    const raw = await fs.readFile(path.join(ROOT, "data", ".browser.lock"), "utf8");
+    const pid = Number.parseInt(raw.trim(), 10);
+    if (!Number.isFinite(pid)) return null;
+    process.kill(pid, 0); // throws if the process is gone
+    return pid;
+  } catch {
+    return null;
+  }
+}
+
 export async function getActivity(limit = 20) {
   return recentCommands(limit);
 }

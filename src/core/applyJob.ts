@@ -64,6 +64,9 @@ export interface ApplyOptions {
   baseNotes?: string[];
   changeInstruction?: string; // "fill" mode: user's emailed correction to apply
   replayAnswers?: FilledAnswer[]; // "submit" mode: exact approved answers to replay
+  /** A pre-built ReplayAgent, so the caller can read back which required fields it could not
+   *  match — that is how "the form changed" is told apart from a generic stall. */
+  replayAgent?: Agent;
 }
 
 export interface ApplyOutcome {
@@ -283,7 +286,8 @@ export async function applyToJob(
 
     // Clean approvals replay the exact approved answers (no LLM); everything else
     // (Phase A, change re-fills) uses the LLM agent, optionally with a correction.
-    const activeAgent: Agent = opts.mode === "submit" && opts.replayAnswers ? new ReplayAgent(opts.replayAnswers) : agent;
+    const activeAgent: Agent =
+      opts.mode === "submit" && opts.replayAnswers ? (opts.replayAgent ?? new ReplayAgent(opts.replayAnswers)) : agent;
     const result = await runApplication(
       jobPage,
       driver,
