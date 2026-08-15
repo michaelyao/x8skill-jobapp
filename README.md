@@ -20,7 +20,14 @@ npm run check             # type-check
 
 ./web-start.sh            # start the web console (0.0.0.0:8088)
 ./web-stop.sh             # stop it
+
+./worker-start.sh         # start the worker (owns Chrome, executes console actions)
+./worker-stop.sh          # stop it gracefully (--force to kill mid-task)
 ```
+
+Both services are needed: the console queues your decisions, the worker carries them out.
+A console with no worker looks healthy but silently never submits anything — `web-start.sh`
+warns when that is the case, and `/api/health` reports the worker's state.
 
 `web-start.sh` refuses to start twice, checks that `WEB_SESSION_SECRET` and at least one
 account exist, builds on first run, waits for the port, and reports the worker's state.
