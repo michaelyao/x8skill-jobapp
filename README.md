@@ -36,29 +36,33 @@ Install the 15-minute approval poller so approvals submit on their own:
 
 ## Serving it at job.studiox8.com
 
-The app binds to `127.0.0.1:3010` (override with `WEB_HOST` / `WEB_PORT`). Point your reverse
-proxy at it and set two things, or login will fail in confusing ways:
+The app listens on **`0.0.0.0:8088`** (override with `WEB_HOST` / `WEB_PORT`), so it is reachable
+both directly on the LAN — `http://192.168.1.216:8088` — and through the reverse proxy at
+`https://job.studiox8.com`.
 
-```
-PUBLIC_URL=https://job.studiox8.com     # in .env — what the BROWSER uses
-```
+Redirects follow whichever host you arrived on, so both entry points work. That only holds
+while `PUBLIC_URL` is unset: setting it pins every redirect to one origin and would bounce LAN
+visitors to the domain. Set it only if you stop using the LAN address.
 
-Without it, redirects are built from the address the app was reached on, so a sign-in bounce
-sends the browser to `http://127.0.0.1:3010` — unreachable, and the http downgrade drops the
-`Secure` session cookie. Next also sets `x-forwarded-proto: http` itself when the proxy does
-not, so `PUBLIC_URL` is the reliable fix rather than relying on headers.
+The session cookie is marked `Secure` only when the request arrived over https, so it survives
+plain-http LAN use and is still protected behind the proxy — which must therefore send
+`X-Forwarded-Proto`.
+
+**Binding to `0.0.0.0` means anyone on your network can reach the login page**, and over the LAN
+the password travels in cleartext. Firewall 8088 to the proxy host if you want it reachable only
+through the domain.
 
 The proxy must also **disable buffering on `/api/stream`** (server-sent events) or live status
 appears frozen:
 
 ```nginx
 location / {
-  proxy_pass http://127.0.0.1:3010;
+  proxy_pass http://127.0.0.1:8088;
   proxy_set_header Host $host;
   proxy_set_header X-Forwarded-Proto $scheme;
 }
 location /api/stream {
-  proxy_pass http://127.0.0.1:3010;
+  proxy_pass http://127.0.0.1:8088;
   proxy_buffering off;
   proxy_read_timeout 3600s;
 }
