@@ -155,6 +155,7 @@ export async function runApplication(
   };
 
   let turns = 0;
+  let resumeUploaded = false;
   let reachedReview = false;
   let noProgress = 0; // consecutive turns that showed the same page and filled nothing new
   const everFilled = new Set<string>(); // labels filled at any point, for progress detection
@@ -162,7 +163,13 @@ export async function runApplication(
   for (let t = 0; t < maxTurns; t += 1) {
     turns = t + 1;
     root = await driver.resolveRoot(page); // re-resolve — the frame can change between pages
-    await driver.uploadDocuments(root, opts.resumePath).catch(() => undefined);
+    // ONCE per run. Calling this every turn attached the resume repeatedly — five copies on
+    // one Workday application — and each attachment triggered another resume autofill, which
+    // is where the duplicated work-experience blocks came from.
+    if (!resumeUploaded) {
+      resumeUploaded = await driver.uploadDocuments(root, opts.resumePath).catch(() => false);
+      if (resumeUploaded) console.log("    ✓ resume attached");
+    }
 
     const snapshot = await driver.read(root);
     console.log(`  [turn ${turns}] ${snapshot.fields.length} field(s), submitReady=${snapshot.submitReady}`);

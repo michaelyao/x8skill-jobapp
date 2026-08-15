@@ -91,7 +91,8 @@ export interface AtsDriver {
   fill(root: Root, field: FieldSpec, answer: FieldAnswer): Promise<boolean>;
   /** Validation messages the form itself is showing (why it refuses to advance). */
   validationErrors?(root: Root): Promise<string[]>;
-  uploadDocuments(root: Root, resumePath: string): Promise<void>;
+  /** Attach the resume; true only if a file was actually set this call. */
+  uploadDocuments(root: Root, resumePath: string): Promise<boolean>;
   /** Advance to the next page/turn. Returns false if there is no next control. */
   next(root: Root): Promise<boolean>;
   /**

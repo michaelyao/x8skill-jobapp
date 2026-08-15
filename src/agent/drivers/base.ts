@@ -623,11 +623,34 @@ export abstract class GenericDriver implements AtsDriver {
     return false;
   }
 
-  async uploadDocuments(root: Root, resumePath: string): Promise<void> {
+  /**
+   * Attach the resume. Returns true only when a file was actually set.
+   *
+   * Called once per run by the turn loop — it used to run EVERY turn, which on Workday
+   * attached the resume again on each pass and left five copies on one application, each
+   * autofill adding another set of work-experience blocks.
+   *
+   * Also skips when the page already shows an attachment, so a resumed or re-entered flow
+   * does not add a second copy.
+   */
+  async uploadDocuments(root: Root, resumePath: string): Promise<boolean> {
     const fileInput = root.locator('input[type="file"]').first();
-    if (await fileInput.count()) {
-      await fileInput.setInputFiles(resumePath).catch(() => undefined);
-    }
+    if (!(await fileInput.count().catch(() => 0))) return false;
+
+    const already = await root
+      .locator('[data-automation-id="file-upload-item"], [data-automation-id="attachment"], [class*="uploaded" i]')
+      .count()
+      .catch(() => 0);
+    if (already > 0) return false;
+
+    // A file input that already holds a file (same page, second pass).
+    const hasFile = await fileInput
+      .evaluate((el) => (el as HTMLInputElement).files?.length ?? 0)
+      .catch(() => 0);
+    if (hasFile > 0) return false;
+
+    await fileInput.setInputFiles(resumePath).catch(() => undefined);
+    return true;
   }
 
   protected async hasSubmit(root: Root): Promise<boolean> {
