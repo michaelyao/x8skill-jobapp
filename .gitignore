@@ -40,3 +40,6 @@ data/worker-status.json
 data/.browser.lock
 web/.next/
 web/node_modules/
+web/next-env.d.ts
+web/.env*
+web/tsconfig.tsbuildinfo

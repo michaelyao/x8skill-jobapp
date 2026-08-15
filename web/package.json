@@ -1,0 +1,23 @@
+{
+  "name": "x8skill-jobapp-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "JOBAPP_ROOT=$(cd .. && pwd) next dev -H 127.0.0.1 -p ${WEB_PORT:-3010}",
+    "build": "JOBAPP_ROOT=$(cd .. && pwd) next build",
+    "start": "JOBAPP_ROOT=$(cd .. && pwd) next start -H 127.0.0.1 -p ${WEB_PORT:-3010}",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "^15.1.6",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.9.3"
+  }
+}

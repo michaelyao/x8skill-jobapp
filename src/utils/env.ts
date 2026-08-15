@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { ROOT_DIR } from "../config.js";
 
 /**
  * Reads .env from the project root and populates process.env.
@@ -7,7 +8,9 @@ import path from "node:path";
  * Skips keys that are already set in the environment.
  */
 export function loadEnv(): void {
-  const envPath = path.join(process.cwd(), ".env");
+  // ROOT_DIR honours JOBAPP_ROOT, so the web console (cwd = web/) still finds the
+  // repo-root .env where the credentials and API keys live.
+  const envPath = path.join(ROOT_DIR, ".env");
   let content: string;
   try {
     content = fs.readFileSync(envPath, "utf8");

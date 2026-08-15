@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export const ROOT_DIR = process.cwd();
+// The web console runs with its own cwd (web/), so paths cannot be derived from cwd alone —
+// data/ and logs/ live at the repo root regardless of who is running.
+export const ROOT_DIR = process.env.JOBAPP_ROOT || process.cwd();
 export const DATA_DIR = path.join(ROOT_DIR, "data");
 export const LOGS_DIR = path.join(ROOT_DIR, "logs");
 // Chrome is single-instance per user-data-dir, so a debug session cannot share the profile
