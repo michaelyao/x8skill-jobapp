@@ -51,7 +51,13 @@ export type Command = Base &
       }
     | { name: "skip"; code: string }
     | { name: "change"; code: string; instruction: string }
-    | { name: "retry"; code: string }
+    | {
+        name: "retry";
+        code: string;
+        /** Optional steer for the re-fill ("the school is Carnegie Mellon"), applied the same
+         *  way an emailed change request is. A plain retry sends nothing. */
+        instruction?: string;
+      }
     | { name: "sweep"; jobIds?: string[]; maxJobs?: number; refreshList?: boolean }
     | { name: "refresh_list" }
     | { name: "send_review_email"; code: string }

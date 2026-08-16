@@ -5,7 +5,7 @@ import { loadEnv } from "./utils/env.js";
 import { AUTH_DIR, DATA_DIR } from "./config.js";
 import { LlmAgent } from "./agent/llmAgent.js";
 import { buildJobIdentity } from "./core/jobIdentity.js";
-import type { ApplyDeps } from "./core/applyJob.js";
+import { applyToJob, type ApplyDeps } from "./core/applyJob.js";
 import { jobFromEntry, submitApprovedEntry } from "./core/submitApproved.js";
 import { loadAnswers } from "./knowledge/answerStore.js";
 import { hasSubmittedBefore, loadApplications } from "./knowledge/applications.js";
@@ -20,6 +20,7 @@ import { loadProfile } from "./knowledge/profile.js";
 import { loadX8NoteConfig } from "./knowledge/x8note.js";
 import { writeWorkerStatus } from "./knowledge/workerStatus.js";
 import { ensureDir, makeRunDir } from "./utils/log.js";
+import type { FilteredJob } from "./types.js";
 
 /**
  * The worker daemon. It owns Chrome and is the ONLY process that writes application state;
@@ -38,23 +39,38 @@ const IDLE_CLOSE_MS = Number(process.env.WORKER_IDLE_CLOSE_MS ?? 60_000);
 let stopping = false;
 
 /**
+ * Whether THIS process currently holds the browser lock. Without it the worker deadlocks
+ * against itself: the lock is taken for one command, and the atomic "wx" that makes the lock
+ * safe then refuses the NEXT command too — the daemon defers its own work forever, which is
+ * exactly what two queued retries did.
+ */
+let holdsLock = false;
+
+/**
  * Claim the browser. Chrome is single-instance per user-data-dir, so a manual `npm start`
  * and this daemon must never both drive it — a run died mid-job in exactly that situation.
  * "wx" makes the check and the claim one atomic operation.
  */
 function acquireBrowserLock(): boolean {
+  if (holdsLock) return true; // already ours — re-entrant by design, see holdsLock
   fs.mkdirSync(DATA_DIR, { recursive: true });
   try {
     const fd = fs.openSync(BROWSER_LOCK, "wx");
     fs.writeFileSync(fd, String(process.pid));
     fs.closeSync(fd);
+    holdsLock = true;
     return true;
   } catch {
     try {
+      // A lock left behind by a previous life of this daemon is ours to reclaim — the pid in
+      // it is not running any more, so nothing is driving Chrome.
+      const owner = Number(fs.readFileSync(BROWSER_LOCK, "utf8").trim());
+      const ownerAlive = owner > 0 && owner !== process.pid && isAlive(owner);
       const stat = fs.statSync(BROWSER_LOCK);
       // A stale lock (owner died without releasing) is taken over after 30 minutes.
-      if (Date.now() - stat.mtimeMs < 30 * 60 * 1000) return false;
+      if (ownerAlive && Date.now() - stat.mtimeMs < 30 * 60 * 1000) return false;
       fs.writeFileSync(BROWSER_LOCK, String(process.pid));
+      holdsLock = true;
       return true;
     } catch {
       return false;
@@ -62,7 +78,17 @@ function acquireBrowserLock(): boolean {
   }
 }
 
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function releaseBrowserLock(): void {
+  holdsLock = false;
   try {
     fs.rmSync(BROWSER_LOCK, { force: true });
   } catch {
@@ -190,6 +216,85 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
       };
     }
 
+    case "change":
+    case "retry": {
+      // Re-run a job that stopped before Review — usually because a required question had no
+      // answer, and that answer has since been added to the Q&A store — or re-fill an already
+      // reviewed one applying a correction ("change"). The two are the same operation: a FILL,
+      // never a submit, ending with the job back in the queue awaiting a human decision.
+      const applications = await loadApplications();
+      const entry = await findEntry(command.code);
+      const record = applications.find((a) => a.code === command.code || a.id === command.code);
+      if (!entry && !record) return { ok: false, message: `no job known as ${command.code}` };
+
+      // A retry re-opens a live form, so every "is this already done?" guard applies exactly as
+      // it does on the submit path. Re-filling a submitted application risks a second one.
+      if (entry?.status === "submitted" || record?.status === "submitted") {
+        return { ok: false, message: `[${command.code}] is already submitted — not re-opening it` };
+      }
+      if (entry?.status === "submitting") {
+        return { ok: false, message: `[${command.code}] is stuck mid-submit; confirm on the ATS before retrying` };
+      }
+      if (record?.status === "already_applied_on_site") {
+        return { ok: false, message: `[${command.code}] was already applied to on the site — not re-opening it` };
+      }
+
+      const job: FilteredJob = entry
+        ? jobFromEntry(entry)
+        : {
+            company: record!.company,
+            title: record!.title,
+            location: record!.location ?? "",
+            age: "",
+            applyUrl: record!.applyUrl,
+            id: record!.code,
+            region: record!.region,
+            usEligible: true,
+            needsManualLocationReview: false,
+          };
+      const identity = buildJobIdentity(job);
+      if (hasSubmittedBefore(applications, identity)) {
+        return { ok: false, message: `[${command.code}] the ledger records this as submitted — not re-opening it` };
+      }
+
+      const started = await withBrowser();
+      if (!started) return { ok: false, defer: true, message: "browser busy — deferred, will retry on the next tick" };
+
+      await writeWorkerStatus({
+        state: "busy",
+        code: command.code,
+        activity: `re-filling [${command.code}] ${job.company}`,
+        holdsBrowserLock: true,
+      });
+
+      // graceMs 0 and mode "fill": fill, reach Review, queue for approval. Nothing is
+      // submitted on this path even if an approval is sitting in the inbox.
+      const outcome = await applyToJob(job, identity, await loadAnswers(), applications, started.deps, {
+        mode: "fill",
+        interactive: false,
+        graceMs: 0,
+        changeInstruction: command.instruction,
+        baseNotes: [
+          `${command.name === "change" ? "change requested" : "retried"} from console${command.actor ? ` by ${command.actor}` : ""}`,
+          ...(command.instruction ? [`instruction: ${command.instruction}`] : []),
+        ],
+      });
+
+      if (outcome.alreadyApplied) return { ok: true, message: `[${command.code}] already applied on site — nothing to retry` };
+      if (outcome.queued) {
+        // The re-fill IS the current copy now, so a hold recorded against the previous one is
+        // stale — leaving it would show the user differences against answers no longer in play.
+        const requeued = await findEntry(command.code);
+        if (requeued?.reapproval) await updatePendingStatus(requeued.key, requeued.status, { reapproval: null });
+        return { ok: true, message: `[${command.code}] re-filled and queued — review it in the console` };
+      }
+      if (outcome.reachedReview) return { ok: true, message: `[${command.code}] reached review but was not queued` };
+      const why = outcome.blockedRequired?.length
+        ? `still blocked on: ${outcome.blockedRequired.join("; ")}`
+        : "did not reach review";
+      return { ok: false, message: `[${command.code}] ${why}` };
+    }
+
     default:
       return { ok: false, message: `command "${command.name}" is not implemented yet` };
   }
@@ -200,7 +305,6 @@ async function tick(): Promise<void> {
   for (;;) {
     const claimed = await claimNextCommand();
     if (!claimed) break;
-    didWork = true;
     console.log(`worker: ${claimed.command.name} ${JSON.stringify(claimed.command).slice(0, 120)}`);
     let result: { ok: boolean; message: string; defer?: boolean };
     try {
@@ -216,6 +320,7 @@ async function tick(): Promise<void> {
       await releaseCommand(claimed.file);
       break; // stop draining this tick — whatever blocks it blocks the rest too
     }
+    didWork = true; // only a COMPLETED command counts; a deferred one must let the idle timer run
     console.log(`worker:   → ${result.ok ? "ok" : "FAILED"}: ${result.message}`);
     await completeCommand(claimed.file, result);
   }

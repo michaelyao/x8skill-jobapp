@@ -104,9 +104,31 @@ function curatedSummary(ctx: AgentContext): string {
     .join("\n\n");
 }
 
+/**
+ * Today, in the LOCAL timezone, as the form expects it. A self-identification page rejected an
+ * application with "Enter today's date" because the model guessed — and after 5pm Pacific its
+ * guess was the UTC date, one day ahead. Never derive this from toISOString().
+ */
+function localToday(): { iso: string; month: string; day: string; year: string; long: string } {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  const year = String(now.getFullYear());
+  return {
+    iso: `${year}-${month}-${day}`,
+    month,
+    day,
+    year,
+    long: now.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }),
+  };
+}
+
 function buildPrompt(snapshot: PageSnapshot, ctx: AgentContext): { system: string; user: string } {
+  const today = localToday();
   const system = [
     "You are filling a job application form on behalf of a candidate.",
+    `TODAY IS ${today.long} (${today.iso}) — month ${today.month}, day ${today.day}, year ${today.year}.`,
+    `- Any field asking for today's date, the date signed, or the date of completion takes exactly that date: ${today.month}/${today.day}/${today.year}. When it is split into Month / Day / Year sub-fields, answer each with "${today.month}", "${today.day}" and "${today.year}" respectively. Do not compute it yourself and never use a different timezone's date — the form validates it against its own clock.`,
     "For each field, produce the best answer grounded ONLY in the candidate's resume, profile, and curated Q&A provided.",
     "Rules:",
     "- Never invent facts (names, numbers, employers, dates) not supported by the provided data.",

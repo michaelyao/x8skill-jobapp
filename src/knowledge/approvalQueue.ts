@@ -124,7 +124,9 @@ export async function markReplyProcessed(key: string, messageId: string): Promis
 export async function updatePendingStatus(
   key: string,
   status: PendingStatus,
-  extra: { attempts?: number; lastError?: string; reapproval?: PendingEntry["reapproval"] } = {},
+  // `reapproval: null` CLEARS a recorded hold. `undefined` leaves it alone — an omitted field
+  // must never silently wipe state, which is the difference between "no opinion" and "remove".
+  extra: { attempts?: number; lastError?: string; reapproval?: PendingEntry["reapproval"] | null } = {},
 ): Promise<void> {
   const entries = await readQueue();
   const idx = entries.findIndex((e) => e.key === key);
@@ -135,7 +137,7 @@ export async function updatePendingStatus(
     updatedAt: new Date().toISOString(),
     ...(extra.attempts != null ? { attempts: extra.attempts } : {}),
     ...(extra.lastError != null ? { lastError: extra.lastError } : {}),
-    ...(extra.reapproval !== undefined ? { reapproval: extra.reapproval } : {}),
+    ...(extra.reapproval === null ? { reapproval: undefined } : extra.reapproval !== undefined ? { reapproval: extra.reapproval } : {}),
   };
   await writeQueue(entries);
 }
