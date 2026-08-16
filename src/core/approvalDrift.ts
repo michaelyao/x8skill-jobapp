@@ -14,6 +14,14 @@ import type { FilledAnswer } from "../agent/types.js";
  * character-for-character the one that was approved for the question it replaced. Everything
  * else stops the submit and asks for a fresh approval, which costs a click; submitting
  * something the user never read costs an application.
+ *
+ * A DISAPPEARED question blocks too. It is tempting to wave it through — no question, nothing
+ * submitted — but that reasoning has the causation backwards. Employers rarely reword a live
+ * posting; our reader changes constantly. So the probable cause of a question vanishing is
+ * that WE stopped seeing it, in which case the form still has it and we are about to submit
+ * with an approved answer missing. Measured on this queue: nearly every difference so far was
+ * our own reader changing, not the posting. Treat a difference as a suspected bug in this
+ * code, not as news about the employer.
  */
 
 const labelKey = (label: string): string => label.toLowerCase().replace(/\s+/g, " ").trim();
@@ -38,8 +46,8 @@ export interface Drift {
 
 export interface DriftReport {
   drifts: Drift[];
-  /** Approved answers whose question is no longer on the form. Not a blocker — nothing is
-   *  submitted for a question that does not exist — but worth reporting. */
+  /** Approved answers whose question we no longer see. A BLOCKER: most likely we stopped
+   *  reading a field that is still there, so submitting would drop an answer the user gave. */
   vanished: Array<{ label: string; value: string }>;
   matched: number;
   /** Questions that were reworded but carry the identical approved value. */
@@ -102,14 +110,20 @@ export function compareToApproved(approved: FilledAnswer[], current: FilledAnswe
     .filter((a) => a.value && !consumed.has(a))
     .map((a) => ({ label: a.label, value: a.value }));
 
-  return { drifts, vanished, matched, rewordedButSame, safeToSubmit: drifts.length === 0 };
+  return { drifts, vanished, matched, rewordedButSame, safeToSubmit: drifts.length === 0 && vanished.length === 0 };
 }
 
 /** Human-readable lines for the console, the queue entry and the log. */
 export function describeDrift(report: DriftReport): string[] {
-  return report.drifts.map((d) =>
+  const lines = report.drifts.map((d) =>
     d.kind === "value changed"
       ? `"${d.label}": you approved "${d.approved}", the form now has "${d.now}"`
       : `"${d.label}" was not on the form you approved, and would be answered "${d.now}"`,
   );
+  for (const v of report.vanished) {
+    lines.push(
+      `"${v.label}" is not being answered now — you approved "${v.value}". The field probably still exists and we stopped reading it, so submitting would leave it blank.`,
+    );
+  }
+  return lines;
 }

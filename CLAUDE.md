@@ -127,6 +127,11 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   - **SKIP** → dropped.
   A lockfile + profile-busy guard keep the poller from colliding with an active fill run. Submit still
   happens ONLY on an emailed APPROVE (or the terminal grace-wait "submit").
+- **A DISAPPEARED field blocks the submit too.** If a question we approved an answer for is no
+  longer being read, the likely cause is OUR reader, not the employer — the field is still on
+  the page and we would submit it blank, silently dropping an answer the user gave. Measured on
+  this queue, nearly every recorded difference was our own code changing, not a posting changing.
+  Treat a difference as a suspected bug here first.
 - **A value the user has not read is never submitted.** The re-fill can only reuse approved values or
   stop. A REWORDED question passes only when the value going into it is character-for-character the
   approved one; "equivalent" is not a judgement this code is allowed to make. Do not relax

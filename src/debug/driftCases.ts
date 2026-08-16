@@ -66,10 +66,16 @@ const CASES: Case[] = [
     submit: false,
   },
   {
-    name: "an approved question is gone — nothing is submitted for it, so submit",
+    name: "an approved question is GONE — hold: we probably stopped reading a field that is still there",
     approved: [a("Full name *", "Nathan Yao"), a("Do you require sponsorship?", "No")],
     now: [a("Full name *", "Nathan Yao")],
-    submit: true,
+    submit: false,
+  },
+  {
+    name: "the whole page failed to read — every approved answer would be dropped, so hold loudly",
+    approved: [a("Full name *", "Nathan Yao"), a("Email*", "nyao2@andrew.cmu.edu"), a("GPA*", "3.7")],
+    now: [],
+    submit: false,
   },
   {
     name: "formatting-only difference in the value — submit",
