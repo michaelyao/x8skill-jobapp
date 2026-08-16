@@ -43,7 +43,14 @@ npx tsx src/debug/inspectMyInfo.ts      # full flow → dump DOM of My Informati
 WORKDAY_EMAIL=you@example.com
 WORKDAY_PASSWORD=yourpassword
 GEMINI_API_KEY=your_key_here
+GOG_KEYRING_PASSWORD=your_gog_keyring_passphrase
 ```
+
+`GOG_KEYRING_PASSWORD` is **not** a Google credential — it is the local passphrase encrypting
+gog's OAuth token file. It belongs in `.env` because launchd services do not read `~/.zshrc`:
+without it every send under the daemon fails with *"no TTY available for keyring file backend
+password prompt"* while the same code works by hand. An app password would not help; gog uses
+the Gmail API over OAuth, not SMTP.
 
 ## Architecture
 
