@@ -31,7 +31,7 @@ export interface SubmitContext {
 }
 
 export interface SubmitOutcome {
-  result: "submitted" | "already_submitted" | "will_retry" | "gave_up";
+  result: "submitted" | "already_submitted" | "will_retry" | "gave_up" | "held_for_reapproval";
   message: string;
   answers: AnswerEntry[];
   applications: ApplicationRecord[];
@@ -50,7 +50,14 @@ export interface SubmitOutcome {
 export async function submitApprovedEntry(
   entry: PendingEntry,
   ctx: SubmitContext,
-  opts: { replayAnswers?: FilledAnswer[]; note: string; onSubmitted?: () => Promise<void> },
+  opts: {
+    replayAnswers?: FilledAnswer[];
+    note: string;
+    onSubmitted?: () => Promise<void>;
+    /** Re-fill the live form and verify it against the approved answers before submitting.
+     *  Default. Pass false to replay blind (kept for a deliberate, exact re-run). */
+    refill?: boolean;
+  },
 ): Promise<SubmitOutcome> {
   const label = entry.code ?? entry.key;
   const job = jobFromEntry(entry);
@@ -76,12 +83,15 @@ export async function submitApprovedEntry(
   const attempts = (entry.attempts ?? 0) + 1;
   await updatePendingStatus(entry.key, "submitting", { attempts });
 
-  const replayAgent = new ReplayAgent(opts.replayAnswers ?? entry.answers ?? []);
+  const approvedAnswers = opts.replayAnswers ?? entry.answers ?? [];
+  const refill = opts.refill !== false;
+  const replayAgent = new ReplayAgent(approvedAnswers);
   const outcome = await applyToJob(job, identity, answers, applications, ctx.deps, {
     mode: "submit",
     interactive: false,
     graceMs: 0,
-    replayAnswers: opts.replayAnswers ?? entry.answers ?? [],
+    replayAnswers: approvedAnswers,
+    refillOnSubmit: refill,
     replayAgent,
     baseNotes: [opts.note],
   });
@@ -97,6 +107,24 @@ export async function submitApprovedEntry(
     await updatePendingStatus(entry.key, "submitted", { attempts, lastError: "already applied on site" });
     await opts.onSubmitted?.();
     return { result: "already_submitted", message: `[${label}] already applied on site`, answers, applications };
+  }
+
+  // Re-filled, but the form no longer produces what was approved. Nothing was submitted and
+  // nothing is retried: a retry would re-derive the same differences. It goes back to the queue
+  // carrying BOTH copies, and only a fresh approval of the new values can move it.
+  if (outcome.heldForReapproval) {
+    const { reasons, answers: proposed } = outcome.heldForReapproval;
+    await updatePendingStatus(entry.key, "awaiting_approval", {
+      attempts,
+      lastError: `held for re-approval: ${reasons.slice(0, 2).join("; ")}${reasons.length > 2 ? ` (+${reasons.length - 2} more)` : ""}`,
+      reapproval: { at: new Date().toISOString(), reasons, proposed, previous: approvedAnswers },
+    });
+    return {
+      result: "held_for_reapproval",
+      message: `[${label}] NOT submitted — the form no longer matches what you approved (${reasons.length} difference${reasons.length === 1 ? "" : "s"}). Review it again in the console.`,
+      answers,
+      applications,
+    };
   }
 
   // Nothing was submitted, so it is safe to hand back to the queue: reset to awaiting

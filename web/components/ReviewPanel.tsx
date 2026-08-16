@@ -22,7 +22,15 @@ type Answer = { label: string; value: string; draft?: boolean };
  * approval, not after it.
  */
 export function ReviewPanel({ entry, description, requisitionId, role, hasScreenshot }: Props) {
-  const original = useMemo<Answer[]>(() => (entry.answers ?? []).map((a) => ({ label: a.label, value: a.value, draft: a.draft })), [entry.answers]);
+  // A held job is the interesting case: the approved answers are stale, and what needs
+  // reviewing is what the re-fill actually produced. Show THAT, or approving would authorize
+  // a set of values that is no longer what the form holds.
+  const hold = entry.reapproval;
+  const source = hold?.proposed?.length ? hold.proposed : (entry.answers ?? []);
+  const original = useMemo<Answer[]>(
+    () => source.map((a) => ({ label: a.label, value: a.value, draft: a.draft })),
+    [source],
+  );
   const [answers, setAnswers] = useState<Answer[]>(original);
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -57,7 +65,8 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
     }
   }
 
-  const approve = () => send("approve", edited ? { answers: answers.map((a) => ({ ...a, type: "text" })) } : {});
+  const approve = () =>
+    send("approve", edited || hold ? { answers: answers.map((a) => ({ ...a, type: "text" })) } : {});
 
   return (
     <>
@@ -95,6 +104,25 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
 
         {note ? <p style={{ marginBottom: 0, marginTop: 12, color: "var(--accent)" }}>{note}</p> : null}
       </div>
+
+      {hold ? (
+        <div className="card" style={{ borderColor: "var(--warn)", marginBottom: 14 }}>
+          <h3 style={{ color: "var(--warn)", marginTop: 0 }}>Not submitted — the form changed since you approved it</h3>
+          <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
+            This was re-filled on {hold.at.slice(0, 16).replace("T", " ")} and stopped before submitting, because
+            {hold.reasons.length === 1 ? " one value" : ` ${hold.reasons.length} values`} would have differed from what
+            you read. The answers below are what the form holds NOW — approving accepts them.
+          </p>
+          <ul style={{ fontSize: 13, margin: 0, paddingLeft: 18 }}>
+            {hold.reasons.map((r) => (
+              <li key={r} style={{ marginBottom: 4 }}>{r}</li>
+            ))}
+          </ul>
+          <p className="muted" style={{ fontSize: 13, marginBottom: 0 }}>
+            <a href={`/history/${entry.code}`}>Compare every recorded copy →</a>
+          </p>
+        </div>
+      ) : null}
 
       <h2>Answers ({answers.length})</h2>
       <div className="card">
@@ -152,7 +180,9 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
       </div>
 
       <p className="muted" style={{ fontSize: 12, marginTop: 18 }}>
-        Signed in as {role}. Approving replays these exact answers into the form — no agent runs on that path.
+        Signed in as {role}. Approving re-opens the form and fills it with these exact values. Anything the
+        page asks that these do not cover stops the submit and comes back here for another look — a value you
+        have not read is never submitted.
       </p>
     </>
   );

@@ -182,7 +182,12 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
           note: command.answers?.length ? "approved in console (answers edited)" : "approved in console",
         },
       );
-      return { ok: outcome.result === "submitted" || outcome.result === "already_submitted", message: outcome.message };
+      // A hold is not a failure — the command ran, and the correct answer was "don't submit".
+      // It is reported as ok so the console shows the reason rather than a red FAILED.
+      return {
+        ok: outcome.result === "submitted" || outcome.result === "already_submitted" || outcome.result === "held_for_reapproval",
+        message: outcome.message,
+      };
     }
 
     default:

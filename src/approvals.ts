@@ -6,6 +6,7 @@ import { AUTH_DIR, DATA_DIR } from "./config.js";
 import { LlmAgent } from "./agent/llmAgent.js";
 import { applyToJob, type ApplyDeps } from "./core/applyJob.js";
 import { buildJobIdentity } from "./core/jobIdentity.js";
+import { jobFromEntry, submitApprovedEntry } from "./core/submitApproved.js";
 import { loadAnswers } from "./knowledge/answerStore.js";
 import { hasSubmittedBefore, loadApplications } from "./knowledge/applications.js";
 import {
@@ -29,22 +30,6 @@ const reviewDataFor = (entry: PendingEntry): ReviewData => ({
   jobDescription: entry.jobDescription ?? "",
   filledFields: entry.filledFields ?? [],
 });
-
-/** Rebuild a FilteredJob from a queued entry (Phase B never re-reads the CSV,
- *  since a days-old posting may have aged out of the fresh list). */
-function jobFromEntry(entry: PendingEntry): FilteredJob {
-  return {
-    company: entry.company,
-    title: entry.title,
-    location: entry.location ?? "",
-    age: "",
-    applyUrl: entry.applyUrl,
-    id: entry.code,
-    region: entry.region,
-    usEligible: true,
-    needsManualLocationReview: false,
-  };
-}
 
 /**
  * Phase B: scan the inbox for APPROVE/SKIP replies to queued applications and act
@@ -165,54 +150,30 @@ async function runPoll(): Promise<void> {
   const MAX_ATTEMPTS = 3;
 
   try {
-    // Clean approvals → replay the approved answers exactly and submit.
+    // Clean approvals → re-fill the live form, verify it against the approved answers, submit.
+    // The guard sequence lives in ONE place (submitApprovedEntry) and is shared with the
+    // console worker: two copies of it would eventually disagree, and the thing they guard
+    // is submitting the same application twice.
     for (const { entry, reply } of toApprove) {
       const label = entry.code ?? entry.key;
-      const job = jobFromEntry(entry);
-      const identity = buildJobIdentity(job);
-
-      // Cross-check the application ledger before touching a live form. The queue and
-      // the ledger are written separately, so if they ever disagree the ledger's
-      // "submitted" wins — re-submitting is not undoable, waiting is.
-      if (hasSubmittedBefore(applications, identity)) {
-        if (reply.messageId) await markReplyProcessed(entry.key, reply.messageId);
-        await updatePendingStatus(entry.key, "submitted", { lastError: "already submitted per local ledger" });
-        console.log(`  ⏭  [${label}] the ledger already records this as submitted — NOT submitting again.`);
-        continue;
-      }
-
       console.log(`Submitting approved [${label}] ${entry.company} - ${entry.title}`);
-      // Write-ahead marker: if this process dies after the click but before the result
-      // is recorded, the entry stays "submitting" and no later poll will re-submit it.
-      await updatePendingStatus(entry.key, "submitting", { attempts: (entry.attempts ?? 0) + 1 });
-      const outcome = await applyToJob(job, identity, answers, applications, deps, {
-        mode: "submit",
-        interactive: false,
-        graceMs: 0,
-        replayAnswers: entry.answers ?? [],
-        baseNotes: ["approved via email"],
-      });
+      const outcome = await submitApprovedEntry(
+        entry,
+        { answers, applications, deps },
+        {
+          note: "approved via email",
+          onSubmitted: async () => {
+            if (reply.messageId) await markReplyProcessed(entry.key, reply.messageId);
+          },
+        },
+      );
       answers = outcome.answers;
       applications = outcome.applications;
-      const attempts = (entry.attempts ?? 0) + 1;
-      if (outcome.submitted) {
-        if (reply.messageId) await markReplyProcessed(entry.key, reply.messageId);
-        await updatePendingStatus(entry.key, "submitted", { attempts });
-        console.log(`  ✅ [${label}] submitted.`);
-      } else if (outcome.alreadyApplied) {
-        if (reply.messageId) await markReplyProcessed(entry.key, reply.messageId);
-        await updatePendingStatus(entry.key, "submitted", { attempts, lastError: "already applied on site" });
-        console.log(`  ✅ [${label}] already applied on site — marking submitted.`);
-      } else {
-        const err = outcome.reachedReview
-          ? "submit control not found"
-          : `did not reach review on replay${outcome.blockedRequired?.length ? ` (blocked: ${outcome.blockedRequired.join("; ")})` : ""}`;
-        // Nothing was submitted, so it is safe to hand this back to the queue: reset to
-        // awaiting (clearing the write-ahead "submitting") and leave the reply
-        // unprocessed so the same APPROVE drives a retry, up to a cap.
-        const status = attempts >= MAX_ATTEMPTS ? "error" : "awaiting_approval";
-        await updatePendingStatus(entry.key, status, { attempts, lastError: err });
-        console.log(`  ⚠️ [${label}] not submitted (attempt ${attempts}/${MAX_ATTEMPTS}): ${err} — ${status === "error" ? "giving up" : "will retry"}.`);
+      console.log(`  ${outcome.result === "submitted" || outcome.result === "already_submitted" ? "✅" : "⚠️"} ${outcome.message}`);
+      // A hold is a finished outcome, not a failure to retry: re-running it would re-derive
+      // the same differences forever. Consume the reply so only a FRESH approval can act.
+      if (outcome.result === "held_for_reapproval" && reply.messageId) {
+        await markReplyProcessed(entry.key, reply.messageId);
       }
     }
 

@@ -6,6 +6,8 @@ import { WorkdayDriver } from "../agent/drivers/workday.js";
 import { LeverDriver } from "../agent/drivers/lever.js";
 import { runApplication } from "../agent/turnLoop.js";
 import { ReplayAgent } from "../agent/replayAgent.js";
+import { HybridAgent } from "../agent/hybridAgent.js";
+import { compareToApproved, describeDrift, type DriftReport } from "./approvalDrift.js";
 import { addLearnedAnswer } from "../knowledge/answerStore.js";
 import {
   classifyJobMatch,
@@ -68,6 +70,9 @@ export interface ApplyOptions {
   /** A pre-built ReplayAgent, so the caller can read back which required fields it could not
    *  match — that is how "the form changed" is told apart from a generic stall. */
   replayAgent?: Agent;
+  /** "submit" mode: re-fill the form and verify against the approved answers instead of
+   *  replaying blind. See approvalDrift.ts — the submit is refused if anything differs. */
+  refillOnSubmit?: boolean;
 }
 
 export interface ApplyOutcome {
@@ -76,6 +81,9 @@ export interface ApplyOutcome {
   summaryItem: RunSummaryItem;
   submitted: boolean;
   reachedReview: boolean;
+  /** Set when the re-filled form no longer matches what was approved: nothing was submitted
+   *  and the job needs a fresh approval. Carries the exact differences. */
+  heldForReapproval?: { reasons: string[]; report: DriftReport; answers: FilledAnswer[] };
   queued: boolean;
   alreadyApplied: boolean;
   blockedRequired: string[];
@@ -287,8 +295,18 @@ export async function applyToJob(
 
     // Clean approvals replay the exact approved answers (no LLM); everything else
     // (Phase A, change re-fills) uses the LLM agent, optionally with a correction.
-    const activeAgent: Agent =
-      opts.mode === "submit" && opts.replayAnswers ? (opts.replayAgent ?? new ReplayAgent(opts.replayAnswers)) : agent;
+    // A clean approval either REPLAYS the approved answers exactly, or (refillOnSubmit)
+    // re-fills the live form preferring them and verifies the result before submitting.
+    let hybrid: HybridAgent | undefined;
+    let activeAgent: Agent = agent;
+    if (opts.mode === "submit" && opts.replayAnswers) {
+      if (opts.refillOnSubmit) {
+        hybrid = new HybridAgent(opts.replayAnswers, agent);
+        activeAgent = hybrid;
+      } else {
+        activeAgent = opts.replayAgent ?? new ReplayAgent(opts.replayAnswers);
+      }
+    }
     const result = await runApplication(
       jobPage,
       driver,
@@ -410,7 +428,29 @@ export async function applyToJob(
     };
 
     if (opts.mode === "submit") {
-      // Phase B: the caller already verified an APPROVE reply for this job.
+      // Phase B: the caller already verified an APPROVE reply for this job. When the form was
+      // re-filled rather than replayed, the approval covers the VALUES the user read — so the
+      // form as it now stands is checked against them, and a single difference stops the click.
+      const report =
+        hybrid && opts.replayAnswers ? compareToApproved(opts.replayAnswers, result.answers) : undefined;
+      if (report && !report.safeToSubmit) {
+        const reasons = describeDrift(report);
+        console.log(`  ⛔ NOT submitting — ${reasons.length} difference(s) from what you approved:`);
+        for (const line of reasons.slice(0, 5)) console.log(`     • ${line}`);
+        await record("prefilled_pending_submit", { filledFields: result.filled, resume, notes: ["held for re-approval", ...reasons] });
+        await jobPage.close().catch(() => undefined);
+        return finish("prefilled_reached_review", ["held for re-approval", ...reasons], {
+          reachedReview: true,
+          heldForReapproval: { reasons, report, answers: result.answers },
+        });
+      }
+      if (report) {
+        console.log(
+          `  ✓ re-filled and verified: ${report.matched} value(s) match what you approved` +
+            (report.rewordedButSame.length ? `, ${report.rewordedButSame.length} reworded question(s) carry the same answer` : "") +
+            (report.vanished.length ? `, ${report.vanished.length} approved question(s) no longer on the form` : ""),
+        );
+      }
       await doSubmit();
     } else {
       // Phase A: email the review, wait briefly for an immediate reply, else queue.

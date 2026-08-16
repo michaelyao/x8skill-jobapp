@@ -106,14 +106,26 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   wait (`APPROVE_TIMEOUT_MS`, default 2 min) → **enqueue to `data/pending-approvals.json`** → move on.
   Phase B (`npm run approvals`, run by cron every 15 min via `approvals-cron.sh`): scan the inbox and
   classify each reply three ways — **APPROVE / SKIP / CHANGE**.
-  - **APPROVE** → `applyToJob` mode `"submit"` with a `ReplayAgent`: re-open and **replay the EXACT
-    approved answers** (stored in the queue), no LLM, then submit. Guarantees submitted == approved.
+  - **APPROVE** → `applyToJob` mode `"submit"` with a `HybridAgent`: re-open and **re-fill** the live
+    form, using an approved answer wherever the question still exists (matched positionally, so repeated
+    blocks keep their own values) and the LLM only for what the approved set does not cover. Before the
+    submit control is touched, `compareToApproved()` checks every value on the form against the approved
+    ones; **one difference and nothing is submitted** — the job returns to the queue with `reapproval`
+    holding both copies and the exact differences, and only a fresh approval can move it. Re-filling is
+    what makes a days-old approval work at all (the session is long gone); the check is what keeps
+    submitted == approved. Cases: `src/debug/driftCases.ts`.
   - **CHANGE** (reply asks for an edit) → `applyToJob` mode `"fill"` with `changeInstruction`: LLM
     re-fills applying the correction, emails a **fresh review**, requeues awaiting. The original reply
     is marked processed (`processedReplyIds`) so it never re-triggers; only a new APPROVE acts next.
   - **SKIP** → dropped.
   A lockfile + profile-busy guard keep the poller from colliding with an active fill run. Submit still
   happens ONLY on an emailed APPROVE (or the terminal grace-wait "submit").
+- **A value the user has not read is never submitted.** The re-fill can only reuse approved values or
+  stop. A REWORDED question passes only when the value going into it is character-for-character the
+  approved one; "equivalent" is not a judgement this code is allowed to make. Do not relax
+  `compareToApproved` into similarity matching.
+- **The guard sequence exists once.** `submitApprovedEntry` is the only path to a submit, shared by the
+  email poller and the console worker. It previously existed twice and the copies had already drifted.
 - **Never submit the same application twice.** The poller runs unattended every 15 min
   (`install-cron.sh`), so every layer below must hold. Do not remove any of them:
   1. `listAwaiting()` returns ONLY `awaiting_approval` — a `submitted` entry can never be picked up.

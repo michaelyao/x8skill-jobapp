@@ -52,6 +52,15 @@ export interface PendingEntry {
   editedInConsoleAt?: string;
   editedBy?: string; // console account that edited the answers
   approvedBy?: string; // console account that approved it ("email" when approved by reply)
+  /** Set when an approved job was re-filled and the live form no longer matched what was
+   *  approved. The submit was refused; these are the exact differences, awaiting a decision. */
+  reapproval?: {
+    at: string;
+    reasons: string[];
+    /** The answers as they now stand on the form — what a fresh approval would authorize. */
+    proposed: FilledAnswer[];
+    previous: FilledAnswer[];
+  };
   decidedAt?: string; // ISO — when approve/skip was actioned
 }
 
@@ -115,7 +124,7 @@ export async function markReplyProcessed(key: string, messageId: string): Promis
 export async function updatePendingStatus(
   key: string,
   status: PendingStatus,
-  extra: { attempts?: number; lastError?: string } = {},
+  extra: { attempts?: number; lastError?: string; reapproval?: PendingEntry["reapproval"] } = {},
 ): Promise<void> {
   const entries = await readQueue();
   const idx = entries.findIndex((e) => e.key === key);
@@ -126,6 +135,7 @@ export async function updatePendingStatus(
     updatedAt: new Date().toISOString(),
     ...(extra.attempts != null ? { attempts: extra.attempts } : {}),
     ...(extra.lastError != null ? { lastError: extra.lastError } : {}),
+    ...(extra.reapproval !== undefined ? { reapproval: extra.reapproval } : {}),
   };
   await writeQueue(entries);
 }

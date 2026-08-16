@@ -450,3 +450,43 @@ reimplement the driver in the test.
   `debug/testWorkday.ts` still imports it.
 - **Relocation-style prose.** Free-text questions get drafted paragraphs even when the
   intended answer is "Yes", because the field is a textarea. Correct but verbose.
+
+
+## 18. The audit trail, and re-filling after approval
+
+Approval can take days. By the time it arrives the browser session that filled the form is
+long gone, and the posting itself may have moved on — so the submit path does not assume the
+page is the one that was approved.
+
+**Every visit is recorded.** `src/knowledge/rounds.ts` writes an append-only copy of the form
+to `data/rounds/<CODE>/<ISO>-<phase>.json`: the fields in DOM order with type, required flag
+and options, plus the answers entered or replayed. Phases are `fill`, `refill` and `submit`.
+Nothing overwrites a round. This exists because "the form changed" was previously a claim
+rather than a fact, and on one occasion (SBXFMD) the claim was wrong — the real causes were a
+resume re-uploaded every turn and a replay that smeared one answer across repeated blocks.
+
+**Submitting re-fills, then verifies.** `HybridAgent` fills each field from the approved
+answers when the question is still there (positionally, so three "Company*" fields keep three
+distinct values), and falls back to the LLM only for what the approved set does not cover —
+recording every such field in `novel`. `compareToApproved()` (`src/core/approvalDrift.ts`) then
+compares what the form now holds against what the user approved, and the submit control is
+only touched when every value matches. A reworded question passes when the value going into it
+is exactly the approved one; a new question, a changed value or an extra repeated block does
+not. On a hold, nothing is submitted, the entry returns to `awaiting_approval` carrying
+`reapproval` (both answer sets and the reasons), and the console shows the differences with the
+re-filled answers for a fresh decision.
+
+The three outcomes, stated plainly:
+
+| Situation | What happens |
+|---|---|
+| Form unchanged (the common case) | re-filled from approved values, no LLM call, submitted |
+| Question reworded, same answer | submitted — the value is the approved one |
+| New question, changed value, extra block | **not submitted**, held for re-approval with the diff |
+
+**The console shows all of it.** `/history` lists every job with recorded copies and how much
+changed across its life; `/history/<CODE>` shows each copy annotated with what changed since
+the previous one, with rewordings rendered as both strings and the diverging tail highlighted.
+Jobs queued before rounds existed have a baseline rebuilt from the approval queue by
+`src/debug/backfillRounds.ts`; those are marked `reconstructed`, because their field list is
+inferred from the answers and a diff against them is partial.
