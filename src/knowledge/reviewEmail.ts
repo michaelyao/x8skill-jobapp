@@ -360,6 +360,38 @@ function classifyReply(body: string): { decision: ReplyDecision["decision"]; cha
  * walk each matching thread and consider only NON-sent messages (the real replies),
  * newest first. `ignoreIds` are replies already acted on.
  */
+/**
+ * ONE search that answers "which jobs have a reply at all?".
+ *
+ * checkApprovalOnce costs a search, a thread fetch and a message fetch PER JOB; with 30+
+ * queued that is a hundred subprocesses every poll. Gmail's thread list already carries the
+ * subject (which holds the job code) and the message count, so a single call narrows the
+ * expensive, safety-critical check down to the handful of threads that actually grew a reply.
+ * The attribution rules stay untouched in checkApprovalOnce — this only decides who to ask about.
+ */
+export async function codesWithReplies(newerThanDays = 14): Promise<Set<string>> {
+  const { out } = await gog([
+    "-a", gogAccount(), "gmail", "search",
+    `newer_than:${newerThanDays}d subject:"Review & Approve"`, "-j", "--max", "100",
+  ]);
+  const codes = new Set<string>();
+  let parsed: { threads?: Array<{ subject?: string; messageCount?: number }> };
+  try {
+    parsed = JSON.parse(out);
+  } catch {
+    return codes;
+  }
+  for (const thread of parsed.threads ?? []) {
+    // Our own review email is one message; a reply makes it two. A reply that starts its own
+    // thread still carries the code in its subject, so count it too.
+    const isReply = /^\s*re:/i.test(thread.subject ?? "");
+    if (!isReply && (thread.messageCount ?? 1) < 2) continue;
+    const code = (thread.subject ?? "").match(/\[([A-Z]{4,8})\]/)?.[1];
+    if (code) codes.add(code.toUpperCase());
+  }
+  return codes;
+}
+
 export async function checkApprovalOnce(
   d: ReviewData,
   opts: { newerThanDays?: number; ignoreIds?: string[] } = {},

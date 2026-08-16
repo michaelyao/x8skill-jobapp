@@ -160,10 +160,14 @@ async function status(args: Argv): Promise<number> {
   const [worker, pending, queue] = await Promise.all([readWorkerStatus(), pendingCommands(), loadPendingQueue().catch(() => [])]);
   const awaiting = queue.filter((e) => e.status === "awaiting_approval");
   const held = awaiting.filter((e) => e.reapproval);
-  const stuck = queue.filter((e) => e.status === "submitting");
+  // "submitting" means either a submit running RIGHT NOW or one whose outcome was never
+  // recorded. Only the second needs you. The worker's own status says which.
+  const submitting = queue.filter((e) => e.status === "submitting");
+  const inFlight = submitting.filter((e) => !isStale(worker) && worker?.state === "busy" && worker?.code === e.code);
+  const stuck = submitting.filter((e) => !inFlight.includes(e));
 
   if (args.json) {
-    console.log(JSON.stringify({ worker, stale: isStale(worker), pending: pending.length, awaiting: awaiting.length, held: held.length, stuck: stuck.length }));
+    console.log(JSON.stringify({ worker, stale: isStale(worker), pending: pending.length, awaiting: awaiting.length, held: held.length, inFlight: inFlight.length, stuck: stuck.length }));
     return 0;
   }
 
@@ -173,6 +177,7 @@ async function status(args: Argv): Promise<number> {
   if (worker?.lastError) console.log(`          last error: ${short(worker.lastError, 90)}`);
   console.log(`commands  ${pending.length} queued`);
   console.log(`awaiting  ${awaiting.length} application(s) need your approval${held.length ? `, ${held.length} held for re-approval` : ""}`);
+  if (inFlight.length) console.log(`in flight ${inFlight.map((e) => e.code).join(", ")} — submitting now`);
   if (stuck.length) console.log(`stuck     ${stuck.length} mid-submit — confirm on the ATS: ${stuck.map((e) => e.code).join(", ")}`);
 
   const recent = (await recentCommands(5)).filter((c) => c.result);

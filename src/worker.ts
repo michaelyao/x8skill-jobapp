@@ -19,6 +19,7 @@ import { loadPendingQueue, updatePendingStatus, upsertPending, type PendingEntry
 import { loadInternshipList } from "./sources/internshipList.js";
 import { loadProfile } from "./knowledge/profile.js";
 import { loadX8NoteConfig } from "./knowledge/x8note.js";
+import { scanEmailForDecisions } from "./knowledge/emailScan.js";
 import { writeWorkerStatus } from "./knowledge/workerStatus.js";
 import { ensureDir, makeRunDir } from "./utils/log.js";
 import type { FilteredJob } from "./types.js";
@@ -34,6 +35,9 @@ import type { FilteredJob } from "./types.js";
 loadEnv();
 
 const TICK_MS = Number(process.env.WORKER_TICK_MS ?? 10_000);
+// The inbox is checked far less often than commands are drained: a scan costs Gmail calls,
+// and a reply that waits five minutes has already waited hours. EMAIL_POLL_MS=0 disables it.
+const EMAIL_POLL_MS = Number(process.env.EMAIL_POLL_MS ?? 300_000);
 const BROWSER_LOCK = path.join(DATA_DIR, ".browser.lock");
 const IDLE_CLOSE_MS = Number(process.env.WORKER_IDLE_CLOSE_MS ?? 60_000);
 
@@ -307,6 +311,32 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
   }
 }
 
+let lastEmailScanAt = 0;
+
+/**
+ * Read the inbox and turn replies into commands. It never drives the browser itself — that is
+ * the whole point of folding it in here: one executor, one lane, one set of guards.
+ */
+async function scanEmail(): Promise<boolean> {
+  if (EMAIL_POLL_MS <= 0) return false;
+  if (Date.now() - lastEmailScanAt < EMAIL_POLL_MS) return false;
+  lastEmailScanAt = Date.now();
+  try {
+    const result = await scanEmailForDecisions();
+    for (const note of result.notes) console.log(`worker: email — ${note}`);
+    for (const item of result.enqueued) {
+      console.log(`worker: email — ${item.code} ${item.decision.toUpperCase()} → queued ${item.command}`);
+    }
+    if (result.enqueued.length) await writeWorkerStatus({ lastError: undefined });
+    return result.enqueued.length > 0;
+  } catch (error) {
+    const message = `email scan failed: ${(error as Error).message.split("\n")[0]}`;
+    console.log(`worker: ${message}`);
+    await writeWorkerStatus({ lastError: message });
+    return false;
+  }
+}
+
 async function tick(): Promise<void> {
   let didWork = false;
   for (;;) {
@@ -331,6 +361,8 @@ async function tick(): Promise<void> {
     console.log(`worker:   → ${result.ok ? "ok" : "FAILED"}: ${result.message}`);
     await completeCommand(claimed.file, result);
   }
+
+  if (!didWork) await scanEmail();
 
   if (didWork) contextIdleSince = Date.now();
   // Hand the Chrome profile back when there is nothing to do, so a manual CLI run can use it.
