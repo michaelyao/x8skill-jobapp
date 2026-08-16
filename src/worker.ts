@@ -16,6 +16,7 @@ import {
   type Command,
 } from "./knowledge/commands.js";
 import { loadPendingQueue, updatePendingStatus, upsertPending, type PendingEntry } from "./knowledge/approvalQueue.js";
+import { loadInternshipList } from "./sources/internshipList.js";
 import { loadProfile } from "./knowledge/profile.js";
 import { loadX8NoteConfig } from "./knowledge/x8note.js";
 import { writeWorkerStatus } from "./knowledge/workerStatus.js";
@@ -225,7 +226,11 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
       const applications = await loadApplications();
       const entry = await findEntry(command.code);
       const record = applications.find((a) => a.code === command.code || a.id === command.code);
-      if (!entry && !record) return { ok: false, message: `no job known as ${command.code}` };
+      // A brand-new posting exists in neither the queue nor the ledger — only in the CSV. It
+      // is the most ordinary thing to want to run, and refusing it would mean the terminal and
+      // the console can name a job the worker then claims not to know.
+      const listed = entry || record ? undefined : (await loadInternshipList().catch(() => [])).find((j) => j.id === command.code);
+      if (!entry && !record && !listed) return { ok: false, message: `no job known as ${command.code}` };
 
       // A retry re-opens a live form, so every "is this already done?" guard applies exactly as
       // it does on the submit path. Re-filling a submitted application risks a second one.
@@ -239,7 +244,9 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
         return { ok: false, message: `[${command.code}] was already applied to on the site — not re-opening it` };
       }
 
-      const job: FilteredJob = entry
+      const job: FilteredJob = listed
+        ? listed
+        : entry
         ? jobFromEntry(entry)
         : {
             company: record!.company,

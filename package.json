@@ -9,7 +9,8 @@
     "start": "tsx src/index.ts",
     "approvals": "tsx src/approvals.ts",
     "worker": "tsx src/worker.ts",
-    "hash-password": "node tools/hash-password.mjs"
+    "hash-password": "node tools/hash-password.mjs",
+    "cmd": "tsx src/cli.ts"
   },
   "repository": {
     "type": "git",
