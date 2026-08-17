@@ -291,10 +291,21 @@ export class LlmAgent implements Agent {
       // actually reads as a yes/no question (auxiliary-verb opener, or an "if yes/no"
       // follow-up); otherwise defer rather than write nonsense into the application.
       if ((field.type === "text" || field.type === "textarea") && /^(yes|no)\.?$/i.test(value.trim())) {
-        const label = field.label.toLowerCase();
+        // The auxiliary verb is not always at the front. Workday numbers its questions and
+        // front-loads a condition — "5. If selected for an internship position, are you willing
+        // and able to relocate…" — which an anchored test reads as free text, so a correct "Yes"
+        // was thrown away and the required field blocked the whole run.
+        const label = field.label.toLowerCase().replace(/^\s*(?:q\s*)?\d{1,2}\s*[.)\-:]\s*/i, "");
+        // "Why do you want to work here?" contains "do you" and is emphatically not a yes/no
+        // question. An opener that demands an explanation wins over any auxiliary verb later.
+        const wantsProse = /^(why|how|what|which|when|where|who|describe|tell|explain|elaborate|list|share|walk)\b/.test(label);
         const yesNoQuestion =
-          /^(do|does|did|are|is|was|were|have|has|had|will|would|can|could|should|may|must|shall)\b/.test(label) ||
-          /\bif (yes|no)\b/.test(label);
+          !wantsProse &&
+          (/^(do|does|did|are|is|was|were|have|has|had|will|would|can|could|should|may|must|shall)\b/.test(label) ||
+          /\b(are|is|was|were|do|does|did|have|has|had|will|would|can|could|should)\s+(you|your|there|the candidate)\b/.test(label) ||
+          /\b(willing|able|authoriz|eligible|require sponsorship|consent|agree)\b/.test(label) ||
+          /\(\s*yes\s*\/\s*no\s*\)/.test(label) ||
+          /\bif (yes|no)\b/.test(label));
         if (!yesNoQuestion) {
           console.warn(`  [agent] ignoring bare "${value.trim()}" for free-text field "${field.label.slice(0, 60)}" — needs a real answer.`);
           needsHuman = true;
