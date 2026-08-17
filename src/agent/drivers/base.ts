@@ -350,6 +350,19 @@ export abstract class GenericDriver implements AtsDriver {
       }
     }
 
+    // A captured option list is not always the WHOLE list. Workday's "Type to Add Skills" and
+    // "Field of Study" open on the first alphabetical page of a taxonomy — fourteen entries,
+    // Accounting through Ancient Studies, every one an A — while "How Did You Hear About Us?"
+    // really does offer five choices with five different initials. Presenting a page as a
+    // closed allowlist is why Skills came back "no answer available" for five turns although
+    // the resume states the skills plainly: the model was told its true answer was not allowed.
+    // Applied here, after options are attached, so it covers every driver's sampling path.
+    for (const field of fields) {
+      if (field.searchable || !field.options || field.options.length < 8) continue;
+      const initials = new Set(field.options.map((o) => (o[0] ?? "").toUpperCase()));
+      if (initials.size === 1) field.searchable = true;
+    }
+
     return { url: root.url(), fields, submitReady: await this.hasSubmit(root), nextAvailable: await this.hasNext(root) };
   }
 

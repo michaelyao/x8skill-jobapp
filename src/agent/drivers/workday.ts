@@ -447,12 +447,22 @@ export class WorkdayDriver extends GenericDriver {
       } catch {
         /* leave options undefined */
       }
+      // Is that list the WHOLE list, or the first page of one? "How Did You Hear About Us?"
+      // offers five genuine choices with five different initials. "Type to Add Skills" and
+      // "Field of Study" open on fourteen entries running Accounting → Ancient Studies: every
+      // one an A, i.e. page one of a taxonomy with thousands more behind it. Presenting a page
+      // as a closed list is why Skills came back "no answer available" while the resume states
+      // the skills plainly — the model was told its real answer was not an allowed option.
+      const initials = new Set((options ?? []).map((o) => (o[0] ?? "").toUpperCase()));
+      const pagedTaxonomy = (options?.length ?? 0) >= 8 && initials.size === 1;
+
       snapshot.fields.push({
         key: sel,
         label: combo.label,
         type: "single_select",
         required: combo.required,
         options,
+        searchable: pagedTaxonomy || undefined,
         sensitive: isSensitive(combo.label),
         widget: "workday-select",
         filled: false, // only captured while showing the "Select One" placeholder

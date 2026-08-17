@@ -139,6 +139,7 @@ function buildPrompt(snapshot: PageSnapshot, ctx: AgentContext): { system: strin
     "- SENSITIVE fields (work authorization, sponsorship, citizenship, demographics, disability, veteran, criminal history, salary, DOB, SSN): answer ONLY if the curated Q&A or profile clearly provides it; otherwise set needsHuman=true and leave value empty. Never guess these.",
     "- For factual fields (name, email, phone, school, dates): use the provided data. If it is genuinely absent, set needsHuman=true and leave value empty — do NOT guess.",
     '- If an OPTIONAL field asks for something the candidate simply does not have (a phone extension, a middle name, a second address, a portfolio they lack), the correct answer is EMPTY: set "blank": true with an empty value and needsHuman=false. Do not set needsHuman for these — nothing needs to be asked, there is genuinely nothing to enter.',
+    "- WORK EXPERIENCE BLOCKS: the form usually has fewer blocks than the candidate has positions. Fill them in the order listed above — the FIRST block takes position 1 (most recent), the second block position 2, and so on. Never put an older position in the first block: a form with a single block must get the most recent role, not the oldest. Keep each block internally consistent — the title, employer, location and dates in one block must all belong to the SAME position.",
     "- For 'have you previously worked for X / are you a former employee of X / do you work for X' questions: answer Yes ONLY if X (or its parent/subsidiary) appears in the candidate's Employment history below; otherwise No. Do NOT rely on any generic curated answer for this.",
     "- Do NOT answer or reference any submit button.",
     'Respond with ONLY a JSON array: [{"key":"...","value":"...","confidence":0.0-1.0,"needsHuman":false,"draft":false,"blank":false,"reasoning":"short"}]. One object per field, using the exact keys given.',
@@ -166,7 +167,11 @@ function buildPrompt(snapshot: PageSnapshot, ctx: AgentContext): { system: strin
       : "",
     ctx.jobDescription ? `\nJob description (context):\n${ctx.jobDescription.slice(0, 3000)}` : "",
     `\nCandidate profile:\n${profileSummary(ctx)}`,
-    `\nEmployment history (companies the candidate HAS worked for):\n${extractEmployers(ctx.resumeText).join(", ") || "(none parsed)"}`,
+    `\nEmployment history, MOST RECENT FIRST (the resume's order — position 1 is the current/latest role):\n${
+      extractEmployers(ctx.resumeText)
+        .map((name, i) => `  ${i + 1}. ${name}`)
+        .join("\n") || "  (none parsed)"
+    }`,
     `\nCandidate resume:\n${ctx.resumeText.slice(0, 6000)}`,
     ctx.answers.length ? `\nCurated Q&A (authoritative, especially for sensitive fields):\n${curatedSummary(ctx)}` : "",
     `\nFields to answer (JSON):\n${JSON.stringify(fieldsForLlm, null, 2)}`,
