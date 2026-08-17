@@ -480,6 +480,28 @@ export abstract class GenericDriver implements AtsDriver {
     // role="option" node (data-automation-id="menuItem") does nothing — "0 items selected" —
     // while clicking promptOption commits ("1 item selected"). menuItem precedes promptOption
     // in DOM order, so a selector matching both always clicked the dead one.
+    // The control names its own listbox while open. Ask IT first: a root-scoped
+    // activeListContainer query returns the first popup in the DOM, and on a page with several
+    // prompt fields that is a neighbour's. Measured on Pentair: every probe typed into "Type to
+    // Add Skills" came back with the same fourteen unfiltered entries — the list never filtered
+    // because we were reading a different field's list the whole time.
+    const ownedId =
+      (await control.getAttribute("aria-controls").catch(() => null)) ||
+      (await control.getAttribute("aria-owns").catch(() => null));
+    if (ownedId) {
+      const owned = root.locator(
+        `[id="${ownedId}"] [data-automation-id="promptOption"], [id="${ownedId}"] [role="option"], [id="${ownedId}"] [class*="select__option"]`,
+      );
+      if ((await owned.count().catch(() => 0)) > 0) return owned;
+    }
+    // Otherwise the popup Workday renders next to THIS field, not the first one on the page.
+    const nearby = root
+      .locator(keySelector)
+      .locator(
+        'xpath=ancestor::*[@data-automation-id="multiSelectContainer" or @data-automation-id="multiselectInputContainer" or starts-with(@data-automation-id,"formField")][1]',
+      )
+      .locator('[data-automation-id="promptOption"], [role="option"]');
+    if ((await nearby.count().catch(() => 0)) > 0) return nearby;
     const wdOpen = root.locator('[data-automation-id="activeListContainer"] [data-automation-id="promptOption"]');
     if ((await wdOpen.count().catch(() => 0)) > 0) return wdOpen;
     const container = root

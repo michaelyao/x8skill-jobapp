@@ -7,6 +7,11 @@ export function normalizeWhitespace(value: string): string {
 export function normalizeQuestion(value: string): string {
   return normalizeWhitespace(value)
     .toLowerCase()
+    // Strip a leading list marker. Workday numbers its custom questions ("5. If selected for
+    // an internship position, are you willing…"), so an answer recorded from a review — where
+    // the number is part of the label — did not match the same question elsewhere, or even the
+    // same question after the form renumbered it.
+    .replace(/^\s*(?:q\s*)?\d{1,2}\s*[.)\-:]\s*/i, "")
     .replace(/[“”"'`]/g, "")
     .replace(/\([^)]*\)/g, " ")
     .replace(/[_*:;?!.]+/g, " ")
