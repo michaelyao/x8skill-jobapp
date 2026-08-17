@@ -1,3 +1,4 @@
+import { normalizeQuestion } from "../utils/normalize.js";
 import type { Agent, AgentContext, FieldAnswer, FieldSpec, PageSnapshot } from "./types.js";
 
 // Legal / demographic / compensation fields we must never free-guess. The agent
@@ -344,6 +345,33 @@ export class LlmAgent implements Agent {
       answers.push({ key: field.key, value, confidence, needsHuman, draft, blank, source: "llm", reasoning: item.reasoning });
     }
     console.log(`  [agent] ${provider} answered ${answers.length}/${snapshot.fields.length} fields.`);
+    // An answer you corrected is used EXACTLY, not as a hint. The curated store is passed to
+    // the model as context, and the model paraphrases: "100K annualized" came back as "100K"
+    // after that exact wording had been recorded from a review. Whatever the model produced,
+    // an exact question match in the store wins — that is what "remember what I edited" has to
+    // mean, or the same correction has to be made again on the next form.
+    for (const answer of answers) {
+      const field = snapshot.fields.find((f) => f.key === answer.key);
+      if (!field) continue;
+      const stored = ctx.answers.find((entry) => entry.normalizedQuestion === normalizeQuestion(field.label));
+      if (!stored) continue;
+      const value = Array.isArray(stored.answer) ? stored.answer.join(", ") : String(stored.answer ?? "");
+      if (!value.trim() || value.trim() === answer.value.trim()) continue;
+      // For a closed list the stored wording may not be one of the options; leave those alone
+      // rather than writing a value the widget cannot take.
+      if (field.options?.length && !field.searchable) {
+        const lv = value.trim().toLowerCase();
+        const lead = (o: string) => o.split(/[,(:—–-]/)[0].trim().toLowerCase();
+        if (!field.options.some((o) => o.toLowerCase() === lv || lead(o) === lv)) continue;
+      }
+      console.log(`  [agent] using your recorded answer for "${field.label.slice(0, 52)}": ${JSON.stringify(value.slice(0, 60))}`);
+      answer.value = value;
+      answer.source = "curated";
+      answer.confidence = 1;
+      answer.needsHuman = false;
+      answer.draft = false;
+    }
+
     return answers;
   }
 }

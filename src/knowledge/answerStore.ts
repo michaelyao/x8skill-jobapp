@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { ANSWERS_JSON_PATH, QA_MARKDOWN_PATH, QA_TEXT_PATH } from "../config.js";
+import { ANSWERS_JSON_PATH, LEARNED_ANSWERS_PATH, QA_MARKDOWN_PATH, QA_TEXT_PATH } from "../config.js";
 import { normalizeQuestion } from "../utils/normalize.js";
 import { writeJson, writeText } from "../utils/log.js";
 import type { AnswerEntry, AnswerType, FormQuestion } from "../types.js";
@@ -59,9 +59,30 @@ export async function loadAnswers(): Promise<AnswerEntry[]> {
     }
   }
 
+  // Corrections the user made outrank the seed file. They live in their own store because
+  // this function REBUILDS entries from Q&A.txt every time it runs and then overwrites
+  // answers.json — so anything learned was thrown away by the next load. Measured: "100K
+  // annualized", recorded from a review, was back to the seed's "100K" minutes later.
+  for (const learned of await loadLearnedAnswers()) {
+    const idx = entries.findIndex((e) => e.normalizedQuestion === learned.normalizedQuestion);
+    if (idx >= 0) entries[idx] = { ...entries[idx], ...learned };
+    else entries.push(learned);
+  }
+
   await writeJson(ANSWERS_JSON_PATH, entries);
   await syncAnswersMarkdown(entries);
   return entries;
+}
+
+/** The user's own corrections, which survive a rebuild of the seed-derived store. */
+export async function loadLearnedAnswers(): Promise<AnswerEntry[]> {
+  try {
+    const raw = await fs.readFile(LEARNED_ANSWERS_PATH, "utf8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as AnswerEntry[]) : [];
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -132,6 +153,14 @@ export async function addLearnedAnswer(entries: AnswerEntry[], question: FormQue
       matchers: [normalizedQuestion],
     });
   }
+  // Record it where a reload cannot erase it, THEN update the derived store.
+  const learned = await loadLearnedAnswers();
+  const entry = entries.find((e) => e.normalizedQuestion === normalizedQuestion)!;
+  const at = learned.findIndex((e) => e.normalizedQuestion === normalizedQuestion);
+  if (at >= 0) learned[at] = entry;
+  else learned.push(entry);
+  await writeJson(LEARNED_ANSWERS_PATH, learned);
+
   await writeJson(ANSWERS_JSON_PATH, entries);
   await syncAnswersMarkdown(entries);
   return entries;

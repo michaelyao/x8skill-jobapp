@@ -29,6 +29,9 @@ export const QA_TEXT_PATH = path.join(ROOT_DIR, "Q&A.txt");
 export const QA_MARKDOWN_PATH = path.join(ROOT_DIR, "Q&A.md");
 export const PROFILE_JSON_PATH = path.join(DATA_DIR, "profile.json");
 export const ANSWERS_JSON_PATH = path.join(DATA_DIR, "answers.json");
+/** Answers the USER corrected. Kept apart from answers.json because that file is rebuilt from
+ *  Q&A.txt on every load — which silently discarded every correction ever made. */
+export const LEARNED_ANSWERS_PATH = path.join(DATA_DIR, "learned-answers.json");
 export const APPLICATIONS_JSON_PATH = path.join(DATA_DIR, "applications.json");
 export const APPLICATIONS_DIR = path.join(DATA_DIR, "applications");
 
