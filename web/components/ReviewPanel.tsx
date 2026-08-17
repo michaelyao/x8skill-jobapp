@@ -46,6 +46,26 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
   );
   const editedCount = answers.filter((a, i) => a.value !== original[i]?.value).length;
 
+  /**
+   * Fields belonging to one repeated row — "Work Experience 2 — Company*" — are shown together
+   * under that row's heading, with the prefix stripped from each label. Six employments as a
+   * flat list of "Company*, Job Title*, Company*, Job Title*…" is unreadable, and it was
+   * impossible to tell which dates belonged to which employer.
+   */
+  const groups = useMemo(() => {
+    const out: Array<{ title: string | null; items: Array<{ answer: Answer; index: number }> }> = [];
+    answers.forEach((answer, index) => {
+      const match = /^((?:work experience|experience|employment|education|school|languages?|certifications?)\s*\d+)\s+—\s+(.*)$/i.exec(answer.label);
+      const title = match ? match[1] : null;
+      const last = out[out.length - 1];
+      if (last && last.title === title && title !== null) last.items.push({ answer, index });
+      else if (last && last.title === null && title === null) last.items.push({ answer, index });
+      else out.push({ title, items: [{ answer, index }] });
+    });
+    return out;
+  }, [answers]);
+  const shortLabel = (label: string) => label.replace(/^[^—]+\d+\s+—\s+/, "");
+
   async function send(name: string, extra: Record<string, unknown> = {}) {
     setBusy(name);
     setNote(null);
@@ -145,39 +165,58 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
       <h2>Answers ({answers.length})</h2>
       <div className="card">
         {answers.length === 0 ? <p className="muted" style={{ margin: 0 }}>No structured answers recorded.</p> : null}
-        {answers.map((a, i) => {
-          const changed = a.value !== original[i]?.value;
-          return (
-            <div key={`${a.label}-${i}`} style={{ paddingBottom: 14, marginBottom: 14, borderBottom: i === answers.length - 1 ? "none" : "1px solid var(--line)" }}>
-              <div style={{ display: "flex", gap: 8, alignItems: "baseline", marginBottom: 5 }}>
-                <strong style={{ fontSize: 14 }}>{a.label}</strong>
-                {a.draft ? <span className="pill warn">draft — please read</span> : null}
-                {changed ? <span className="pill accent">edited</span> : null}
-              </div>
-              {a.value.length > 90 || a.value.includes("\n") ? (
-                <textarea
-                  rows={Math.min(10, Math.ceil(a.value.length / 90) + 1)}
-                  value={a.value}
-                  onChange={(e) => setAnswers((prev) => prev.map((p, j) => (j === i ? { ...p, value: e.target.value } : p)))}
-                />
-              ) : (
-                <input
-                  type="text"
-                  value={a.value}
-                  onChange={(e) => setAnswers((prev) => prev.map((p, j) => (j === i ? { ...p, value: e.target.value } : p)))}
-                />
-              )}
-              {changed ? (
-                <p className="muted" style={{ fontSize: 12, margin: "5px 0 0" }}>
-                  was: {original[i]?.value || "(empty)"}{" "}
-                  <button style={{ padding: "1px 7px", fontSize: 12 }} onClick={() => setAnswers((prev) => prev.map((p, j) => (j === i ? { ...p, value: original[i].value } : p)))}>
-                    revert
-                  </button>
-                </p>
-              ) : null}
-            </div>
-          );
-        })}
+        {groups.map((group, gi) => (
+          <div
+            key={`${group.title ?? "loose"}-${gi}`}
+            style={
+              group.title
+                ? { border: "1px solid var(--line)", borderRadius: 8, padding: "12px 14px", marginBottom: 14 }
+                : undefined
+            }
+          >
+            {group.title ? (
+              <h4 style={{ margin: "0 0 10px", textTransform: "none", letterSpacing: 0, fontSize: 13, color: "var(--accent)" }}>
+                {group.title}
+              </h4>
+            ) : null}
+            {group.items.map(({ answer: a, index: i }) => {
+              const changed = a.value !== original[i]?.value;
+              return (
+                <div key={`${a.label}-${i}`} style={{ paddingBottom: 12, marginBottom: 12, borderBottom: "1px solid var(--line)" }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "baseline", marginBottom: 5 }}>
+                    <strong style={{ fontSize: 14 }}>{group.title ? shortLabel(a.label) : a.label}</strong>
+                    {a.draft ? <span className="pill warn">draft — please read</span> : null}
+                    {changed ? <span className="pill accent">edited</span> : null}
+                  </div>
+                  {a.value.length > 90 || a.value.includes("\n") ? (
+                    <textarea
+                      rows={Math.min(12, a.value.split("\n").length + Math.ceil(a.value.length / 90))}
+                      value={a.value}
+                      onChange={(e) => setAnswers((prev) => prev.map((p, j) => (j === i ? { ...p, value: e.target.value } : p)))}
+                    />
+                  ) : (
+                    <input
+                      type="text"
+                      value={a.value}
+                      onChange={(e) => setAnswers((prev) => prev.map((p, j) => (j === i ? { ...p, value: e.target.value } : p)))}
+                    />
+                  )}
+                  {changed ? (
+                    <p className="muted" style={{ fontSize: 12, margin: "5px 0 0" }}>
+                      was: {original[i]?.value || "(empty)"}{" "}
+                      <button
+                        style={{ padding: "1px 7px", fontSize: 12 }}
+                        onClick={() => setAnswers((prev) => prev.map((p, j) => (j === i ? { ...p, value: original[i].value } : p)))}
+                      >
+                        revert
+                      </button>
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ))}
       </div>
 
       {hasScreenshot ? (

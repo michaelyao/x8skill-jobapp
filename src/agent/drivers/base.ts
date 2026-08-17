@@ -197,6 +197,26 @@ export abstract class GenericDriver implements AtsDriver {
           var headText = headB && headB.innerText ? headB.innerText.replace(/\\s+/g, " ").trim().slice(0, 40) : "";
           if (/^(work experience|experience|employment|education|school|languages?|certifications?|websites?)\\s*\\d*$/i.test(headText)) {
             blockName = headText;
+            // A SECTION heading ("Work Experience") names the group, not the row. Workday's
+            // review page numbers the rows 1..6; the form does not, so seven employment blocks
+            // all arrived as "Work Experience — Company*" and collapsed onto one another —
+            // which is why the console showed a single experience while the screenshot showed
+            // six. Derive the ordinal from the row's position among its sibling rows.
+            if (!/\\d\\s*$/.test(headText)) {
+              var rowEl = c;
+              while (rowEl && rowEl.parentElement !== upB) rowEl = rowEl.parentElement;
+              if (rowEl && rowEl.parentElement === upB) {
+                var sibs = [];
+                for (var sx = 0; sx < upB.children.length; sx += 1) {
+                  var ch = upB.children[sx];
+                  if (ch.querySelector && ch.querySelector("input, select, textarea")) sibs.push(ch);
+                }
+                if (sibs.length > 1) {
+                  var pos = sibs.indexOf(rowEl);
+                  if (pos >= 0) blockName = headText + " " + (pos + 1);
+                }
+              }
+            }
             break;
           }
           // No heading: derive one from the repeated panel's id, taking the NAME from the
