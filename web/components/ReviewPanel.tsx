@@ -36,6 +36,9 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
   const [note, setNote] = useState<string | null>(null);
   const [changeText, setChangeText] = useState("");
   const [showChange, setShowChange] = useState(false);
+  // Corrections are worth more than this one application: by default they become the standing
+  // answer for that question, so the next form asking it is filled correctly without a review.
+  const [remember, setRemember] = useState(true);
 
   const edited = useMemo(
     () => answers.some((a, i) => a.value !== original[i]?.value),
@@ -65,8 +68,17 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
     }
   }
 
-  const approve = () =>
-    send("approve", edited || hold ? { answers: answers.map((a) => ({ ...a, type: "text" })) } : {});
+  async function approve() {
+    // Teach first, then submit: the worker drains commands in order, so the correction is in
+    // the answer store before anything else runs — and it survives even if the submit fails.
+    if (edited && remember) {
+      const corrections = answers
+        .filter((a, i) => a.value !== original[i]?.value && a.value.trim())
+        .map((a) => ({ question: a.label, answer: a.value }));
+      if (corrections.length) await send("update_answers", { entries: corrections });
+    }
+    await send("approve", edited || hold ? { answers: answers.map((a) => ({ ...a, type: "text" })) } : {});
+  }
 
   return (
     <>
@@ -87,6 +99,12 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
           <button onClick={() => setShowChange((v) => !v)} disabled={busy !== null}>Request re-fill…</button>
           <button onClick={() => send("send_review_email")} disabled={busy !== null}>Send to my email</button>
           {edited ? <span className="pill warn">{editedCount} edited — these become the approved answers</span> : null}
+          {edited ? (
+            <label className="muted" style={{ fontSize: 13, display: "flex", gap: 6, alignItems: "center" }}>
+              <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+              Remember these corrections for future applications
+            </label>
+          ) : null}
         </div>
 
         {showChange ? (

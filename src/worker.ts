@@ -7,7 +7,8 @@ import { LlmAgent } from "./agent/llmAgent.js";
 import { buildJobIdentity } from "./core/jobIdentity.js";
 import { applyToJob, type ApplyDeps } from "./core/applyJob.js";
 import { jobFromEntry, submitApprovedEntry } from "./core/submitApproved.js";
-import { loadAnswers } from "./knowledge/answerStore.js";
+import { addLearnedAnswer, loadAnswers, syncAnswersMarkdown } from "./knowledge/answerStore.js";
+import { normalizeQuestion } from "./utils/normalize.js";
 import { hasSubmittedBefore, loadApplications } from "./knowledge/applications.js";
 import {
   claimNextCommand,
@@ -304,6 +305,40 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
         ? `still blocked on: ${outcome.blockedRequired.join("; ")}`
         : "did not reach review";
       return { ok: false, message: `[${command.code}] ${why}` };
+    }
+
+    case "update_answers": {
+      // Corrections made while reviewing become the standing answer for that question, so the
+      // same mistake is not made on the next twenty applications. This is the whole value of
+      // reviewing: the edit is a rule, not a one-off patch.
+      if (!command.entries?.length) return { ok: false, message: "no answers to record" };
+      let answers = await loadAnswers();
+      const learned: string[] = [];
+      for (const entry of command.entries) {
+        const label = (entry.question ?? "").trim();
+        const value = (entry.answer ?? "").trim();
+        if (!label || !value) continue;
+        answers = await addLearnedAnswer(
+          answers,
+          {
+            label,
+            normalizedLabel: normalizeQuestion(label),
+            type: "text",
+            required: false,
+            options: [],
+            locatorDescription: label,
+          },
+          value,
+        );
+        learned.push(label.length > 48 ? `${label.slice(0, 47)}…` : label);
+      }
+      await syncAnswersMarkdown(answers);
+      return {
+        ok: learned.length > 0,
+        message: learned.length
+          ? `recorded ${learned.length} answer(s) for future applications: ${learned.slice(0, 3).join("; ")}${learned.length > 3 ? ` (+${learned.length - 3})` : ""}`
+          : "nothing usable to record",
+      };
     }
 
     default:

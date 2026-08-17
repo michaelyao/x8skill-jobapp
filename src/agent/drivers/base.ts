@@ -609,10 +609,34 @@ export abstract class GenericDriver implements AtsDriver {
    * undiagnosable and this field failed that way for five turns.
    */
   protected async fillReactSelect(root: Root, control: Locator, value: string, keySelector?: string): Promise<boolean> {
+    // "Python, Computer Science" means "the real answer, then a broader one": try each in turn
+    // and keep the first the live list actually offers. A taxonomy that lacks the specific term
+    // usually has the general one, and an empty skills box helps nobody.
+    if (value.includes(",")) {
+      const candidates = value
+        .split(",")
+        .map((v) => v.trim())
+        .filter((v) => v.length >= 2);
+      if (candidates.length > 1) {
+        for (const candidate of candidates) {
+          if (await this.fillReactSelectOne(root, control, candidate, keySelector)) return true;
+        }
+        return false;
+      }
+    }
+    return this.fillReactSelectOne(root, control, value, keySelector);
+  }
+
+  private async fillReactSelectOne(root: Root, control: Locator, value: string, keySelector?: string): Promise<boolean> {
     const page = control.page();
     const want = value.trim().toLowerCase();
     const firstWord = value.trim().split(/[\s,/(]+/)[0] ?? value;
-    const probes = [...new Set([value.slice(0, 30), firstWord, value.trim().slice(0, 4)].filter((p) => p.length >= 2))];
+    // The FULL value gets two clean attempts before anything is shortened: a full word is what
+    // a taxonomy is most likely to contain, and these menus are flaky enough that one miss
+    // proves nothing. Only then try the first word, then a short prefix.
+    const probes = [...new Set([value.slice(0, 30), value.slice(0, 30), firstWord, value.trim().slice(0, 4)])].filter(
+      (p) => p.length >= 2,
+    );
     let lastSeen: string[] = [];
     let typedInto = "";
     const menu = () =>
@@ -668,13 +692,26 @@ export abstract class GenericDriver implements AtsDriver {
       // match fail. So wait for the list to CHANGE from what was showing before we typed.
       let opts = await menu();
       let count = 0;
-      for (let wait = 0; wait < 16; wait += 1) {
+      let prevFirst = "";
+      let stableFor = 0;
+      for (let wait = 0; wait < 20; wait += 1) {
         await page.waitForTimeout(250);
         opts = await menu();
         count = await opts.count().catch(() => 0);
-        if (count === 0) continue;
+        if (count === 0) {
+          prevFirst = "";
+          continue;
+        }
         const firstNow = ((await opts.first().innerText().catch(() => "")) || "").trim();
-        if (!staleFirst || firstNow !== staleFirst || /no items/i.test(firstNow)) break;
+        if (/no items/i.test(firstNow)) break; // a definite answer: the query matched nothing
+        // The list changed away from what was showing before the keystrokes → it has answered.
+        if (staleFirst && firstNow !== staleFirst) break;
+        // Nothing to compare against (the menu opened empty and filled in as we typed), so
+        // require the list to hold still: two identical reads in a row. Taking the first
+        // non-empty render here is what matched "Info" against the unfiltered A-page.
+        stableFor = firstNow === prevFirst ? stableFor + 1 : 0;
+        prevFirst = firstNow;
+        if (!staleFirst && stableFor >= 2) break;
       }
       if (count === 0) continue; // menu didn't open — retry
 
@@ -686,6 +723,11 @@ export abstract class GenericDriver implements AtsDriver {
       if (idx < 0) idx = texts.findIndex((t) => lead(t) === want);
       if (idx < 0) idx = texts.findIndex((t) => t.toLowerCase().includes(want) || want.includes(t.toLowerCase()));
       if (idx < 0) {
+        console.log(
+          `      ↳ probe "${typedInto || "(arrow-down)"}" → ${texts.length} option(s): ${texts
+            .slice(0, 5)
+            .join(" | ")}${texts.length > 5 ? ` (+${texts.length - 5})` : ""} — no match for "${value}"`,
+        );
         await page.keyboard.press("Escape").catch(() => undefined);
         continue; // options present but no match on this render — retry
       }
