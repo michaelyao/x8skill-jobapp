@@ -180,7 +180,47 @@ export abstract class GenericDriver implements AtsDriver {
         // WHICH entry or WHICH end of a date range it was filling: it wrote a start date of
         // 12/2025 against an end date of 4/2025 and Workday refused with "Must end before
         // start date". Prefix them with the nearest identifying ancestors.
-        if (/^(month|year|day|from|to)$/i.test(label)) {
+        // A REPEATED block (Work Experience 1/2/3, Education 1/2, Language 1/2) presents the
+        // same labels over and over: three fields called "Company*", three called "Job Title*".
+        // Without the block name nothing — not the agent, not the reviewer reading the console,
+        // not the comparison that decides whether a submit matches what was approved — can tell
+        // which position is which. Workday names each block in a heading or a panelSet item id;
+        // take that and put it in front of the label.
+        var blockName = "";
+        var upB = c.parentElement;
+        for (var lb = 0; lb < 12 && upB && !blockName; lb += 1) {
+          var aidB = upB.getAttribute("data-automation-id") || "";
+          // The block's own heading is the best name there is — it is what the PAGE calls the
+          // block, so the reviewer reading "Work Experience 2 — Company*" sees exactly what
+          // they would see on screen. Prefer it over any id we could derive.
+          var headB = upB.querySelector("h2, h3, h4, legend");
+          var headText = headB && headB.innerText ? headB.innerText.replace(/\\s+/g, " ").trim().slice(0, 40) : "";
+          if (/^(work experience|experience|employment|education|school|languages?|certifications?|websites?)\\s*\\d*$/i.test(headText)) {
+            blockName = headText;
+            break;
+          }
+          // No heading: derive one from the repeated panel's id, taking the NAME from the
+          // enclosing section (workExperienceSection) and the ORDINAL from the item itself.
+          if (/^panelSet-item|^workExperience|^education|^language/i.test(aidB)) {
+            var setB = upB.parentElement ? upB.parentElement.closest('[data-automation-id$="Section"]') : null;
+            var setName = setB ? (setB.getAttribute("data-automation-id") || "").replace(/Section$/i, "") : "";
+            var ord = (aidB.match(/(\\d+)\\s*$/) || [])[1] || "";
+            var pretty = (setName || aidB.replace(/[-_]?\\d+\\s*$/, "")).replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[-_]/g, " ").trim();
+            if (pretty && !/^panel ?set/i.test(pretty)) {
+              blockName = (pretty.charAt(0).toUpperCase() + pretty.slice(1) + (ord ? " " + ord : "")).trim();
+              break;
+            }
+          }
+          upB = upB.parentElement;
+        }
+        // Prefix ONLY the labels that actually repeat per block. A section heading otherwise
+        // gets glued onto every neighbouring question that happens to sit in the same section.
+        var repeats = /^(job title|company|employer|location|role description|description|i currently work here|from|to|month|year|day|degree|school|university|field of study|major|language|proficiency|title|start date|end date)\\b/i.test(label);
+        if (blockName && label && repeats && label.toLowerCase().indexOf(blockName.toLowerCase()) < 0) {
+          label = (blockName + " \u2014 " + label).slice(0, 190);
+        }
+
+        if (/^(month|year|day|from|to)$/i.test(label) || /\u2014 (month|year|day|from|to)$/i.test(label)) {
           const parts = [];
           let up2 = c.parentElement;
           for (let lv = 0; lv < 10 && up2 && parts.length < 2; lv += 1) {
@@ -197,6 +237,20 @@ export abstract class GenericDriver implements AtsDriver {
             up2 = up2.parentElement;
           }
           if (parts.length) label = (parts.join(" \u2014 ") + " \u2014 " + label).slice(0, 190);
+        }
+        // Both passes can contribute the same ancestor, giving "Work Experience 1 — From* —
+        // Work Experience 1 — Month". Collapse repeats, keeping the first occurrence so the
+        // block still leads the label.
+        if (label.indexOf(" \u2014 ") >= 0) {
+          var segs = label.split(" \u2014 ");
+          var kept = [];
+          for (var sg = 0; sg < segs.length; sg += 1) {
+            var seg = segs[sg].trim();
+            var dup = false;
+            for (var kk = 0; kk < kept.length; kk += 1) { if (kept[kk].toLowerCase() === seg.toLowerCase()) dup = true; }
+            if (seg && !dup) kept.push(seg);
+          }
+          label = kept.join(" \u2014 ");
         }
         // Workday "prompt" fields are multi-selects whose control is a BARE <input> — no
         // role, no select__ class — so they were read as free text: no options captured, the
@@ -543,9 +597,24 @@ export abstract class GenericDriver implements AtsDriver {
     return await ok();
   }
 
+  /**
+   * Type into a typeahead and commit a real selection.
+   *
+   * A taxonomy box ("Type to Add Skills" — thousands of entries behind a 14-row first page)
+   * will not necessarily filter on the WHOLE answer: typing "Python (Programming Language)"
+   * or "C++" can return nothing, while "Pyth" returns the row we want. So the full value is
+   * only the first probe; on later attempts it is shortened — first word, then a 4-letter
+   * prefix — and every option that appears is matched against the answer. If nothing matches,
+   * the options that WERE offered are logged, because a silent "would not take it" is
+   * undiagnosable and this field failed that way for five turns.
+   */
   protected async fillReactSelect(root: Root, control: Locator, value: string, keySelector?: string): Promise<boolean> {
     const page = control.page();
     const want = value.trim().toLowerCase();
+    const firstWord = value.trim().split(/[\s,/(]+/)[0] ?? value;
+    const probes = [...new Set([value.slice(0, 30), firstWord, value.trim().slice(0, 4)].filter((p) => p.length >= 2))];
+    let lastSeen: string[] = [];
+    let typedInto = "";
     const menu = () =>
       keySelector
         ? this.scopedOptions(root, keySelector, control)
@@ -553,37 +622,65 @@ export abstract class GenericDriver implements AtsDriver {
 
     // React-select menus are flaky to open (portal timing, filter re-render), so
     // retry with two open strategies: type-to-filter, then keyboard ArrowDown.
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (let attempt = 0; attempt < 2 + probes.length; attempt += 1) {
       await page.keyboard.press("Escape").catch(() => undefined);
       await page.waitForTimeout(150);
       await control.scrollIntoViewIfNeeded().catch(() => undefined);
       await control.click().catch(() => undefined);
       await page.waitForTimeout(350);
+      // What is on screen before we type? Anything still showing this after the keystrokes is
+      // a stale render, not an answer to our query.
+      const preOpts = await menu();
+      const staleFirst =
+        (await preOpts.count().catch(() => 0)) > 0
+          ? ((await preOpts.first().innerText().catch(() => "")) || "").trim()
+          : "";
       if (attempt === 1) {
         await control.press("ArrowDown").catch(() => undefined); // open without filtering
       } else {
         // Clear first. Workday's prompt keeps whatever is in its searchBox between attempts,
         // so a retry appended the text to itself ("Job BoardJob Board"), which matched no
         // option at all and turned a recoverable miss into a permanent failure.
+        const probe = probes[attempt === 0 ? 0 : Math.min(attempt - 1, probes.length - 1)];
         await control.fill("").catch(() => undefined);
-        await control.pressSequentially(value.slice(0, 30), { delay: 20 }).catch(() => undefined);
+        await control.pressSequentially(probe, { delay: 20 }).catch(() => undefined);
+        // Did the text actually land in the box the page filters on? A Workday prompt kept
+        // offering the same alphabetical first page — Accounting, Actuarial Science … — no
+        // matter what we typed, because the node we type into is not always the search box it
+        // listens to. Typing through the KEYBOARD reaches whatever the click focused.
+        typedInto = await control.inputValue().catch(() => "");
+        if (typedInto.trim().toLowerCase() !== probe.trim().toLowerCase()) {
+          await page.keyboard.type(probe, { delay: 20 }).catch(() => undefined);
+          await page.waitForTimeout(250);
+          typedInto = (await control.inputValue().catch(() => "")) || `(keyboard: ${probe})`;
+        }
       }
       // Async option lists (Greenhouse's school/discipline typeahead re-fetches per
       // keystroke and renders "Loading..." before any option) resolve after a variable
       // delay, so poll for real options instead of sampling once at a fixed wait.
       // Re-resolve menu() each round: aria-controls only exists while the menu is open.
+      //
+      // "Non-empty" is NOT the same as "answering our query". Workday leaves the previous
+      // render on screen while it re-queries, so the first non-empty read can be the stale
+      // unfiltered first page — measured: typing "Info" returned Accounting / Actuarial
+      // Science / Advertising, the same A-page as before the keystrokes, while "Pyth" on the
+      // same field correctly returned "No Items.". Accepting the stale page is what made the
+      // match fail. So wait for the list to CHANGE from what was showing before we typed.
       let opts = await menu();
       let count = 0;
-      for (let wait = 0; wait < 12; wait += 1) {
+      for (let wait = 0; wait < 16; wait += 1) {
         await page.waitForTimeout(250);
         opts = await menu();
         count = await opts.count().catch(() => 0);
-        if (count > 0) break;
+        if (count === 0) continue;
+        const firstNow = ((await opts.first().innerText().catch(() => "")) || "").trim();
+        if (!staleFirst || firstNow !== staleFirst || /no items/i.test(firstNow)) break;
       }
       if (count === 0) continue; // menu didn't open — retry
 
       const texts: string[] = [];
       for (let i = 0; i < count; i += 1) texts.push(((await opts.nth(i).innerText().catch(() => "")) || "").trim());
+      lastSeen = texts;
       const lead = (t: string) => t.toLowerCase().split(/[,(:—–-]/)[0].trim();
       let idx = texts.findIndex((t) => t.toLowerCase() === want);
       if (idx < 0) idx = texts.findIndex((t) => lead(t) === want);
@@ -613,6 +710,11 @@ export abstract class GenericDriver implements AtsDriver {
       await page.keyboard.press("Escape").catch(() => undefined);
     }
     await page.keyboard.press("Escape").catch(() => undefined);
+    console.log(
+      `      ↳ "${value}" matched none of the offered options [search box held: "${typedInto}"]${
+        lastSeen.length ? ` — saw: ${lastSeen.slice(0, 8).join(" | ")}${lastSeen.length > 8 ? ` (+${lastSeen.length - 8})` : ""}` : " — the menu never opened"
+      }`,
+    );
     return false;
   }
 
