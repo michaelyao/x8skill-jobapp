@@ -720,6 +720,15 @@ export abstract class GenericDriver implements AtsDriver {
           await page.waitForTimeout(250);
           typedInto = (await control.inputValue().catch(() => "")) || `(keyboard: ${probe})`;
         }
+        // Workday's taxonomy prompts do NOT filter as you type — they run the search on
+        // ENTER. Without this the list never changed, so every probe read back the same
+        // unfiltered first page (Accounting | Actuarial Science | Advertising …) and the
+        // field was abandoned as "would not take it" — measured on Pentair for both Field
+        // of Study and Skills. Typing "information" then Enter is what surfaces "Computer
+        // and Information Science" / "Information Technology" / "Management Information
+        // Systems"; typing "python" then Enter surfaces the python skills.
+        await page.keyboard.press("Enter").catch(() => undefined);
+        await page.waitForTimeout(400);
       }
       // Async option lists (Greenhouse's school/discipline typeahead re-fetches per
       // keystroke and renders "Loading..." before any option) resolve after a variable
@@ -792,6 +801,30 @@ export abstract class GenericDriver implements AtsDriver {
       await page.waitForTimeout(600);
       if (await this.hasSelection(root, keySelector, control)) return true;
       await page.keyboard.press("Escape").catch(() => undefined);
+    }
+    // Nothing worked. Print the widget's actual structure once, rather than guessing again at
+    // which node to type into and which list to read: every probe returning the SAME unfiltered
+    // page means we are talking to the wrong element, and only the DOM can say which is right.
+    if (keySelector) {
+      const shape = await root
+        .locator(keySelector)
+        .evaluate((el) => {
+          const box = el.closest('[data-automation-id="multiSelectContainer"], [data-automation-id="multiselectInputContainer"], [data-automation-id^="formField"]') || el.parentElement;
+          const describe = (n: Element) =>
+            `${n.tagName.toLowerCase()}${n.id ? "#" + n.id : ""}` +
+            `${n.getAttribute("data-automation-id") ? "[aid=" + n.getAttribute("data-automation-id") + "]" : ""}` +
+            `${n.getAttribute("role") ? "[role=" + n.getAttribute("role") + "]" : ""}` +
+            `${n.getAttribute("aria-controls") ? "[controls=" + n.getAttribute("aria-controls") + "]" : ""}` +
+            `${n.getAttribute("aria-expanded") ? "[expanded=" + n.getAttribute("aria-expanded") + "]" : ""}` +
+            `${(n as HTMLInputElement).value ? "[value=" + String((n as HTMLInputElement).value).slice(0, 20) + "]" : ""}`;
+          const inputs = box ? [...box.querySelectorAll("input, [role=textbox], [contenteditable=true]")].map(describe) : [];
+          const listsInside = box ? box.querySelectorAll('[data-automation-id="promptOption"], [role="option"]').length : 0;
+          const listsPage = document.querySelectorAll('[data-automation-id="promptOption"], [role="option"]').length;
+          const containers = [...document.querySelectorAll('[data-automation-id="activeListContainer"], [role="listbox"]')].map(describe);
+          return JSON.stringify({ me: describe(el), box: box ? describe(box) : null, inputs, listsInside, listsPage, containers });
+        })
+        .catch(() => "");
+      if (shape) console.log(`      ↳ widget shape: ${shape}`);
     }
     await page.keyboard.press("Escape").catch(() => undefined);
     console.log(
