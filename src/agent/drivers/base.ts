@@ -481,11 +481,16 @@ export abstract class GenericDriver implements AtsDriver {
     // role="option" node (data-automation-id="menuItem") does nothing — "0 items selected" —
     // while clicking promptOption commits ("1 item selected"). menuItem precedes promptOption
     // in DOM order, so a selector matching both always clicked the dead one.
-    // The control names its own listbox while open. Ask IT first: a root-scoped
+    // The OPEN menu first. Workday renders it as activeListContainer[role=listbox], and its rows
+    // are the only promptOption nodes that are actually selectable — the ones already chosen live
+    // on as chips inside the field itself. Reading those chips is what made every search after
+    // the first return the previous search's picks, twice over.
+    const openMenu = root.locator('[data-automation-id="activeListContainer"] [data-automation-id="promptOption"]');
+    if ((await openMenu.count().catch(() => 0)) > 0) return openMenu;
+
+    // The control names its own listbox while open. Ask IT next: a root-scoped
     // activeListContainer query returns the first popup in the DOM, and on a page with several
-    // prompt fields that is a neighbour's. Measured on Pentair: every probe typed into "Type to
-    // Add Skills" came back with the same fourteen unfiltered entries — the list never filtered
-    // because we were reading a different field's list the whole time.
+    // prompt fields that is a neighbour's.
     const ownedId =
       (await control.getAttribute("aria-controls").catch(() => null)) ||
       (await control.getAttribute("aria-owns").catch(() => null));
@@ -501,7 +506,11 @@ export abstract class GenericDriver implements AtsDriver {
       .locator(
         'xpath=ancestor::*[@data-automation-id="multiSelectContainer" or @data-automation-id="multiselectInputContainer" or starts-with(@data-automation-id,"formField")][1]',
       )
-      .locator('[data-automation-id="promptOption"], [role="option"]');
+      // Exclude anything under selectedItemList: those are the values already committed to this
+      // field, not options on offer.
+      .locator(
+        'xpath=.//*[@data-automation-id="promptOption" or @role="option"][not(ancestor::*[@data-automation-id="selectedItemList" or @data-automation-id="selectedItem"])]',
+      );
     if ((await nearby.count().catch(() => 0)) > 0) return nearby;
     const wdOpen = root.locator('[data-automation-id="activeListContainer"] [data-automation-id="promptOption"]');
     if ((await wdOpen.count().catch(() => 0)) > 0) return wdOpen;
@@ -674,38 +683,82 @@ export abstract class GenericDriver implements AtsDriver {
     const page = control.page();
     let selected = 0;
     const missing: string[] = [];
+    const offeredFor = new Map<string, string[]>();
 
-    for (const group of plan) {
+    const listbox = root.locator('[data-automation-id="activeListContainer"], [role="listbox"]').first();
+    const firstLabel = async (): Promise<string> => {
+      const rows = await this.scopedOptions(root, keySelector, control);
+      if (!(await rows.count().catch(() => 0))) return "";
+      return ((await rows.first().getAttribute("data-automation-label").catch(() => null)) || "").trim();
+    };
+
+    /** Type a search and wait until the results belong to IT, not to the previous query. */
+    const search = async (term: string): Promise<void> => {
+      const before = await firstLabel();
       await control.scrollIntoViewIfNeeded().catch(() => undefined);
       await control.click().catch(() => undefined);
-      await page.waitForTimeout(250);
+      await page.waitForTimeout(200);
       await control.fill("").catch(() => undefined);
-      await control.pressSequentially(group.search, { delay: 20 }).catch(() => undefined);
+      await control.pressSequentially(term, { delay: 15 }).catch(() => undefined);
+      // This prompt queries the server on ENTER, not on keystrokes.
       await control.press("Enter").catch(() => undefined);
-      await page.waitForTimeout(700);
-
-      const options = await this.scopedOptions(root, keySelector, control);
-      let count = 0;
-      for (let wait = 0; wait < 12; wait += 1) {
-        count = await options.count().catch(() => 0);
-        if (count > 0) break;
+      for (let wait = 0; wait < 16; wait += 1) {
         await page.waitForTimeout(250);
+        const now = await firstLabel();
+        if (now && now !== before) return; // the list has answered this query
+        if (/no items/i.test(now)) return;
       }
+    };
 
-      for (const wanted of group.select) {
-        // Match on the option's own label attribute — exact, case-insensitive. These come from a
-        // curated file, so a loose match would silently tick the wrong skill.
-        const row = options
-          .filter({ has: page.locator(`[data-automation-label="${wanted.replace(/"/g, '\\"')}"]`) })
-          .first();
-        const found = (await row.count().catch(() => 0)) > 0;
-        if (!found) {
-          missing.push(`${group.search} → ${wanted}`);
-          continue;
+    /** Click one exact label, paging the virtualised list to find it. */
+    const pick = async (target: string, offered: Set<string>): Promise<boolean> => {
+      const selector = `[data-automation-id="promptOption"][data-automation-label="${target.replace(/"/g, '\\"')}" i]`;
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const row = root.locator(selector).first();
+        if ((await row.count().catch(() => 0)) > 0) {
+          await row.scrollIntoViewIfNeeded().catch(() => undefined);
+          await row.click().catch(() => undefined);
+          await page.waitForTimeout(220);
+          return true;
         }
-        await row.click().catch(() => undefined);
-        await page.waitForTimeout(300);
-        selected += 1;
+        const rows = await this.scopedOptions(root, keySelector, control);
+        const n = await rows.count().catch(() => 0);
+        for (let i = 0; i < n; i += 1) {
+          const label = ((await rows.nth(i).getAttribute("data-automation-label").catch(() => null)) || "").trim();
+          if (label) offered.add(label);
+        }
+        const moved = await listbox
+          .evaluate((el) => {
+            const before = el.scrollTop;
+            el.scrollTop = before + Math.max(120, el.clientHeight - 32);
+            return el.scrollTop !== before;
+          })
+          .catch(() => false);
+        if (!moved) return false;
+        await page.waitForTimeout(200);
+      }
+      return false;
+    };
+
+    for (const group of plan) {
+      const offered = new Set<string>();
+      await search(group.search);
+      for (const wanted of group.select) {
+        const target = wanted.trim();
+        // Selecting a row makes Workday re-render the list, which resets the scroll position — so
+        // when an entry is not found, run the search again before giving up on it. One search per
+        // group plus a retry gets the whole group; a fresh search for every entry does not work at
+        // all, because re-opening the prompt that many times stops it returning results.
+        let ok = await pick(target, offered);
+        if (!ok) {
+          await search(group.search);
+          ok = await pick(target, offered);
+        }
+        if (ok) selected += 1;
+        else missing.push(`${group.search} → ${target}`);
+      }
+      if (offered.size && missing.some((m) => m.startsWith(`${group.search} → `))) {
+        offeredFor.set(group.search, [...offered]);
       }
       await page.keyboard.press("Escape").catch(() => undefined);
       await page.waitForTimeout(150);
@@ -713,7 +766,12 @@ export abstract class GenericDriver implements AtsDriver {
 
     if (missing.length) {
       console.log(`      ↳ skill.txt lists ${missing.length} entr${missing.length === 1 ? "y" : "ies"} the taxonomy did not offer:`);
-      for (const m of missing.slice(0, 8)) console.log(`         · ${m}`);
+      for (const m of missing.slice(0, 12)) console.log(`         · ${m}`);
+      // Say what the taxonomy DID offer for those searches, so a stale line in skill.txt can be
+      // corrected against the real vocabulary instead of guessed at.
+      for (const [search, labels] of offeredFor) {
+        console.log(`         "${search}" offered: ${labels.slice(0, 10).join(" | ")}${labels.length > 10 ? ` (+${labels.length - 10})` : ""}`);
+      }
     }
     console.log(`      ↳ selected ${selected} skill(s) from skill.txt`);
     return selected > 0;
