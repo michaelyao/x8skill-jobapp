@@ -720,6 +720,14 @@ export abstract class GenericDriver implements AtsDriver {
           await page.waitForTimeout(250);
           typedInto = (await control.inputValue().catch(() => "")) || `(keyboard: ${probe})`;
         }
+        // A Workday prompt backed by a REMOTE search (its rows come back as
+        // "menuItem-REMOTE_SKILL-1-119486") does not query on keystrokes — it queries on ENTER.
+        // Without it the list keeps showing the pre-search page, which is why every probe from
+        // "Python" to "JavaScript" was matched against the same fourteen A-entries. Typing
+        // "python" then Enter returns nineteen real rows: Python (Programming Language),
+        // Python IDLE, Pandas Python Library, and so on.
+        await control.press("Enter").catch(() => undefined);
+        await page.waitForTimeout(400);
         // Workday's taxonomy prompts do NOT filter as you type — they run the search on
         // ENTER. Without this the list never changed, so every probe read back the same
         // unfiltered first page (Accounting | Actuarial Science | Advertising …) and the
@@ -766,13 +774,61 @@ export abstract class GenericDriver implements AtsDriver {
       }
       if (count === 0) continue; // menu didn't open — retry
 
-      const texts: string[] = [];
-      for (let i = 0; i < count; i += 1) texts.push(((await opts.nth(i).innerText().catch(() => "")) || "").trim());
+      const readTexts = async (locator: Locator, n: number): Promise<string[]> => {
+        const out: string[] = [];
+        for (let i = 0; i < n; i += 1) {
+          // Prefer the option's own label attribute: the row wraps a checkbox, so innerText can
+          // pick up decoration, while promptOption carries the exact text Workday matches on.
+          const row = locator.nth(i);
+          const label =
+            (await row.getAttribute("data-automation-label").catch(() => null)) ||
+            (await row.locator('[data-automation-id="promptOption"]').first().getAttribute("data-automation-label").catch(() => null)) ||
+            (await row.innerText().catch(() => "")) ||
+            "";
+          out.push(label.replace(/\s+not checked$/i, "").trim());
+        }
+        return out;
+      };
+      let texts = await readTexts(opts, count);
       lastSeen = texts;
       const lead = (t: string) => t.toLowerCase().split(/[,(:—–-]/)[0].trim();
-      let idx = texts.findIndex((t) => t.toLowerCase() === want);
+      // Workday's skill search returns the taxonomy's canonical entries AND a free-text row for
+      // whatever was typed — searching "python" yields both "Python (Programming Language)" and
+      // a bare "python". Prefer the canonical one: it is the entry a recruiter's search matches,
+      // where the free-text row is just the raw string we typed.
+      let idx = texts.findIndex((t) => lead(t) === want && t.length > want.length);
+      if (idx < 0) idx = texts.findIndex((t) => t.toLowerCase() === want);
       if (idx < 0) idx = texts.findIndex((t) => lead(t) === want);
       if (idx < 0) idx = texts.findIndex((t) => t.toLowerCase().includes(want) || want.includes(t.toLowerCase()));
+      if (idx < 0) {
+        // ReactVirtualized renders only the rows in view. Scroll the listbox and re-read before
+        // concluding the value is absent.
+        const listbox = root.locator('[data-automation-id="activeListContainer"], [role="listbox"]').first();
+        for (let scroll = 0; scroll < 4 && idx < 0; scroll += 1) {
+          const moved = await listbox
+            .evaluate((el) => {
+              const before = el.scrollTop;
+              el.scrollTop = before + el.clientHeight;
+              return el.scrollTop !== before;
+            })
+            .catch(() => false);
+          if (!moved) break;
+          await page.waitForTimeout(250);
+          const more = await menu();
+          const n = await more.count().catch(() => 0);
+          const moreTexts = await readTexts(more, n);
+          for (const t of moreTexts) if (!texts.includes(t)) texts.push(t);
+          lastSeen = texts;
+          idx = moreTexts.findIndex((t) => t.toLowerCase() === want);
+          if (idx < 0) idx = moreTexts.findIndex((t) => lead(t) === want);
+          if (idx < 0) idx = moreTexts.findIndex((t) => t.toLowerCase().includes(want));
+          if (idx >= 0) {
+            opts = more;
+            texts = moreTexts;
+            break;
+          }
+        }
+      }
       if (idx < 0) {
         console.log(
           `      ↳ probe "${typedInto || "(arrow-down)"}" → ${texts.length} option(s): ${texts
