@@ -25,6 +25,12 @@ export interface SkillGroup {
   select: string[];
 }
 
+/** One selection: the exact label to tick, and the term that finds it. */
+export interface SkillPick {
+  search: string;
+  label: string;
+}
+
 export async function loadSkillPlan(): Promise<SkillGroup[]> {
   let raw: string;
   try {
@@ -46,4 +52,26 @@ export async function loadSkillPlan(): Promise<SkillGroup[]> {
     if (current) current.select.push(text);
   }
   return groups.filter((g) => g.select.length);
+}
+
+/**
+ * Flatten the plan into individual picks, honouring a per-line search override.
+ *
+ * The heading is normally both the group name and the search term, but the taxonomy does not
+ * always agree: "Node.js" is not among the results for "JavaScript" — it is found by typing
+ * "Node". A line may therefore name its own term after a pipe:
+ *
+ *   JavaScript:
+ *   JavaScript
+ *   Node.js | Node
+ */
+export async function loadSkillPicks(): Promise<SkillPick[]> {
+  const picks: SkillPick[] = [];
+  for (const group of await loadSkillPlan()) {
+    for (const line of group.select) {
+      const [label, override] = line.split("|");
+      picks.push({ label: label.trim(), search: (override ?? group.search).trim() });
+    }
+  }
+  return picks.filter((p) => p.label && p.search);
 }

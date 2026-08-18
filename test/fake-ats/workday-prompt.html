@@ -1,0 +1,144 @@
+<!doctype html>
+<!--
+  A stand-in for Workday's "Type to Add Skills" prompt, built from the live DOM and network
+  behaviour observed on Pentair (R23700). It exists so this widget can be worked on in seconds
+  instead of ten-minute round trips against a real posting — and so the five behaviours that
+  each cost a live run to discover stay pinned down by a test:
+
+    1. It searches ONLY on Enter (a server call, /skillsearch?search=…), never on keystrokes.
+    2. The response is delayed, and the PREVIOUS results stay on screen until it lands — so a
+       reader that samples too early sees the last query's answer.
+    3. The list is windowed like ReactVirtualized: only the rows in view exist in the DOM.
+    4. Selecting a row re-renders the list and RESETS its scroll position.
+    5. Selected values live on as chips inside the field, and those chips carry promptOption
+       nodes too — reading them yields "the previous search's picks, listed twice".
+
+  Structure mirrors the real thing: activeListContainer[role=listbox] > menuItem[role=option] >
+  promptOption[data-automation-label].
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>Workday skills prompt (fixture)</title></head>
+<body>
+<div id="app">
+  <div data-automation-id="formField-skills">
+    <label id="skills-label" for="skills-input">Type to Add Skills</label>
+    <div data-automation-id="multiSelectContainer">
+      <ul data-automation-id="selectedItemList" id="chips"></ul>
+      <input id="skills-input" type="text" data-automation-id="searchBox" autocomplete="off">
+    </div>
+  </div>
+  <div id="menu-host"></div>
+</div>
+
+<script>
+  // The taxonomy. Entries whose search key differs from the obvious one are deliberate: Node.js
+  // is only reachable by typing "node", exactly as the live tenant behaves.
+  const TAXONOMY = [
+    "Python (Programming Language)","Python IDLE","Maya Python","Python Software Development",
+    "Python Frameworks","Python Numpy","Python on z/OS","Programming Languages","Python Matplotlib",
+    "Python Automation","Python on Google App Engine","Python Sqlite3","Python Requests",
+    "Python for ArcGIS","Python Datetime Module","python","Python for Data Analysis",
+    "Pandas Python Library","PHP (Scripting Language)",
+    "C (Programming Language)","C NMR","C-Arm","C/AL (Programming Language)","Unix C","C++ Programming Language",
+    "JavaScript","Embedded JavaScript Templates","Javascript Architecture","Vanilla JavaScript",
+    "Unobtrusive JavaScript","JavaScript API","JScript","JavaScript MVC","Core JavaScript","React.js","Node.js",
+    "TypeScript","TypoScript","Adobe Type","Type Design","Typesetting",
+    "Structured Query Language (SQL)","U-SQL","Structured Query Language (SQL) Development","SQLCLR","Query Language",
+    "Hyper Text Markup Language (HTML)","CSS HTML","HTML Design","HTML Editor","HTML5",
+    "LESS CSS","XHTML CSS","Graphic Design",
+    "Anthropic Claude AI","Anthropic Claude API","Anthropic Claude Code","Anthropic Claude Cowork",
+    "Cursor AI","GitHub Copilot","Microsoft Visual Studio","Segment Anything (Meta AI)","FastAPI",
+    // The alphabetical first page the prompt shows before any search — the "Accounting…" list.
+    "Accounting","Actuarial Science","Advertising","Aerospace Engineering","African-American Studies",
+    "African Languages, Literatures, and Linguistics","African Studies","Agricultural Business and Management",
+    "Anatomy","Ancient Studies","Animal Behavior","Animal Science","Anthropology","Applied Mathematics",
+  ];
+
+  const LATENCY_MS = 300;      // the server call
+  const WINDOW_ROWS = 14;      // how many rows the virtualised list keeps in the DOM
+  const ROW_H = 32;
+
+  const input = document.getElementById("skills-input");
+  const host = document.getElementById("menu-host");
+  const chips = document.getElementById("chips");
+  const selected = new Set();
+  window.__selected = selected;
+  window.__searches = [];
+
+  let results = TAXONOMY.filter((t) => /^A/.test(t)).slice(0, 14); // the pre-search page
+  let listEl = null;
+  let scrollTop = 0;
+
+  function search(term) {
+    window.__searches.push(term);
+    const q = term.trim().toLowerCase();
+    // Fuzzy, like the real endpoint: substring on words, plus a free-text row for the raw string.
+    const hits = TAXONOMY.filter((t) => t.toLowerCase().includes(q));
+    const out = hits.slice(0, 30);
+    if (q && !out.some((t) => t.toLowerCase() === q)) out.push(term.trim());
+    // The response is LATE, and the old rows stay up until it arrives.
+    setTimeout(() => { results = out; scrollTop = 0; render(); }, LATENCY_MS);
+  }
+
+  function render() {
+    if (!listEl) {
+      listEl = document.createElement("div");
+      listEl.setAttribute("data-automation-id", "activeListContainer");
+      listEl.setAttribute("role", "listbox");
+      listEl.setAttribute("aria-label", "Options Expanded");
+      listEl.style.cssText = "height:249px;width:340px;overflow-y:auto;position:relative;border:1px solid #ccc";
+      listEl.addEventListener("scroll", () => { scrollTop = listEl.scrollTop; paint(); });
+      host.appendChild(listEl);
+    }
+    listEl.scrollTop = scrollTop;
+    paint();
+  }
+
+  function paint() {
+    if (!listEl) return;
+    const first = Math.max(0, Math.floor(scrollTop / ROW_H) - 2);
+    const last = Math.min(results.length, first + WINDOW_ROWS);
+    listEl.innerHTML =
+      '<div role="presentation" style="height:' + results.length * ROW_H + 'px;position:relative">' +
+      results.slice(first, last).map((label, i) => {
+        const idx = first + i;
+        const checked = selected.has(label);
+        return (
+          '<div data-automation-id="menuItem" role="option" aria-posinset="' + (idx + 1) + '"' +
+          ' aria-label="' + label.replace(/"/g, "&quot;") + (checked ? " checked" : " not checked") + '"' +
+          ' style="height:32px;position:absolute;top:' + idx * ROW_H + 'px;left:0;width:100%">' +
+          '<div data-automation-id="promptLeafNode">' +
+          '<div data-automation-id="checkbox"><input type="checkbox" data-automation-id="checkboxPanel"' +
+          (checked ? " checked" : "") + ' tabindex="-1"></div>' +
+          '<div data-automation-id="promptOption" data-automation-label="' + label.replace(/"/g, "&quot;") + '">' +
+          label + "</div></div></div>"
+        );
+      }).join("") + "</div>";
+    listEl.querySelectorAll('[data-automation-id="promptOption"]').forEach((node) => {
+      node.addEventListener("click", () => {
+        const label = node.getAttribute("data-automation-label");
+        selected.add(label);
+        paintChips();
+        scrollTop = 0;   // the real widget resets the scroll after a pick
+        paint();
+      });
+    });
+  }
+
+  function paintChips() {
+    // Chips carry promptOption nodes as well — the trap that made every later search read them.
+    chips.innerHTML = [...selected]
+      .map((label) =>
+        '<li data-automation-id="selectedItem"><div data-automation-id="promptOption"' +
+        ' data-automation-label="' + label.replace(/"/g, "&quot;") + '">' + label + "</div></li>",
+      )
+      .join("");
+  }
+
+  input.addEventListener("click", () => { if (!listEl) render(); });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); search(input.value); }
+  });
+</script>
+</body>
+</html>

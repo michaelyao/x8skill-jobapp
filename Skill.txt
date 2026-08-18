@@ -16,7 +16,7 @@ C++ Programming Language
 
 JavaScript:
 JavaScript 
-Node.js
+Node.js | Node
 
 TypeScript:
 TypeScript
@@ -45,7 +45,7 @@ Cursor AI
 
 Copilot:
 GitHub Copilot
-Microsoft Visual Studio
+Microsoft Visual Studio | Visual Studio
 
 Segment Anything (Meta AI):
 Segment Anything (Meta AI)

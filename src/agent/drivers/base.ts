@@ -1,5 +1,5 @@
 import type { Locator, Page } from "playwright";
-import { loadSkillPlan } from "../../knowledge/skillPlan.js";
+import { loadSkillPicks } from "../../knowledge/skillPlan.js";
 import { isSensitive } from "../llmAgent.js";
 import type { AtsDriver, FieldAnswer, FieldSpec, PageSnapshot, Root } from "../types.js";
 
@@ -678,8 +678,8 @@ export abstract class GenericDriver implements AtsDriver {
    * silently skipped — a curated list going stale is something the user needs to hear about.
    */
   protected async fillFromSkillPlan(root: Root, control: Locator, keySelector: string): Promise<boolean> {
-    const plan = await loadSkillPlan();
-    if (!plan.length) return false;
+    const picks = await loadSkillPicks();
+    if (!picks.length) return false;
     const page = control.page();
     let selected = 0;
     const missing: string[] = [];
@@ -711,7 +711,7 @@ export abstract class GenericDriver implements AtsDriver {
     };
 
     /** Click one exact label, paging the virtualised list to find it. */
-    const pick = async (target: string, offered: Set<string>): Promise<boolean> => {
+    const choose = async (target: string, offered: Set<string>): Promise<boolean> => {
       const selector = `[data-automation-id="promptOption"][data-automation-label="${target.replace(/"/g, '\\"')}" i]`;
       for (let attempt = 0; attempt < 8; attempt += 1) {
         const row = root.locator(selector).first();
@@ -740,29 +740,39 @@ export abstract class GenericDriver implements AtsDriver {
       return false;
     };
 
-    for (const group of plan) {
-      const offered = new Set<string>();
-      await search(group.search);
-      for (const wanted of group.select) {
-        const target = wanted.trim();
+    let currentSearch = "";
+    const offeredBySearch = new Map<string, Set<string>>();
+    for (const pick of picks) {
+      const offered = offeredBySearch.get(pick.search) ?? new Set<string>();
+      offeredBySearch.set(pick.search, offered);
+      // Search only when the term changes — consecutive picks that share one term reuse the
+      // list, and a pick that names its own term (skill.txt "Node.js | Node") gets it.
+      if (pick.search !== currentSearch) {
+        await search(pick.search);
+        currentSearch = pick.search;
+      }
+      {
+        const target = pick.label;
         // Selecting a row makes Workday re-render the list, which resets the scroll position — so
         // when an entry is not found, run the search again before giving up on it. One search per
         // group plus a retry gets the whole group; a fresh search for every entry does not work at
         // all, because re-opening the prompt that many times stops it returning results.
-        let ok = await pick(target, offered);
+        let ok = await choose(target, offered);
         if (!ok) {
-          await search(group.search);
-          ok = await pick(target, offered);
+          // Selecting a row re-renders the list and resets its scroll, so an entry that was below
+          // the fold can be missed on the first pass. Search again and look once more.
+          await search(pick.search);
+          ok = await choose(target, offered);
         }
         if (ok) selected += 1;
-        else missing.push(`${group.search} → ${target}`);
+        else {
+          missing.push(`${pick.search} → ${target}`);
+          if (offered.size) offeredFor.set(pick.search, [...offered]);
+        }
       }
-      if (offered.size && missing.some((m) => m.startsWith(`${group.search} → `))) {
-        offeredFor.set(group.search, [...offered]);
-      }
-      await page.keyboard.press("Escape").catch(() => undefined);
-      await page.waitForTimeout(150);
     }
+    await page.keyboard.press("Escape").catch(() => undefined);
+    await page.waitForTimeout(150);
 
     if (missing.length) {
       console.log(`      ↳ skill.txt lists ${missing.length} entr${missing.length === 1 ? "y" : "ies"} the taxonomy did not offer:`);

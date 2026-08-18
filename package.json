@@ -10,7 +10,8 @@
     "approvals": "tsx src/approvals.ts",
     "worker": "tsx src/worker.ts",
     "hash-password": "node tools/hash-password.mjs",
-    "cmd": "tsx src/cli.ts"
+    "cmd": "tsx src/cli.ts",
+    "test:skills": "tsx src/debug/skillPromptCases.ts"
   },
   "repository": {
     "type": "git",
