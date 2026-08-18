@@ -1,4 +1,5 @@
 import type { Locator, Page } from "playwright";
+import { loadSkillPlan } from "../../knowledge/skillPlan.js";
 import { isSensitive } from "../llmAgent.js";
 import type { AtsDriver, FieldAnswer, FieldSpec, PageSnapshot, Root } from "../types.js";
 
@@ -534,6 +535,15 @@ export abstract class GenericDriver implements AtsDriver {
     if (!(await locator.count())) return false;
     const value = answer.value;
 
+    // A skills prompt is a MULTI-select over a taxonomy that names things its own way, so the
+    // mapping is curated in skill.txt rather than guessed: type the heading, then tick the exact
+    // entries listed under it. Nothing else can know that "Python" means eight separate rows.
+    if (/\b(add skills?|^skills?)\b/i.test(field.label) && (field.searchable || field.widget === "workday-select")) {
+      const filled = await this.fillFromSkillPlan(root, locator, field.key);
+      if (filled) return true;
+      // No plan (or nothing matched) — fall through to the normal single-value path.
+    }
+
     if (field.widget === "react-select") return this.fillReactSelect(root, locator, value, field.key);
 
     if (field.type === "single_select") {
@@ -650,6 +660,65 @@ export abstract class GenericDriver implements AtsDriver {
    * the options that WERE offered are logged, because a silent "would not take it" is
    * undiagnosable and this field failed that way for five turns.
    */
+  /**
+   * Tick every entry the curated plan names, one search at a time.
+   *
+   * Each group is a separate server-side search: type the heading, press Enter (this prompt
+   * queries on Enter, not on keystrokes), then click each listed option by its exact
+   * data-automation-label. A label the taxonomy no longer offers is REPORTED rather than
+   * silently skipped — a curated list going stale is something the user needs to hear about.
+   */
+  protected async fillFromSkillPlan(root: Root, control: Locator, keySelector: string): Promise<boolean> {
+    const plan = await loadSkillPlan();
+    if (!plan.length) return false;
+    const page = control.page();
+    let selected = 0;
+    const missing: string[] = [];
+
+    for (const group of plan) {
+      await control.scrollIntoViewIfNeeded().catch(() => undefined);
+      await control.click().catch(() => undefined);
+      await page.waitForTimeout(250);
+      await control.fill("").catch(() => undefined);
+      await control.pressSequentially(group.search, { delay: 20 }).catch(() => undefined);
+      await control.press("Enter").catch(() => undefined);
+      await page.waitForTimeout(700);
+
+      const options = await this.scopedOptions(root, keySelector, control);
+      let count = 0;
+      for (let wait = 0; wait < 12; wait += 1) {
+        count = await options.count().catch(() => 0);
+        if (count > 0) break;
+        await page.waitForTimeout(250);
+      }
+
+      for (const wanted of group.select) {
+        // Match on the option's own label attribute — exact, case-insensitive. These come from a
+        // curated file, so a loose match would silently tick the wrong skill.
+        const row = options
+          .filter({ has: page.locator(`[data-automation-label="${wanted.replace(/"/g, '\\"')}"]`) })
+          .first();
+        const found = (await row.count().catch(() => 0)) > 0;
+        if (!found) {
+          missing.push(`${group.search} → ${wanted}`);
+          continue;
+        }
+        await row.click().catch(() => undefined);
+        await page.waitForTimeout(300);
+        selected += 1;
+      }
+      await page.keyboard.press("Escape").catch(() => undefined);
+      await page.waitForTimeout(150);
+    }
+
+    if (missing.length) {
+      console.log(`      ↳ skill.txt lists ${missing.length} entr${missing.length === 1 ? "y" : "ies"} the taxonomy did not offer:`);
+      for (const m of missing.slice(0, 8)) console.log(`         · ${m}`);
+    }
+    console.log(`      ↳ selected ${selected} skill(s) from skill.txt`);
+    return selected > 0;
+  }
+
   protected async fillReactSelect(root: Root, control: Locator, value: string, keySelector?: string): Promise<boolean> {
     // "Python, Computer Science" means "the real answer, then a broader one": try each in turn
     // and keep the first the live list actually offers. A taxonomy that lacks the specific term
@@ -676,9 +745,19 @@ export abstract class GenericDriver implements AtsDriver {
     // The FULL value gets two clean attempts before anything is shortened: a full word is what
     // a taxonomy is most likely to contain, and these menus are flaky enough that one miss
     // proves nothing. Only then try the first word, then a short prefix.
-    const probes = [...new Set([value.slice(0, 30), value.slice(0, 30), firstWord, value.trim().slice(0, 4)])].filter(
-      (p) => p.length >= 2,
-    );
+    // The full value is not always what the search wants. "Computer and Information Science"
+    // returns nothing typed whole, while "information" returns it — so a distinctive INNER word
+    // is tried too, longest first (stop-words excluded). Order: the whole value twice (menus are
+    // flaky and one miss proves nothing), then the first word, then the longest inner word, then
+    // a short prefix.
+    const words = value
+      .trim()
+      .split(/[\s,/()]+/)
+      .filter((w) => w.length >= 4 && !/^(and|the|for|with|from|your|this|that)$/i.test(w))
+      .sort((a, b) => b.length - a.length);
+    const probes = [
+      ...new Set([value.slice(0, 30), value.slice(0, 30), firstWord, ...words.slice(0, 2), value.trim().slice(0, 4)]),
+    ].filter((p) => p.length >= 2);
     let lastSeen: string[] = [];
     let typedInto = "";
     const menu = () =>

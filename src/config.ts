@@ -28,6 +28,9 @@ export const PROFILE_TEXT_PATH = path.join(ROOT_DIR, "text version.txt");
 export const QA_TEXT_PATH = path.join(ROOT_DIR, "Q&A.txt");
 export const QA_MARKDOWN_PATH = path.join(ROOT_DIR, "Q&A.md");
 export const PROFILE_JSON_PATH = path.join(DATA_DIR, "profile.json");
+/** Hand-curated mapping from a skill to the exact Workday taxonomy entries to select. */
+export const SKILL_PLAN_PATH = path.join(ROOT_DIR, "skill.txt");
+
 export const ANSWERS_JSON_PATH = path.join(DATA_DIR, "answers.json");
 /** Answers the USER corrected. Kept apart from answers.json because that file is rebuilt from
  *  Q&A.txt on every load — which silently discarded every correction ever made. */

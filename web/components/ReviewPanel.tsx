@@ -55,8 +55,12 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
   const groups = useMemo(() => {
     const out: Array<{ title: string | null; items: Array<{ answer: Answer; index: number }> }> = [];
     answers.forEach((answer, index) => {
-      const match = /^((?:work experience|experience|employment|education|school|languages?|certifications?)\s*\d+)\s+—\s+(.*)$/i.exec(answer.label);
-      const title = match ? match[1] : null;
+      // The block name is not always at the front: the date pass prepends "From*" after the
+      // block pass has run, so "From* — Work Experience 2 — Month" belongs to Work Experience 2
+      // even though it does not begin with it. Anchoring to the start dropped every date field
+      // out of its own group.
+      const match = /(work experience|experience|employment|education|school|languages?|certifications?)\s*\d+/i.exec(answer.label);
+      const title = match ? match[0].replace(/\s+/g, " ") : null;
       const last = out[out.length - 1];
       if (last && last.title === title && title !== null) last.items.push({ answer, index });
       else if (last && last.title === null && title === null) last.items.push({ answer, index });
@@ -64,7 +68,50 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
     });
     return out;
   }, [answers]);
-  const shortLabel = (label: string) => label.replace(/^[^—]+\d+\s+—\s+/, "");
+  /**
+   * Remove the block name from a label inside its own group. It is not always a prefix: the date
+   * pass prepends "From*" after the block pass has already run, so the label arrives as
+   * "From* — Work Experience 1 — Month" and stripping only the front leaves the block wedged in
+   * the middle. Remove it wherever it sits, then tidy the orphaned separators.
+   */
+  const shortLabel = (label: string, title?: string | null) => {
+    let out = label;
+    if (title) out = out.split(" — ").filter((part) => part.trim().toLowerCase() !== title.toLowerCase()).join(" — ");
+    return out.replace(/^\s*—\s*|\s*—\s*$/g, "").trim() || label;
+  };
+
+  /**
+   * Inside a group, "From* — Month" and "From* — Year" are one date to a human, and reading six
+   * employments means reading them quickly. So date parts are laid out on a single line under a
+   * shared label, short fields pair up two to a row, and only long text takes the full width.
+   */
+  type Row = { kind: "single" | "date" | "long"; label: string; items: Array<{ answer: Answer; index: number }> };
+  const rowsFor = (items: Array<{ answer: Answer; index: number }>, title?: string | null): Row[] => {
+    const stripped = Boolean(title);
+    const rows: Row[] = [];
+    const dateOf = new Map<string, Row>();
+    for (const item of items) {
+      const label = stripped ? shortLabel(item.answer.label, title) : item.answer.label;
+      const datePart = /^(.*?)\s*—\s*(month|year|day)$/i.exec(label);
+      if (datePart) {
+        // Workday's end date arrives labelled "From* — To*" because the range shares a heading;
+        // to a reader it is simply "To*".
+        const key = datePart[1].trim().replace(/^from\*?\s*—\s*/i, "");
+        const existing = dateOf.get(key);
+        if (existing) {
+          existing.items.push(item);
+          continue;
+        }
+        const row: Row = { kind: "date", label: key, items: [item] };
+        dateOf.set(key, row);
+        rows.push(row);
+        continue;
+      }
+      const long = item.answer.value.length > 90 || item.answer.value.includes("\n");
+      rows.push({ kind: long ? "long" : "single", label, items: [item] });
+    }
+    return rows;
+  };
 
   async function send(name: string, extra: Record<string, unknown> = {}) {
     setBusy(name);
@@ -165,58 +212,85 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
       <h2>Answers ({answers.length})</h2>
       <div className="card">
         {answers.length === 0 ? <p className="muted" style={{ margin: 0 }}>No structured answers recorded.</p> : null}
-        {groups.map((group, gi) => (
-          <div
-            key={`${group.title ?? "loose"}-${gi}`}
-            style={
-              group.title
-                ? { border: "1px solid var(--line)", borderRadius: 8, padding: "12px 14px", marginBottom: 14 }
-                : undefined
-            }
-          >
-            {group.title ? (
-              <h4 style={{ margin: "0 0 10px", textTransform: "none", letterSpacing: 0, fontSize: 13, color: "var(--accent)" }}>
-                {group.title}
-              </h4>
-            ) : null}
-            {group.items.map(({ answer: a, index: i }) => {
-              const changed = a.value !== original[i]?.value;
-              return (
-                <div key={`${a.label}-${i}`} style={{ paddingBottom: 12, marginBottom: 12, borderBottom: "1px solid var(--line)" }}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "baseline", marginBottom: 5 }}>
-                    <strong style={{ fontSize: 14 }}>{group.title ? shortLabel(a.label) : a.label}</strong>
-                    {a.draft ? <span className="pill warn">draft — please read</span> : null}
-                    {changed ? <span className="pill accent">edited</span> : null}
+        {groups.map((group, gi) => {
+          const rows = rowsFor(group.items, group.title);
+          const edit = (i: number) => (e: { target: { value: string } }) =>
+            setAnswers((prev) => prev.map((p, j) => (j === i ? { ...p, value: e.target.value } : p)));
+          const revert = (i: number) => () =>
+            setAnswers((prev) => prev.map((p, j) => (j === i ? { ...p, value: original[i].value } : p)));
+          const badges = (a: Answer, i: number) => (
+            <>
+              {a.draft ? <span className="pill warn">draft</span> : null}
+              {a.value !== original[i]?.value ? <span className="pill accent">edited</span> : null}
+            </>
+          );
+
+          return (
+            <div
+              key={`${group.title ?? "loose"}-${gi}`}
+              style={
+                group.title
+                  ? { border: "1px solid var(--line)", borderRadius: 8, padding: "10px 12px", marginBottom: 10 }
+                  : { marginBottom: 4 }
+              }
+            >
+              {group.title ? (
+                <h4 style={{ margin: "0 0 8px", textTransform: "none", letterSpacing: 0, fontSize: 13, color: "var(--accent)" }}>
+                  {group.title}
+                </h4>
+              ) : null}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: "8px 14px" }}>
+                {rows.map((row, ri) => (
+                  <div
+                    key={`${row.label}-${ri}`}
+                    style={row.kind === "long" ? { gridColumn: "1 / -1" } : undefined}
+                  >
+                    <div style={{ display: "flex", gap: 6, alignItems: "baseline", marginBottom: 3 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600 }}>{row.label}</span>
+                      {row.items.map(({ answer: a, index: i }) => (
+                        <span key={i}>{badges(a, i)}</span>
+                      ))}
+                    </div>
+                    {row.kind === "date" ? (
+                      <div style={{ display: "flex", gap: 6 }}>
+                        {row.items.map(({ answer: a, index: i }) => (
+                          <input
+                            key={i}
+                            type="text"
+                            value={a.value}
+                            onChange={edit(i)}
+                            title={a.label}
+                            placeholder={(/month/i.test(a.label) && "MM") || (/year/i.test(a.label) && "YYYY") || "DD"}
+                            style={{ width: /year/i.test(a.label) ? 76 : 60, padding: "4px 6px", fontSize: 13 }}
+                          />
+                        ))}
+                      </div>
+                    ) : row.kind === "long" ? (
+                      <textarea
+                        rows={Math.min(12, row.items[0].answer.value.split("\n").length + 1)}
+                        value={row.items[0].answer.value}
+                        onChange={edit(row.items[0].index)}
+                      />
+                    ) : (
+                      <input type="text" value={row.items[0].answer.value} onChange={edit(row.items[0].index)} />
+                    )}
+                    {row.items.some(({ answer: a, index: i }) => a.value !== original[i]?.value) ? (
+                      <p className="muted" style={{ fontSize: 11, margin: "3px 0 0" }}>
+                        {row.items
+                          .filter(({ answer: a, index: i }) => a.value !== original[i]?.value)
+                          .map(({ index: i }) => (
+                            <button key={i} style={{ padding: "0 6px", fontSize: 11, marginRight: 4 }} onClick={revert(i)}>
+                              revert to {original[i]?.value || "(empty)"}
+                            </button>
+                          ))}
+                      </p>
+                    ) : null}
                   </div>
-                  {a.value.length > 90 || a.value.includes("\n") ? (
-                    <textarea
-                      rows={Math.min(12, a.value.split("\n").length + Math.ceil(a.value.length / 90))}
-                      value={a.value}
-                      onChange={(e) => setAnswers((prev) => prev.map((p, j) => (j === i ? { ...p, value: e.target.value } : p)))}
-                    />
-                  ) : (
-                    <input
-                      type="text"
-                      value={a.value}
-                      onChange={(e) => setAnswers((prev) => prev.map((p, j) => (j === i ? { ...p, value: e.target.value } : p)))}
-                    />
-                  )}
-                  {changed ? (
-                    <p className="muted" style={{ fontSize: 12, margin: "5px 0 0" }}>
-                      was: {original[i]?.value || "(empty)"}{" "}
-                      <button
-                        style={{ padding: "1px 7px", fontSize: 12 }}
-                        onClick={() => setAnswers((prev) => prev.map((p, j) => (j === i ? { ...p, value: original[i].value } : p)))}
-                      >
-                        revert
-                      </button>
-                    </p>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        ))}
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       {hasScreenshot ? (

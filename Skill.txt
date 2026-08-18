@@ -1,0 +1,56 @@
+Python: 
+Python (Programming Language)
+Python Software Development
+Python Frameworks 
+Python Numpy
+Python Matplotlib
+Python Datetime Module 
+Python
+Pandas Python Library
+
+C:
+C (Programming Language)
+
+C++:
+C++ Programming Language
+
+JavaScript:
+JavaScript 
+Node.js
+
+TypeScript:
+TypeScript
+
+SQL:
+Structured Query Language (SQL)
+Data Query Language
+SQL Database Queries
+
+HTML:
+Hyper Text Markup Language (HTML)
+HTML5 
+HTML
+
+CSS:
+CSS
+
+SML:
+SML
+
+Claude:
+Anthropic Claude Code
+
+Cursor AI:
+Cursor AI
+
+Copilot:
+GitHub Copilot
+Microsoft Visual Studio
+
+Segment Anything (Meta AI):
+Segment Anything (Meta AI)
+
+
+FastAPI:
+FastAPI
+
