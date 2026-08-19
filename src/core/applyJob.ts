@@ -493,6 +493,15 @@ export async function applyToJob(
           filledFields: result.filled,
           answers: result.answers,
           reviewSentAt: new Date().toISOString(),
+          // A fresh fill is a fresh start. upsertPending keeps the previous status and attempt
+          // count, so a job parked as "error" after three failed submits would come back still
+          // parked — a new copy nobody could act on — and one that had given up would give up
+          // again on its first stumble. The stale failure and any stale hold go too; the DECISION
+          // fields stay, so the queue can still say "you approved the older copy".
+          status: "awaiting_approval",
+          attempts: 0,
+          lastError: undefined,
+          reapproval: undefined,
         });
         queued = true;
         console.log("  → queued for approval (poller will submit once you reply APPROVE).");

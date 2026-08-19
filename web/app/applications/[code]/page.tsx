@@ -75,6 +75,28 @@ export default async function ApplicationPage({ params }: { params: Promise<{ co
               </td>
             </tr>
             <tr>
+              <td className="muted">Decision</td>
+              <td>
+                {entry?.decidedAt ? (
+                  <>
+                    approved by <strong>{entry.approvedBy ?? "unknown"}</strong> on {when(entry.decidedAt)}
+                  </>
+                ) : record.status === "submitted" ? (
+                  <span className="muted">submitted before decisions were recorded</span>
+                ) : (
+                  <span className="muted">no decision recorded</span>
+                )}
+              </td>
+            </tr>
+            {/* A field we HAD an answer for but could not enter leaves the form blank, which is
+                invisible unless it is said here — Deepgram went out without its Current Location. */}
+            {entry?.filledFields?.length ? (
+              <tr>
+                <td className="muted">Fields filled</td>
+                <td>{entry.filledFields.length}</td>
+              </tr>
+            ) : null}
+            <tr>
               <td className="muted">Recorded copies</td>
               <td>{rounds.length ? <a href={`/history/${code}`}>{rounds.length} — see what changed →</a> : <span className="muted">none</span>}</td>
             </tr>
