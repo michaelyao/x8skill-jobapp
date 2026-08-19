@@ -415,6 +415,69 @@ export class LlmAgent implements Agent {
       answer.draft = false;
     }
 
+    // An address is ONE thing. Motorola rejected an application with "94085 is not a valid postal
+    // code for Pennsylvania": the street came from the real home address in Sunnyvale while the
+    // state was inferred from the resume's Pittsburgh schooling. Whenever a page asks for address
+    // parts, they are all taken from the SAME stored address so they cannot disagree.
+    const home = ctx.answers.find((a) => /^home address$/i.test(a.question.trim()));
+    const homeText = home ? (Array.isArray(home.answer) ? home.answer.join(", ") : String(home.answer ?? "")) : "";
+    const parts = /^(.+?),\s*([^,]+),\s*([A-Za-z .]{2,20})\s+(\d{5})(?:-\d{4})?$/.exec(homeText.trim());
+    if (parts) {
+      const STATES: Record<string, string> = {
+        ca: "California", pa: "Pennsylvania", ny: "New York", wa: "Washington", or: "Oregon",
+        tx: "Texas", il: "Illinois", ma: "Massachusetts", nj: "New Jersey", az: "Arizona",
+      };
+      const [, street, city, stateRaw, postal] = parts;
+      const state = STATES[stateRaw.trim().toLowerCase()] ?? stateRaw.trim();
+      const pick = (label: string): string | undefined => {
+        const l = label.toLowerCase();
+        if (/address line ?2|apt|suite|unit\b/.test(l)) return "";
+        if (/address line ?1|street address|^address\b/.test(l)) return street.trim();
+        if (/\bcity\b|town/.test(l)) return city.trim();
+        if (/\bstate\b|province|region$/.test(l)) return state;
+        if (/postal code|zip/.test(l)) return postal;
+        return undefined;
+      };
+      for (const field of snapshot.fields) {
+        const wanted = pick(field.label);
+        if (wanted === undefined) continue;
+        // A state dropdown may word it either way; leave a closed list alone unless it offers this.
+        if (wanted && field.options?.length && !field.searchable) {
+          const lv = wanted.toLowerCase();
+          if (!field.options.some((o) => o.toLowerCase() === lv || o.toLowerCase().startsWith(lv))) continue;
+        }
+        let answer = answers.find((a) => a.key === field.key);
+        if (!answer) {
+          answer = { key: field.key, value: "", confidence: 0, needsHuman: true, source: "profile" };
+          answers.push(answer);
+        }
+        if (answer.value.trim() === wanted) continue;
+        if (wanted || field.required === false) {
+          console.log(`  [agent] address field "${field.label.slice(0, 40)}" → ${JSON.stringify(wanted)} (from your home address)`);
+          answer.value = wanted;
+          answer.source = "profile";
+          answer.confidence = 1;
+          answer.needsHuman = false;
+          answer.blank = wanted === "";
+        }
+      }
+    }
+
+    // "How did you hear about us?" — prefer the campus channel when the list offers one, per the
+    // standing preference (university > company site > job board > referral > social > other).
+    for (const field of snapshot.fields) {
+      if (!/how did you (hear|find|learn)/i.test(field.label) || !field.options?.length) continue;
+      const campus = field.options.find((o) => /campus|university|college|career (fair|center)|school/i.test(o));
+      if (!campus) continue;
+      const answer = answers.find((a) => a.key === field.key);
+      if (!answer || answer.value === campus) continue;
+      console.log(`  [agent] "how did you hear" → ${JSON.stringify(campus)} (campus is preferred over ${JSON.stringify(answer.value)})`);
+      answer.value = campus;
+      answer.source = "curated";
+      answer.confidence = 1;
+      answer.needsHuman = false;
+    }
+
     return answers;
   }
 }
