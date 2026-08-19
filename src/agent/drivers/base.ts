@@ -1049,6 +1049,52 @@ export abstract class GenericDriver implements AtsDriver {
           }
         }
 
+        // If nothing reports overflow there is nothing to set scrollTop on, and the bisect above
+        // is a no-op — which is what happened live while the fixture passed. The mouse wheel does
+        // not care which element scrolls: hover the list and page down. The list is alphabetical,
+        // so stop as soon as the rows have gone PAST the target.
+        if (idx < 0) {
+          const box = await listbox.boundingBox().catch(() => null);
+          if (box) {
+            await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2).catch(() => undefined);
+            for (let paged = 0; paged < 40 && idx < 0; paged += 1) {
+              const here = await menu();
+              const n = await here.count().catch(() => 0);
+              const hereTexts = await readTexts(here, n);
+              for (const t of hereTexts) if (!texts.includes(t)) texts.push(t);
+              lastSeen = texts;
+              let hit = hereTexts.findIndex((t) => t.toLowerCase() === want);
+              if (hit < 0) hit = hereTexts.findIndex((t) => lead(t) === want);
+              if (hit < 0) {
+                // A value carrying a dialling code — "United States of America (+1)" — should match
+                // whichever row holds that code, preferring the United States where several share it.
+                const code = value.match(/\((\+\d{1,4})\)/)?.[1] ?? (/^\+\d{1,4}$/.test(want) ? want : "");
+                if (code) {
+                  const withCode = hereTexts.map((t, i) => ({ t, i })).filter(({ t }) => t.includes(`(${code})`));
+                  const us = withCode.find(({ t }) => /united states/i.test(t));
+                  if (us) hit = us.i;
+                }
+              }
+              if (hit >= 0) {
+                const row = root
+                  .locator(`[data-automation-id="promptOption"][data-automation-label="${hereTexts[hit].replace(/"/g, '\\"')}" i]`)
+                  .first();
+                if ((await row.count().catch(() => 0)) > 0) {
+                  await row.click().catch(() => undefined);
+                  await page.waitForTimeout(300);
+                  if (await this.hasSelection(root, keySelector, control)) return true;
+                }
+                opts = here;
+                idx = hit;
+                break;
+              }
+              if (hereTexts.length && hereTexts[0].localeCompare(value.trim(), undefined, { sensitivity: "base" }) > 0) break;
+              await page.mouse.wheel(0, 260).catch(() => undefined);
+              await page.waitForTimeout(170);
+            }
+          }
+        }
+
         for (let scroll = 0; scroll < 4 && idx < 0; scroll += 1) {
           const moved = await listbox
             .evaluate((el) => {
