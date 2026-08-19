@@ -86,15 +86,38 @@ export async function submitApprovedEntry(
   const approvedAnswers = opts.replayAnswers ?? entry.answers ?? [];
   const refill = opts.refill !== false;
   const replayAgent = new ReplayAgent(approvedAnswers);
-  const outcome = await applyToJob(job, identity, answers, applications, ctx.deps, {
-    mode: "submit",
-    interactive: false,
-    graceMs: 0,
-    replayAnswers: approvedAnswers,
-    refillOnSubmit: refill,
-    replayAgent,
-    baseNotes: [opts.note],
-  });
+  const runSubmit = () =>
+    applyToJob(job, identity, answers, applications, ctx.deps, {
+      mode: "submit",
+      interactive: false,
+      graceMs: 0,
+      replayAnswers: approvedAnswers,
+      refillOnSubmit: refill,
+      replayAgent,
+      baseNotes: [opts.note],
+    });
+
+  let outcome: Awaited<ReturnType<typeof applyToJob>>;
+  try {
+    outcome = await runSubmit();
+  } catch (error) {
+    // The write-ahead marker exists for an outcome we cannot know. A failure to even open a page
+    // is not that: no form was touched, so the entry goes back to the queue instead of being
+    // reported as possibly-submitted. Anything else keeps the marker and asks for a human.
+    const message = (error as Error).message.split("\n")[0];
+    const neverOpened = /Target page, context or browser has been closed|browserContext\.newPage|browser has been closed/i.test(message);
+    await updatePendingStatus(entry.key, neverOpened ? "awaiting_approval" : "submitting", {
+      attempts,
+      lastError: neverOpened ? `no browser — nothing was opened or submitted (${message})` : message,
+    });
+    return {
+      result: neverOpened ? "will_retry" : "gave_up",
+      message: `[${label}] ${neverOpened ? "could not start: no usable browser — nothing was submitted, still queued" : `failed mid-submit: ${message}`}`,
+      answers,
+      applications,
+    };
+  }
+
   answers = outcome.answers;
   applications = outcome.applications;
 

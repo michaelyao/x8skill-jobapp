@@ -111,6 +111,24 @@ async function withBrowser(): Promise<{ deps: ApplyDeps } | null> {
     console.log("worker: browser is busy elsewhere (lock held) — deferring.");
     return null;
   }
+  // A context can die while we still hold the object — the hung Aquatic Capital run left one
+  // closed, and every command after it failed instantly with "Target page, context or browser has
+  // been closed" without ever opening a page. Four approvals were burned that way. Prove the
+  // context still works before handing it out.
+  if (context) {
+    const alive = await context
+      .newPage()
+      .then(async (page) => {
+        await page.close().catch(() => undefined);
+        return true;
+      })
+      .catch(() => false);
+    if (!alive) {
+      console.log("worker: the browser context is dead — relaunching Chrome.");
+      await context.close().catch(() => undefined);
+      context = null;
+    }
+  }
   if (!context) {
     try {
       context = await chromium.launchPersistentContext(AUTH_DIR, {

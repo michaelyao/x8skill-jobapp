@@ -10,6 +10,28 @@ export interface TurnLoopOptions {
   onLearn?: (field: FieldSpec) => Promise<string | null>;
 }
 
+/** How long one field may take before it is treated as a failure. */
+const FIELD_TIMEOUT_MS = Number(process.env.FIELD_TIMEOUT_MS ?? 90_000);
+
+/**
+ * Resolve to false if the work outruns its deadline. The promise is abandoned rather than
+ * cancelled — Playwright has no cancellation — but the loop moves on, which is the point.
+ */
+async function withDeadline(work: Promise<boolean>, ms: number, label: string): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const expired = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => {
+      console.log(`    ⏱ gave up on "${label.slice(0, 60)}" after ${Math.round(ms / 1000)}s`);
+      resolve(false);
+    }, ms);
+  });
+  try {
+    return await Promise.race([work.catch(() => false), expired]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export interface TurnLoopResult {
   turns: number;
   filled: string[]; // "label: value" that were filled
@@ -140,7 +162,12 @@ export async function runApplication(
         console.log(`    – no answer available, left for you: ${field.label.slice(0, 70)}`);
         continue;
       }
-      const ok = await driver.fill(root, field, answer).catch(() => false);
+      // Cap how long ONE field may take. A hung fill used to stall the whole worker: a submit for
+      // Aquatic Capital sat "submitting" for nearly three hours with the log silent, holding six
+      // queued commands behind it, because nothing in the widget hunting has a deadline. A field
+      // that overruns is reported as failed-to-fill — which the required-field gate then handles
+      // — instead of taking the daemon down with it.
+      const ok = await withDeadline(driver.fill(root, field, answer), FIELD_TIMEOUT_MS, field.label);
       if (ok) {
         filled.push(`${field.label}: ${answer.value}${answer.draft ? " (DRAFT)" : ""}`);
         filledLabels.add(field.label);
