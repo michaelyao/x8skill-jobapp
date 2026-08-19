@@ -332,7 +332,26 @@ export class LlmAgent implements Agent {
           // not "not a real option". Keep the value: fillReactSelect types to filter
           // and can ONLY click an option that actually exists, so a bad value fails
           // loudly at fill time instead of being silently skipped as needsHuman.
-          if (field.searchable) {
+          // "How did you hear about us?" is a closed list that every tenant words differently:
+          // one offers LinkedIn, the next offers "Campus/University | Job Board/Website |
+          // EMEAInternetJobSites | Social Media | Other". Answering with a channel the list does
+          // not name left a required field empty. The channel matters far less than answering
+          // truthfully-enough, so fall back through a preference order over the OFFERED options.
+          const preference = [
+            /campus|university|college|career (fair|center)|school/i,
+            /company (web)?site|our website|careers page/i,
+            /job board|job ?site|website|indeed|handshake|linkedin|glassdoor/i,
+            /referral|employee/i,
+            /social media|twitter|facebook|instagram/i,
+            /other/i,
+          ];
+          const heardAbout = /how did you (hear|find|learn)|source|referral source/i.test(field.label);
+          const fallback = heardAbout
+            ? preference.map((rx) => field.options!.find((o) => rx.test(o))).find(Boolean)
+            : undefined;
+          if (fallback) {
+            value = fallback;
+          } else if (field.searchable) {
             confidence = Math.min(confidence, 0.5);
           } else {
             needsHuman = true;

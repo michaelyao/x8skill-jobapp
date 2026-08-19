@@ -1054,8 +1054,12 @@ export abstract class GenericDriver implements AtsDriver {
         // not care which element scrolls: hover the list and page down. The list is alphabetical,
         // so stop as soon as the rows have gone PAST the target.
         if (idx < 0) {
-          const box = await listbox.boundingBox().catch(() => null);
+          // Hover an actual option row, not the listbox wrapper: a wrapper can have no size (or
+          // not be the thing that scrolls), and a wheel event delivered there moves nothing.
+          const firstRow = (await menu()).first();
+          const box = (await firstRow.boundingBox().catch(() => null)) ?? (await listbox.boundingBox().catch(() => null));
           if (box) {
+            let movedEver = false;
             await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2).catch(() => undefined);
             for (let paged = 0; paged < 40 && idx < 0; paged += 1) {
               const here = await menu();
@@ -1089,8 +1093,15 @@ export abstract class GenericDriver implements AtsDriver {
                 break;
               }
               if (hereTexts.length && hereTexts[0].localeCompare(value.trim(), undefined, { sensitivity: "base" }) > 0) break;
+              const before = hereTexts[0] ?? "";
               await page.mouse.wheel(0, 260).catch(() => undefined);
               await page.waitForTimeout(170);
+              const afterFirst = ((await (await menu()).first().getAttribute("data-automation-label").catch(() => null)) || "").trim();
+              if (afterFirst && afterFirst !== before) movedEver = true;
+              else if (!movedEver && paged >= 2) {
+                console.log(`      ↳ the wheel does not move this list (still at "${before}") — cannot reach "${value}"`);
+                break;
+              }
             }
           }
         }
