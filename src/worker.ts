@@ -11,6 +11,7 @@ import { addLearnedAnswer, forgetLearnedAnswers, loadAnswers, syncAnswersMarkdow
 import { normalizeQuestion } from "./utils/normalize.js";
 import { hasSubmittedBefore, loadApplications } from "./knowledge/applications.js";
 import {
+  releaseOrphanedClaims,
   claimNextCommand,
   completeCommand,
   releaseCommand,
@@ -439,6 +440,8 @@ async function tick(): Promise<void> {
 
 async function main(): Promise<void> {
   console.log(`worker: started (pid ${process.pid}), tick ${TICK_MS}ms`);
+const freed = await releaseOrphanedClaims();
+if (freed.length) console.log(`worker: released ${freed.length} command(s) a previous run had claimed but never finished.`);
   await writeWorkerStatus({ state: "idle", activity: "waiting for commands" });
 
   // Keep the heartbeat fresh WHILE a command runs. writeWorkerStatus() with no patch only

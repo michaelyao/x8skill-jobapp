@@ -125,6 +125,30 @@ const PRIORITY: Record<string, number> = {
 };
 const rank = (name: string): number => PRIORITY[name] ?? 2;
 
+/**
+ * Release commands a dead worker had claimed.
+ *
+ * A claim is a rename to ".claimed"; only the running worker renames it back. Kill it mid-command —
+ * as a restart does — and the file is stranded forever: two of yours sat unclaimed and unrun with no
+ * sign of it anywhere. Called on startup, when by definition nothing is in flight.
+ */
+export async function releaseOrphanedClaims(): Promise<string[]> {
+  await ensureDirs();
+  const names = (await fs.readdir(COMMANDS_DIR).catch(() => [])).filter((f) => f.endsWith(".json.claimed"));
+  const freed: string[] = [];
+  for (const name of names) {
+    const from = path.join(COMMANDS_DIR, name);
+    const to = path.join(COMMANDS_DIR, name.replace(/\.claimed$/, ""));
+    try {
+      await fs.rename(from, to);
+      freed.push(name.replace(/\.claimed$/, ""));
+    } catch {
+      /* leave it; the next start will try again */
+    }
+  }
+  return freed;
+}
+
 export async function claimNextCommand(): Promise<ClaimedCommand | null> {
   await ensureDirs();
   const names = (await fs.readdir(COMMANDS_DIR).catch(() => []))
