@@ -104,11 +104,46 @@ export interface ClaimedCommand {
  * Claim the oldest pending command. The rename is the claim: if two workers ever ran, only
  * one rename succeeds, so a command cannot be executed twice.
  */
+/**
+ * Your decisions come first.
+ *
+ * Commands used to run strictly in the order they arrived, which meant an approve could sit behind
+ * a batch of re-fills for hours — it already happened once, with four approvals waiting on a single
+ * stuck job. A decision takes seconds and is the thing you are waiting on; a re-fill is background
+ * work. Within a class, oldest first as before.
+ */
+const PRIORITY: Record<string, number> = {
+  approve: 0,
+  skip: 0,
+  update_answers: 1,
+  forget_answers: 1,
+  send_review_email: 1,
+  change: 2,
+  retry: 3,
+  refresh_list: 4,
+  sweep: 4,
+};
+const rank = (name: string): number => PRIORITY[name] ?? 2;
+
 export async function claimNextCommand(): Promise<ClaimedCommand | null> {
   await ensureDirs();
-  const entries = (await fs.readdir(COMMANDS_DIR).catch(() => []))
+  const names = (await fs.readdir(COMMANDS_DIR).catch(() => []))
     .filter((f) => f.endsWith(".json") && !f.startsWith(".tmp-"))
     .sort();
+  // Read the name off each file to order by class. A file that cannot be read keeps its place in
+  // the queue and fails in the loop below, where the failure is recorded.
+  const ordered: Array<{ name: string; rank: number }> = [];
+  for (const name of names) {
+    let commandName = "";
+    try {
+      commandName = (JSON.parse(await fs.readFile(path.join(COMMANDS_DIR, name), "utf8")) as Command).name;
+    } catch {
+      /* unreadable — treat as middling priority and let the claim loop report it */
+    }
+    ordered.push({ name, rank: rank(commandName) });
+  }
+  const entries = ordered.sort((a, b) => a.rank - b.rank).map((e) => e.name);
+
   for (const name of entries) {
     const from = path.join(COMMANDS_DIR, name);
     const claimed = `${from}.claimed`;
