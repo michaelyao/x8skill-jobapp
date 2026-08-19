@@ -838,6 +838,16 @@ export abstract class GenericDriver implements AtsDriver {
     for (let attempt = 0; attempt < 2 + probes.length; attempt += 1) {
       await page.keyboard.press("Escape").catch(() => undefined);
       await page.waitForTimeout(150);
+      // A menu left open by the PREVIOUS field is read as if it were ours: searching "Social
+      // Media" for "How did you hear about us?" came back with "Afghanistan (+93), Åland
+      // Islands (+358)…" — the country-code list from the field before it. Make sure the page
+      // has no open list before opening ours.
+      for (let clear = 0; clear < 3; clear += 1) {
+        const stray = root.locator('[data-automation-id="activeListContainer"]');
+        if (!(await stray.count().catch(() => 0))) break;
+        await page.keyboard.press("Escape").catch(() => undefined);
+        await page.waitForTimeout(200);
+      }
       await control.scrollIntoViewIfNeeded().catch(() => undefined);
       await control.click().catch(() => undefined);
       await page.waitForTimeout(350);
@@ -943,7 +953,18 @@ export abstract class GenericDriver implements AtsDriver {
       // whatever was typed — searching "python" yields both "Python (Programming Language)" and
       // a bare "python". Prefer the canonical one: it is the entry a recruiter's search matches,
       // where the free-text row is just the raw string we typed.
-      let idx = texts.findIndex((t) => lead(t) === want && t.length > want.length);
+      // A phone country code arrives as "+1" while the options read "United States of America
+      // (+1)". Match on the parenthesised code, preferring the United States when several
+      // countries share it (+1 covers Canada, American Samoa, Guam…).
+      let idx = -1;
+      if (/^\+\d{1,4}$/.test(want)) {
+        const withCode = texts
+          .map((t, i) => ({ t, i }))
+          .filter(({ t }) => t.includes(`(${want})`));
+        const us = withCode.find(({ t }) => /united states/i.test(t));
+        idx = (us ?? withCode[0])?.i ?? -1;
+      }
+      if (idx < 0) idx = texts.findIndex((t) => lead(t) === want && t.length > want.length);
       if (idx < 0) idx = texts.findIndex((t) => t.toLowerCase() === want);
       if (idx < 0) idx = texts.findIndex((t) => lead(t) === want);
       if (idx < 0) idx = texts.findIndex((t) => t.toLowerCase().includes(want) || want.includes(t.toLowerCase()));

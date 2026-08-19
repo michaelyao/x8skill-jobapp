@@ -357,6 +357,23 @@ export class LlmAgent implements Agent {
       if (!stored) continue;
       const value = Array.isArray(stored.answer) ? stored.answer.join(", ") : String(stored.answer ?? "");
       if (!value.trim() || value.trim() === answer.value.trim()) continue;
+      // Some stored answers DESCRIBE having nothing to enter rather than being a value — the
+      // seed for Phone Extension reads "(none — no extension; leave this field empty)". Typing
+      // that into the form is worse than leaving it blank, which is what it actually means.
+      const bare = value.trim().replace(/^\(+|\)+$/g, "").trim();
+      const meansEmpty =
+        /^(none|n\/?a|na|nothing|not applicable|no extension|no middle name)$/i.test(bare) ||
+        /^nothing\b/i.test(bare) ||
+        /leave (this|the) field empty|leave (it|this) blank/i.test(value);
+      // "No" and "None of the above" are REAL answers — only a value that says there is nothing
+      // to enter becomes an empty field.
+      if (meansEmpty) {
+        answer.value = "";
+        answer.blank = true;
+        answer.needsHuman = false;
+        answer.source = "curated";
+        continue;
+      }
       // For a closed list the stored wording may not be one of the options; leave those alone
       // rather than writing a value the widget cannot take.
       if (field.options?.length && !field.searchable) {
