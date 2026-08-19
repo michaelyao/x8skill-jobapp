@@ -174,6 +174,11 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
 - **Review email is HTML** (`gog --body-html`, plain-text fallback): bold questions, a distinct green
   `A:`, a "draft" badge on LLM free-text, a meta table with the posting link, and the JD in a framed
   box. Structured answers come from `TurnLoopResult.answers` (also what the replay/queue use).
+- **Corrections live in `data/learned-answers.json` and OVERRIDE the seed.** `loadAnswers()` rebuilds
+  every entry from `Q&A.txt` on each read, so an answer recorded anywhere else was erased by the next
+  read — which is why "remember what I edited" quietly failed for a day. Learned entries are merged on
+  top after the rebuild. Editing `Q&A.txt` therefore does NOT change a question you have corrected;
+  correct it again (or Forget it) on `/answers`.
 - **One address, used everywhere**: `318 Morse Ave, Sunnyvale, CA 94085`, taken from the
   `Home address` fact in the answer store. There is no region-dependent second address.
 - **Address parts must all come from the SAME address.** Street, city, state and postal code are

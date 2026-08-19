@@ -74,6 +74,24 @@ export async function loadAnswers(): Promise<AnswerEntry[]> {
   return entries;
 }
 
+/**
+ * Forget a correction: remove it from the learned store so the seed answer applies again — or, if
+ * there was no seed, so the question is unanswered rather than answered wrongly forever. Returns
+ * the questions actually removed.
+ */
+export async function forgetLearnedAnswers(questions: string[]): Promise<string[]> {
+  const wanted = new Set(questions.map((q) => normalizeQuestion(q)));
+  const learned = await loadLearnedAnswers();
+  const kept = learned.filter((entry) => !wanted.has(entry.normalizedQuestion));
+  const removed = learned.filter((entry) => wanted.has(entry.normalizedQuestion)).map((entry) => entry.question);
+  if (removed.length) {
+    await writeJson(LEARNED_ANSWERS_PATH, kept);
+    // Rebuild the derived store so the change is visible immediately.
+    await loadAnswers();
+  }
+  return removed;
+}
+
 /** The user's own corrections, which survive a rebuild of the seed-derived store. */
 export async function loadLearnedAnswers(): Promise<AnswerEntry[]> {
   try {

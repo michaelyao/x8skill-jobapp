@@ -62,6 +62,7 @@ export type Command = Base &
     | { name: "refresh_list" }
     | { name: "send_review_email"; code: string }
     | { name: "update_answers"; entries: Array<{ question: string; answer: string }> }
+    | { name: "forget_answers"; questions: string[] }
   );
 
 export interface CommandResult {

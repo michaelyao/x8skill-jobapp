@@ -7,7 +7,7 @@ import { LlmAgent } from "./agent/llmAgent.js";
 import { buildJobIdentity } from "./core/jobIdentity.js";
 import { applyToJob, type ApplyDeps } from "./core/applyJob.js";
 import { jobFromEntry, submitApprovedEntry } from "./core/submitApproved.js";
-import { addLearnedAnswer, loadAnswers, syncAnswersMarkdown } from "./knowledge/answerStore.js";
+import { addLearnedAnswer, forgetLearnedAnswers, loadAnswers, syncAnswersMarkdown } from "./knowledge/answerStore.js";
 import { normalizeQuestion } from "./utils/normalize.js";
 import { hasSubmittedBefore, loadApplications } from "./knowledge/applications.js";
 import {
@@ -356,6 +356,17 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
         message: learned.length
           ? `recorded ${learned.length} answer(s) for future applications: ${learned.slice(0, 3).join("; ")}${learned.length > 3 ? ` (+${learned.length - 3})` : ""}`
           : "nothing usable to record",
+      };
+    }
+
+    case "forget_answers": {
+      if (!command.questions?.length) return { ok: false, message: "nothing to forget" };
+      const removed = await forgetLearnedAnswers(command.questions);
+      return {
+        ok: removed.length > 0,
+        message: removed.length
+          ? `forgot ${removed.length} recorded answer(s): ${removed.slice(0, 3).map((q) => (q.length > 40 ? `${q.slice(0, 39)}…` : q)).join("; ")}`
+          : "none of those were recorded answers",
       };
     }
 
