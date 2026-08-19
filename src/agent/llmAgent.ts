@@ -350,11 +350,18 @@ export class LlmAgent implements Agent {
     // after that exact wording had been recorded from a review. Whatever the model produced,
     // an exact question match in the store wins — that is what "remember what I edited" has to
     // mean, or the same correction has to be made again on the next form.
-    for (const answer of answers) {
-      const field = snapshot.fields.find((f) => f.key === answer.key);
-      if (!field) continue;
+    // Walk the FIELDS, not the model's reply. A field the model skipped entirely produced no
+    // answer to override, so "Country Phone Code*" was reported as unanswerable for eighteen
+    // turns while the value sat recorded in the store. A recorded answer must not depend on the
+    // model having mentioned the field.
+    for (const field of snapshot.fields) {
       const stored = ctx.answers.find((entry) => entry.normalizedQuestion === normalizeQuestion(field.label));
       if (!stored) continue;
+      let answer = answers.find((a) => a.key === field.key);
+      if (!answer) {
+        answer = { key: field.key, value: "", confidence: 0, needsHuman: true, source: "curated" };
+        answers.push(answer);
+      }
       const value = Array.isArray(stored.answer) ? stored.answer.join(", ") : String(stored.answer ?? "");
       if (!value.trim() || value.trim() === answer.value.trim()) continue;
       // Some stored answers DESCRIBE having nothing to enter rather than being a value — the
