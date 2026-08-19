@@ -174,9 +174,12 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
 - **Review email is HTML** (`gog --body-html`, plain-text fallback): bold questions, a distinct green
   `A:`, a "draft" badge on LLM free-text, a meta table with the posting link, and the JD in a framed
   box. Structured answers come from `TurnLoopResult.answers` (also what the replay/queue use).
-- **Address logic**: west coast jobs (CA/WA/OR/WA) → `318 Morse Ave, Sunnyvale, CA 94085`;
-  east coast → `4716 Ellsworth Ave Apt 703, Pittsburgh PA 15213`. Resume autofill usually picks
-  the right one; override when wrong.
+- **One address, used everywhere**: `318 Morse Ave, Sunnyvale, CA 94085`, taken from the
+  `Home address` fact in the answer store. There is no region-dependent second address.
+- **Address parts must all come from the SAME address.** Street, city, state and postal code are
+  filled together in `llmAgent`, never inferred field by field — Motorola rejected an application
+  with *"94085 is not a valid postal code for Pennsylvania"* because the street came from the
+  stored Sunnyvale address while the state was inferred from the resume's Pittsburgh schooling.
 
 ## Job identity, storage and failure modes
 
