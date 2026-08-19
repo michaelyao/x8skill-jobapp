@@ -1,4 +1,4 @@
-import { browserLockHolder, getOverview } from "@/lib/store";
+import { browserLockHolder, getDecisions, getOverview } from "@/lib/store";
 import { draftCount } from "@/lib/stats";
 import { WorkerBar } from "@/components/WorkerBar";
 
@@ -6,9 +6,21 @@ export const dynamic = "force-dynamic";
 
 export default async function QueuePage() {
   const { queue, worker, pendingCommandCount } = await getOverview();
+  const decisions = await getDecisions();
+  // Anything the worker is already acting on needs nothing from you, so it sinks to the bottom.
+  // Everything above the line is genuinely waiting on a decision — including a job you approved
+  // whose submit then failed and was re-filled, which is a NEW copy and a fresh decision.
+  const withWorker = (code?: string) => {
+    const d = decisions.get(code ?? "");
+    return Boolean(d?.working || d?.pending);
+  };
   const awaiting = queue
     .filter((e) => e.status === "awaiting_approval")
-    .sort((a, b) => (b.reviewSentAt ?? "").localeCompare(a.reviewSentAt ?? ""));
+    .sort((a, b) => {
+      const byState = Number(withWorker(a.code ?? a.key)) - Number(withWorker(b.code ?? b.key));
+      if (byState) return byState;
+      return (b.reviewSentAt ?? "").localeCompare(a.reviewSentAt ?? "");
+    });
 
   // "submitting" means two very different things, and conflating them is alarming: a submit
   // running RIGHT NOW, or one whose outcome was never recorded because the process died.
@@ -27,7 +39,12 @@ export default async function QueuePage() {
     <>
       <h1>Queue</h1>
       <p className="sub">
-        {awaiting.length} application{awaiting.length === 1 ? "" : "s"} filled and waiting on you. Nothing is submitted until you approve it.
+        {awaiting.filter((e) => !withWorker(e.code ?? e.key)).length} waiting on a decision
+        {awaiting.some((e) => withWorker(e.code ?? e.key))
+          ? `, ${awaiting.filter((e) => withWorker(e.code ?? e.key)).length} already with the worker`
+          : ""}
+        . Nothing is submitted until you approve it — and a job you approved that then failed comes
+        back here as a new copy needing a fresh look.
       </p>
 
       <WorkerBar initial={worker} pendingCommands={pendingCommandCount} />
@@ -71,18 +88,45 @@ export default async function QueuePage() {
           <table>
             <thead>
               <tr>
-                <th>Code</th><th>Company</th><th>Role</th><th>ATS</th><th>Answers</th><th className="right">Filled</th>
+                <th>Code</th><th>Company</th><th>Role</th><th>Decision</th><th>Answers</th><th className="right">Filled</th>
               </tr>
             </thead>
             <tbody>
               {awaiting.map((e) => {
                 const drafts = draftCount(e);
+                const d = decisions.get(e.code ?? e.key) ?? {};
                 return (
                   <tr key={e.key} className="clickable">
                     <td className="code"><a href={`/queue/${e.code}`}>{e.code}</a></td>
                     <td>{e.company}</td>
-                    <td><a href={`/queue/${e.code}`}>{e.title}</a></td>
-                    <td><span className="pill">{e.ats}</span></td>
+                    <td>
+                      <a href={`/queue/${e.code}`}>{e.title}</a>
+                      {e.lastError ? (
+                        <div className="muted" style={{ fontSize: 12 }}>
+                          last attempt: {e.lastError.length > 90 ? `${e.lastError.slice(0, 89)}…` : e.lastError}
+                        </div>
+                      ) : null}
+                    </td>
+                    <td style={{ fontSize: 12 }}>
+                      {d.working ? (
+                        <span className="pill accent">worker on it now</span>
+                      ) : d.pending ? (
+                        <span className="pill accent">{d.pending} queued</span>
+                      ) : e.reapproval ? (
+                        <span className="pill warn">held — form changed</span>
+                      ) : d.superseded ? (
+                        <>
+                          <span className="pill warn">re-filled since you decided</span>
+                          <div className="muted" style={{ marginTop: 3 }}>
+                            you {d.decidedBy ? `(${d.decidedBy}) ` : ""}approved the {d.decidedAt!.slice(0, 10)} copy
+                          </div>
+                        </>
+                      ) : d.decidedAt ? (
+                        <span className="pill good">approved {d.decidedAt.slice(0, 10)}</span>
+                      ) : (
+                        <span className="muted">not decided</span>
+                      )}
+                    </td>
                     <td>
                       {(e.answers ?? []).length}
                       {drafts ? <span className="pill warn" style={{ marginLeft: 6 }}>{drafts} draft</span> : null}

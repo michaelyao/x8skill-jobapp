@@ -58,6 +58,50 @@ export async function browserLockHolder(): Promise<number | null> {
   }
 }
 
+/**
+ * What decision, if any, has already been taken on each queued job — keyed by code.
+ *
+ * A queue row that says nothing about this is misleading: an approved job whose submit failed
+ * looks identical to one nobody has looked at, and a job the worker is mid-way through looks
+ * like it is still waiting. Both happened.
+ */
+export interface DecisionState {
+  /** A command for this job is queued or running: the worker is on it. */
+  pending?: string;
+  working?: boolean;
+  /** A decision was recorded, with who and when. */
+  decidedAt?: string;
+  decidedBy?: string;
+  /** The copy in the queue is NEWER than the decision — it was re-filled since, so the
+   *  decision applied to answers that are no longer the ones on offer. */
+  superseded?: boolean;
+}
+
+export async function getDecisions(): Promise<Map<string, DecisionState>> {
+  ensureEnv();
+  const [queue, pending, status] = await Promise.all([
+    loadPendingQueue().catch(() => [] as PendingEntry[]),
+    pendingCommands().catch(() => []),
+    readWorkerStatus().catch(() => null),
+  ]);
+  const live = !isStale(status) && status?.state === "busy" ? status?.code : undefined;
+  const out = new Map<string, DecisionState>();
+  for (const entry of queue) {
+    const code = entry.code ?? entry.key;
+    const queued = pending.find((c) => "code" in c && c.code === code);
+    const state: DecisionState = {};
+    if (queued) state.pending = queued.name;
+    if (live && live === code) state.working = true;
+    if (entry.decidedAt) {
+      state.decidedAt = entry.decidedAt;
+      state.decidedBy = entry.approvedBy;
+      state.superseded = Boolean(entry.reviewSentAt && entry.reviewSentAt > entry.decidedAt);
+    }
+    out.set(code, state);
+  }
+  return out;
+}
+
 export async function getActivity(limit = 20) {
   return recentCommands(limit);
 }

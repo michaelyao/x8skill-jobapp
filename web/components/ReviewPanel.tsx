@@ -39,6 +39,11 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
   // Corrections are worth more than this one application: by default they become the standing
   // answer for that question, so the next form asking it is filled correctly without a review.
   const [remember, setRemember] = useState(true);
+  // Inline editing can only fix answers that ARE here. A question the form asked but we never
+  // answered — Deepgram's work-authorisation questions — has no row to edit, so there has to be
+  // a way to write the answer in by hand and have it stick for every future form.
+  const [newQuestion, setNewQuestion] = useState("");
+  const [newAnswer, setNewAnswer] = useState("");
 
   const edited = useMemo(
     () => answers.some((a, i) => a.value !== original[i]?.value),
@@ -302,6 +307,41 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
           </div>
         </>
       ) : null}
+
+      <div className="card" style={{ marginBottom: 14 }}>
+        <h3 style={{ marginTop: 0, fontSize: 14 }}>Answer a question that is missing</h3>
+        <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
+          For a question the form asks but we did not fill — it will not appear above, because there
+          is no answer to show. Recorded against the question text, so every future form asking it is
+          filled correctly. Then use <em>Request a change</em> to re-fill this application.
+        </p>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <input
+            type="text"
+            value={newQuestion}
+            onChange={(e) => setNewQuestion(e.target.value)}
+            placeholder="Question as the form words it, e.g. Current Location"
+            style={{ flex: "2 1 320px" }}
+          />
+          <input
+            type="text"
+            value={newAnswer}
+            onChange={(e) => setNewAnswer(e.target.value)}
+            placeholder="Answer, e.g. Pittsburgh, PA"
+            style={{ flex: "1 1 200px" }}
+          />
+          <button
+            disabled={!newQuestion.trim() || !newAnswer.trim() || busy !== null}
+            onClick={async () => {
+              await send("update_answers", { entries: [{ question: newQuestion.trim(), answer: newAnswer.trim() }] });
+              setNewQuestion("");
+              setNewAnswer("");
+            }}
+          >
+            Remember this answer
+          </button>
+        </div>
+      </div>
 
       <h2>Job description</h2>
       <div className="card">
