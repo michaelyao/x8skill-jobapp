@@ -987,18 +987,40 @@ export abstract class GenericDriver implements AtsDriver {
         // screens never reaches it. Sorted list, known target: bisect on the scroll position.
         const ordered = texts.length > 3 && texts[0].localeCompare(texts[texts.length - 1], undefined, { sensitivity: "base" }) < 0;
         if (ordered) {
-          const metrics = await listbox
-            .evaluate((el) => ({ max: el.scrollHeight - el.clientHeight, height: el.clientHeight }))
-            .catch(() => ({ max: 0, height: 0 }));
+          /**
+           * Scroll the list and read what is rendered, in one step.
+           *
+           * The scrollable element is not always the one carrying the listbox role: Workday nests
+           * a ReactVirtualized grid inside it. Resolving the wrong element gave a scroll height of
+           * zero, so the bisect exited immediately and every read stayed on the A's — which is
+           * exactly what the live log showed. Find the element that actually overflows.
+           */
+          const view = async (top?: number) =>
+            (await page
+              .evaluate((wanted) => {
+                const menu = document.querySelector('[data-automation-id="activeListContainer"], [role="listbox"]');
+                if (!menu) return null;
+                const scrollers = [menu, ...Array.from(menu.querySelectorAll("*"))].filter(
+                  (el) => el.scrollHeight > el.clientHeight + 4,
+                );
+                const scroller = (scrollers[0] as HTMLElement) ?? (menu as HTMLElement);
+                if (typeof wanted === "number") scroller.scrollTop = wanted;
+                const labels = Array.from(
+                  menu.querySelectorAll('[data-automation-id="promptOption"], [role="option"]'),
+                ).map((n) => (n.getAttribute("data-automation-label") || n.textContent || "").replace(/\s+/g, " ").trim());
+                return { max: scroller.scrollHeight - scroller.clientHeight, height: scroller.clientHeight, labels };
+              }, top)
+              .catch(() => null)) as { max: number; height: number; labels: string[] } | null;
+
+          const start = await view();
           let lo = 0;
-          let hi = metrics.max;
-          for (let step = 0; step < 14 && idx < 0 && hi > lo; step += 1) {
+          let hi = start?.max ?? 0;
+          for (let step = 0; step < 16 && idx < 0 && hi > lo; step += 1) {
             const mid = Math.floor((lo + hi) / 2);
-            await listbox.evaluate((el, top) => { el.scrollTop = top; }, mid).catch(() => undefined);
-            await page.waitForTimeout(200);
-            const here = await menu();
-            const n = await here.count().catch(() => 0);
-            const hereTexts = await readTexts(here, n);
+            const shown = await view(mid);
+            await page.waitForTimeout(180);
+            const after = await view();
+            const hereTexts = (after?.labels ?? shown?.labels ?? []).filter(Boolean);
             if (!hereTexts.length) break;
             for (const t of hereTexts) if (!texts.includes(t)) texts.push(t);
             lastSeen = texts;
@@ -1006,14 +1028,24 @@ export abstract class GenericDriver implements AtsDriver {
             if (hit < 0) hit = hereTexts.findIndex((t) => lead(t) === want);
             if (hit < 0 && /^\+\d{1,4}$/.test(want)) hit = hereTexts.findIndex((t) => t.includes(`(${want})`));
             if (hit >= 0) {
-              opts = here;
+              // Click by its own label rather than by index: the window re-renders as it scrolls.
+              const row = root
+                .locator(`[data-automation-id="promptOption"][data-automation-label="${hereTexts[hit].replace(/"/g, '\\"')}" i]`)
+                .first();
+              if ((await row.count().catch(() => 0)) > 0) {
+                await row.click().catch(() => undefined);
+                await page.waitForTimeout(300);
+                if (await this.hasSelection(root, keySelector, control)) return true;
+              }
+              opts = await menu();
               idx = hit;
-              texts = hereTexts;
               break;
             }
-            // Which half holds it? The first visible row tells us where we are in the alphabet.
-            if (hereTexts[0].localeCompare(value.trim(), undefined, { sensitivity: "base" }) < 0) lo = mid + metrics.height / 2;
-            else hi = mid - metrics.height / 2;
+            if (hereTexts[0].localeCompare(value.trim(), undefined, { sensitivity: "base" }) < 0) {
+              lo = mid + Math.max(32, (after?.height ?? 200) / 2);
+            } else {
+              hi = mid - Math.max(32, (after?.height ?? 200) / 2);
+            }
           }
         }
 
