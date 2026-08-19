@@ -11,7 +11,8 @@
     "worker": "tsx src/worker.ts",
     "hash-password": "node tools/hash-password.mjs",
     "cmd": "tsx src/cli.ts",
-    "test:skills": "tsx src/debug/skillPromptCases.ts"
+    "test:skills": "tsx src/debug/skillPromptCases.ts",
+    "test:longlist": "tsx src/debug/longListCases.ts"
   },
   "repository": {
     "type": "git",

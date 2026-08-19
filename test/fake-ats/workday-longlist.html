@@ -1,0 +1,56 @@
+<!doctype html>
+<!--
+  Workday's country-dialling-code prompt: a STATIC alphabetical list of ~250 entries, fourteen
+  rows in the DOM at a time, that does NOT filter as you type. "United States of America (+1)"
+  is seventeen pages below "Afghanistan (+93)", which is why paging a few screens never found it.
+-->
+<html lang="en"><head><meta charset="utf-8"><title>Workday long list (fixture)</title></head>
+<body>
+<div id="app"><div data-automation-id="formField-code">
+  <label for="code-input">Country Phone Code*</label>
+  <div data-automation-id="multiSelectContainer"><ul data-automation-id="selectedItemList" id="chips"></ul><input id="code-input" data-automation-id="searchBox" autocomplete="off"></div>
+</div><div id="menu-host"></div></div>
+<script>
+  const NAMES = ["Afghanistan (+93)","Åland Islands (+358)","Albania (+355)","Algeria (+213)","American Samoa (+1)","Andorra (+376)","Angola (+244)","Anguilla (+1)"];
+  // Pad to ~250 alphabetical entries so the target really is far down the list.
+  const LETTERS = "BCDEFGHIJKLMNOPQRST".split("");
+  for (const l of LETTERS) for (let i = 1; i <= 12; i++) NAMES.push(`${l}country ${i} (+${100 + i})`);
+  NAMES.push("Uganda (+256)","Ukraine (+380)","United Arab Emirates (+971)","United Kingdom (+44)","United States of America (+1)","Uruguay (+598)","Uzbekistan (+998)","Zambia (+260)");
+  const ROW_H = 32, WINDOW_ROWS = 14;
+  window.__picked = null;
+  const host = document.getElementById("menu-host");
+  const input = document.getElementById("code-input");
+  let list = null, scrollTop = 0;
+  function paint() {
+    const first = Math.max(0, Math.floor(scrollTop / ROW_H) - 2);
+    const last = Math.min(NAMES.length, first + WINDOW_ROWS);
+    list.innerHTML = '<div role="presentation" style="height:' + NAMES.length * ROW_H + 'px;position:relative">' +
+      NAMES.slice(first, last).map((label, i) => {
+        const idx = first + i;
+        return '<div data-automation-id="menuItem" role="option" style="height:32px;position:absolute;top:' + idx * ROW_H + 'px;left:0;width:100%">' +
+          '<div data-automation-id="promptOption" data-automation-label="' + label.replace(/"/g, "&quot;") + '">' + label + "</div></div>";
+      }).join("") + "</div>";
+    list.querySelectorAll('[data-automation-id="promptOption"]').forEach((n) =>
+      n.addEventListener("click", () => {
+        const label = n.getAttribute("data-automation-label");
+        window.__picked = label;
+        // A committed value shows as a chip — what hasSelection() looks for.
+        document.getElementById("chips").innerHTML =
+          '<li data-automation-id="selectedItem">' + label + "</li>";
+        if (list) { list.remove(); list = null; }
+      }));
+  }
+  function open() {
+    if (list) return;
+    list = document.createElement("div");
+    list.setAttribute("data-automation-id", "activeListContainer");
+    list.setAttribute("role", "listbox");
+    list.style.cssText = "height:249px;width:340px;overflow-y:auto;position:relative;border:1px solid #ccc";
+    list.addEventListener("scroll", () => { scrollTop = list.scrollTop; paint(); });
+    host.appendChild(list);
+    paint();
+  }
+  input.addEventListener("click", open);
+  // Typing does nothing to this list — that is the point of the fixture.
+</script>
+</body></html>

@@ -910,6 +910,10 @@ export abstract class GenericDriver implements AtsDriver {
       let count = 0;
       let prevFirst = "";
       let stableFor = 0;
+      // A list that does not filter (Workday's country codes are static and alphabetical) makes
+      // every remaining typing probe pointless: they all return the same first page, at five
+      // seconds a go. One unchanged read is enough to know, and the bisect below does the work.
+      let staticList = false;
       for (let wait = 0; wait < 20; wait += 1) {
         await page.waitForTimeout(250);
         opts = await menu();
@@ -928,6 +932,10 @@ export abstract class GenericDriver implements AtsDriver {
         stableFor = firstNow === prevFirst ? stableFor + 1 : 0;
         prevFirst = firstNow;
         if (!staleFirst && stableFor >= 2) break;
+        if (staleFirst && firstNow === staleFirst && stableFor >= 2) {
+          staticList = true;
+          break;
+        }
       }
       if (count === 0) continue; // menu didn't open — retry
 
@@ -972,6 +980,43 @@ export abstract class GenericDriver implements AtsDriver {
         // ReactVirtualized renders only the rows in view. Scroll the listbox and re-read before
         // concluding the value is absent.
         const listbox = root.locator('[data-automation-id="activeListContainer"], [role="listbox"]').first();
+
+        // Some of these lists do not filter at all — the country dialling codes are a static,
+        // ALPHABETICAL list of ~250 entries shown fourteen at a time, so "United States of
+        // America (+1)" sits some seventeen pages below "Afghanistan (+93)" and paging a few
+        // screens never reaches it. Sorted list, known target: bisect on the scroll position.
+        const ordered = texts.length > 3 && texts[0].localeCompare(texts[texts.length - 1], undefined, { sensitivity: "base" }) < 0;
+        if (ordered) {
+          const metrics = await listbox
+            .evaluate((el) => ({ max: el.scrollHeight - el.clientHeight, height: el.clientHeight }))
+            .catch(() => ({ max: 0, height: 0 }));
+          let lo = 0;
+          let hi = metrics.max;
+          for (let step = 0; step < 14 && idx < 0 && hi > lo; step += 1) {
+            const mid = Math.floor((lo + hi) / 2);
+            await listbox.evaluate((el, top) => { el.scrollTop = top; }, mid).catch(() => undefined);
+            await page.waitForTimeout(200);
+            const here = await menu();
+            const n = await here.count().catch(() => 0);
+            const hereTexts = await readTexts(here, n);
+            if (!hereTexts.length) break;
+            for (const t of hereTexts) if (!texts.includes(t)) texts.push(t);
+            lastSeen = texts;
+            let hit = hereTexts.findIndex((t) => t.toLowerCase() === want);
+            if (hit < 0) hit = hereTexts.findIndex((t) => lead(t) === want);
+            if (hit < 0 && /^\+\d{1,4}$/.test(want)) hit = hereTexts.findIndex((t) => t.includes(`(${want})`));
+            if (hit >= 0) {
+              opts = here;
+              idx = hit;
+              texts = hereTexts;
+              break;
+            }
+            // Which half holds it? The first visible row tells us where we are in the alphabet.
+            if (hereTexts[0].localeCompare(value.trim(), undefined, { sensitivity: "base" }) < 0) lo = mid + metrics.height / 2;
+            else hi = mid - metrics.height / 2;
+          }
+        }
+
         for (let scroll = 0; scroll < 4 && idx < 0; scroll += 1) {
           const moved = await listbox
             .evaluate((el) => {
@@ -996,6 +1041,9 @@ export abstract class GenericDriver implements AtsDriver {
             break;
           }
         }
+      }
+      if (idx < 0 && staticList && attempt === 0) {
+        console.log(`      ↳ this list does not filter as you type — searching it by position instead`);
       }
       if (idx < 0) {
         console.log(
