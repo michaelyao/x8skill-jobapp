@@ -26,6 +26,10 @@ export default async function QueuePage() {
   // running RIGHT NOW, or one whose outcome was never recorded because the process died.
   // The worker's heartbeat is what tells them apart — if it is alive and working on this
   // exact code, the job is in flight, not abandoned.
+  // A job that failed three submit attempts is parked as "error". It is not in the awaiting list,
+  // and /blocked skips anything that has a queue entry — so it was visible on neither page. It
+  // needs you more than anything else here.
+  const gaveUp = queue.filter((e) => e.status === "error");
   const submitting = queue.filter((e) => e.status === "submitting");
   // Two liveness signals, because the heartbeat alone is not enough: it can freeze while the
   // worker is inside a long submit, and a frozen heartbeat would make a live submission look
@@ -58,6 +62,30 @@ export default async function QueuePage() {
           {inFlight.map((e) => (
             <div key={e.key} className="code">
               <span className="pill accent">in progress</span> {e.code} — {e.company} · {e.title}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {gaveUp.length ? (
+        <div className="card" style={{ borderColor: "var(--bad)", marginTop: 14 }}>
+          <h3 style={{ color: "var(--bad)" }}>Gave up after repeated attempts</h3>
+          <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
+            Approved, but the submit failed three times, so it stopped trying. Nothing was submitted.
+            Re-fill it to get a fresh copy, then approve that.
+          </p>
+          {gaveUp.map((e) => (
+            <div key={e.key} style={{ paddingBottom: 8 }}>
+              <span className="code">{e.code}</span> — {e.company} · {e.title}{" "}
+              <a href={`/queue/${e.code}`}>review</a> ·{" "}
+              <a href={e.applyUrl} target="_blank" rel="noreferrer">
+                open posting
+              </a>
+              {e.lastError ? (
+                <div className="muted" style={{ fontSize: 12 }}>
+                  {e.lastError.length > 130 ? `${e.lastError.slice(0, 129)}…` : e.lastError}
+                </div>
+              ) : null}
             </div>
           ))}
         </div>

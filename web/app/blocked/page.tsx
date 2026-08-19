@@ -16,7 +16,15 @@ function reasonOf(notes: string[] = []): string | null {
 
 export default async function BlockedPage() {
   const [{ applications, queue }, user] = await Promise.all([getOverview(), currentUser()]);
-  const queued = new Set(queue.map((q) => q.code).filter(Boolean));
+  // Only a job the queue is ACTIVELY handling should be hidden here. Excluding every code with a
+  // queue entry meant an entry parked as "error" or "skipped" fell off this page too, and off the
+  // queue, and was visible nowhere.
+  const queued = new Set(
+    queue
+      .filter((q) => ["awaiting_approval", "submitting", "submitted"].includes(q.status))
+      .map((q) => q.code)
+      .filter(Boolean),
+  );
   const blocked = applications
     .filter((a) => a.status === "prefilled_pending_submit" && !queued.has(a.code))
     .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
