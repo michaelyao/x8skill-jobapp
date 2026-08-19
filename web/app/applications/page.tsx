@@ -45,9 +45,14 @@ export default async function ApplicationsPage({ searchParams }: { searchParams:
           <tbody>
             {filtered.map((a) => (
               <tr key={a.id}>
-                <td className="code">{a.code ?? "—"}</td>
+                <td className="code">{a.code ? <a href={`/applications/${a.code}`}>{a.code}</a> : "—"}</td>
                 <td>{a.company}</td>
-                <td><a href={a.applyUrl} target="_blank" rel="noreferrer">{a.title}</a></td>
+                <td>
+                  <a href={`/applications/${a.code}`}>{a.title}</a>{" "}
+                  <a href={a.applyUrl} target="_blank" rel="noreferrer" title="open the posting on the ATS" className="muted" style={{ fontSize: 12 }}>
+                    ↗
+                  </a>
+                </td>
                 <td><span className={`pill ${TONE[a.status] ?? ""}`}>{a.status}</span></td>
                 <td className="code muted">{a.companyReqId ?? "—"}</td>
                 <td className="right muted nowrap">{(a.updatedAt ?? "").slice(0, 16).replace("T", " ")}</td>
