@@ -3,7 +3,11 @@ dist/
 logs/
 data/
 .DS_Store
-.env
+# .env* , not .env — an exact-match rule let .env.save be committed with live API keys and the
+# session secret in it, and it stayed tracked for months. Anything that starts with .env is a
+# credential file until proven otherwise. (If a .env.example is ever wanted, negate it with
+# "!.env.example" rather than narrowing this back.)
+.env*
 .x8note.config
 
 # Browser profiles — these hold live Google/ATS session cookies, Login Data and
