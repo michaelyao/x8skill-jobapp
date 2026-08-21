@@ -9,7 +9,7 @@ export const runtime = "nodejs";
  * The worker applies it. Every guard that prevents a double submission lives on the worker
  * side, so a malicious or buggy request here cannot bypass them.
  */
-const ALLOWED = new Set(["approve", "skip", "change", "retry", "sweep", "refresh_list", "send_review_email", "update_answers", "forget_answers"]);
+const ALLOWED = new Set(["approve", "skip", "manual_submit", "change", "retry", "sweep", "refresh_list", "send_review_email", "update_answers", "forget_answers"]);
 
 export async function POST(request: Request): Promise<Response> {
   const user = await requireUser();
@@ -28,7 +28,7 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: `Your role (${user.role}) cannot run "${name}".` }, { status: 403 });
   }
 
-  const needsCode = ["approve", "skip", "change", "retry", "send_review_email"].includes(name);
+  const needsCode = ["approve", "skip", "manual_submit", "change", "retry", "send_review_email"].includes(name);
   if (needsCode && !body.code) return Response.json({ error: "Missing job code" }, { status: 400 });
   if (name === "change" && !String(body.instruction ?? "").trim()) {
     return Response.json({ error: "Describe the change" }, { status: 400 });

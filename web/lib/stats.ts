@@ -20,7 +20,9 @@ export interface Funnel {
   submitted: number;
 }
 
-const SUBMITTED = new Set(["submitted", "already_applied_on_site"]);
+// A hand-submitted application went in just as much as one we submitted, so it counts in the
+// funnel and in the daily totals. Leaving it out made the numbers understate what was done.
+const SUBMITTED = new Set(["submitted", "already_applied_on_site", "manual_submitted"]);
 
 export function funnel(apps: ApplicationRecord[], queue: PendingEntry[]): Funnel {
   const submitted = apps.filter((a) => SUBMITTED.has(a.status)).length;

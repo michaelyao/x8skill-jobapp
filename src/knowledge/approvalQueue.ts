@@ -14,7 +14,27 @@ const QUEUE_PATH = path.join(DATA_DIR, "pending-approvals.json");
  * later poll means "we clicked, but never recorded the result": a human must confirm
  * on the ATS before it moves on. This is the guard against double submission.
  */
-export type PendingStatus = "awaiting_approval" | "submitting" | "submitted" | "skipped" | "error";
+/**
+ * "manual_submitted" means the user filled and submitted the application THEMSELVES on the
+ * ATS. It is deliberately not "skipped": a skip means no application exists, while this one
+ * went in and must never be re-opened, re-filled or re-submitted. Recording it as a skip is
+ * how a live application gets applied for a second time on the next sweep.
+ */
+export type PendingStatus = "awaiting_approval" | "submitting" | "submitted" | "manual_submitted" | "skipped" | "error";
+
+/**
+ * Queue statuses that mean the application WENT IN — by us or by hand.
+ *
+ * A set rather than a literal comparison at each site: the guards that read it are spread
+ * across the worker and the submit path, and adding a status without finding all of them is
+ * exactly how one of them would keep saying "not submitted yet".
+ */
+const SUBMITTED: ReadonlySet<PendingStatus> = new Set<PendingStatus>(["submitted", "manual_submitted"]);
+
+/** Is this entry finished — submitted by us, or by hand on the ATS? */
+export function isSubmittedStatus(status: PendingStatus | undefined): boolean {
+  return !!status && SUBMITTED.has(status);
+}
 
 /**
  * One application that reached Review and is waiting for the user's emailed

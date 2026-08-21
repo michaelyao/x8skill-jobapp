@@ -201,6 +201,21 @@ async function replaceLabels(config: X8NoteConfig, noteId: string, labels: strin
   }).catch(() => undefined);
 }
 
+/**
+ * Bring a note's labels in line with the record's current status, writing NOTHING else.
+ *
+ * For a status change that happens outside a fill run (a manual submit), where there is no
+ * new content to store. Labels-only by construction, so it cannot overwrite a captured
+ * description the way a full note write with no content would.
+ */
+export async function syncNoteStage(config: X8NoteConfig, record: ApplicationRecord): Promise<boolean> {
+  if (!record.code) return false;
+  const ids = record.x8noteId ? [record.x8noteId] : await findNoteIdsByLabels(config, [`jobid_${record.code}`]);
+  if (!ids.length) return false;
+  for (const id of ids) await replaceLabels(config, id, noteLabels(record));
+  return true;
+}
+
 export interface SimilarPosting {
   id: string;
   title: string;

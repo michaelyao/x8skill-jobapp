@@ -14,6 +14,18 @@ interface Props {
 type Answer = { label: string; value: string; draft?: boolean };
 
 /**
+ * Statuses that mean this job is finished, and the headline to show for each.
+ *
+ * Without this the page offered "Approve & submit" on an application that had already gone in
+ * — the worker refuses it, but being asked at all reads as though it were still open.
+ */
+const DECIDED: Record<string, string> = {
+  manual_submitted: "Submitted by hand on the employer's site",
+  submitted: "Submitted",
+  skipped: "Skipped — no application was filed",
+};
+
+/**
  * The review surface that replaces the email.
  *
  * Answers are editable in place. An edit is not a "change request" — it becomes the approved
@@ -44,6 +56,10 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
   // a way to write the answer in by hand and have it stick for every future form.
   const [newQuestion, setNewQuestion] = useState("");
   const [newAnswer, setNewAnswer] = useState("");
+  // Marking a job manually submitted is not undoable through the console: it tells every
+  // dedupe guard the application exists, and nothing will re-open it afterwards. So it asks
+  // once rather than firing on a single mis-click next to "Approve".
+  const [confirmManual, setConfirmManual] = useState(false);
 
   const edited = useMemo(
     () => answers.some((a, i) => a.value !== original[i]?.value),
@@ -168,6 +184,23 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
             {busy === "approve" ? "Sending…" : edited ? `Approve with ${editedCount} edit${editedCount === 1 ? "" : "s"}` : "Approve & submit"}
           </button>
           <button onClick={() => send("skip")} disabled={busy !== null}>Skip</button>
+          {confirmManual ? (
+            <button
+              className="primary"
+              style={{ background: "var(--good, #2f9e44)" }}
+              disabled={busy !== null}
+              onClick={async () => {
+                setConfirmManual(false);
+                await send("manual_submit");
+              }}
+            >
+              {busy === "manual_submit" ? "Recording…" : "Confirm — it is already submitted"}
+            </button>
+          ) : (
+            <button onClick={() => setConfirmManual(true)} disabled={busy !== null}>
+              I submitted this myself…
+            </button>
+          )}
           <button onClick={() => setShowChange((v) => !v)} disabled={busy !== null}>Request re-fill…</button>
           <button onClick={() => send("send_review_email")} disabled={busy !== null}>Send to my email</button>
           {edited ? <span className="pill warn">{editedCount} edited — these become the approved answers</span> : null}
@@ -192,8 +225,27 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
           </div>
         ) : null}
 
+        {confirmManual ? (
+          <p className="muted" style={{ fontSize: 13, marginTop: 12, marginBottom: 0 }}>
+            This records that you filled and submitted the application on the employer&apos;s site yourself. It is
+            <strong> not a skip</strong>: the job counts as submitted, so no future run re-opens or re-files it.
+            Nothing is sent to the ATS.
+          </p>
+        ) : null}
+
         {note ? <p style={{ marginBottom: 0, marginTop: 12, color: "var(--accent)" }}>{note}</p> : null}
       </div>
+
+      {DECIDED[entry.status] ? (
+        <div className="card" style={{ borderColor: "var(--good, #2f9e44)", marginBottom: 14 }}>
+          <h3 style={{ marginTop: 0 }}>{DECIDED[entry.status]}</h3>
+          <p className="muted" style={{ fontSize: 13, marginBottom: 0 }}>
+            {entry.decidedAt ? `Recorded ${entry.decidedAt.slice(0, 16).replace("T", " ")}` : "Recorded"}
+            {entry.approvedBy ? ` by ${entry.approvedBy}` : ""}. The answers below are kept for the record — this
+            application is closed out and no run will re-open it.
+          </p>
+        </div>
+      ) : null}
 
       {hold ? (
         <div className="card" style={{ borderColor: "var(--warn)", marginBottom: 14 }}>

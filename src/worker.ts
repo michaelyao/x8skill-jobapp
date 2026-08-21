@@ -9,7 +9,7 @@ import { applyToJob, type ApplyDeps } from "./core/applyJob.js";
 import { jobFromEntry, submitApprovedEntry } from "./core/submitApproved.js";
 import { addLearnedAnswer, forgetLearnedAnswers, loadAnswers, syncAnswersMarkdown } from "./knowledge/answerStore.js";
 import { normalizeQuestion } from "./utils/normalize.js";
-import { hasSubmittedBefore, loadApplications } from "./knowledge/applications.js";
+import { hasSubmittedBefore, loadApplications, setApplicationStatus } from "./knowledge/applications.js";
 import {
   releaseOrphanedClaims,
   claimNextCommand,
@@ -17,10 +17,10 @@ import {
   releaseCommand,
   type Command,
 } from "./knowledge/commands.js";
-import { loadPendingQueue, updatePendingStatus, upsertPending, type PendingEntry } from "./knowledge/approvalQueue.js";
+import { isSubmittedStatus, loadPendingQueue, updatePendingStatus, upsertPending, type PendingEntry } from "./knowledge/approvalQueue.js";
 import { loadInternshipList } from "./sources/internshipList.js";
 import { loadProfile } from "./knowledge/profile.js";
-import { loadX8NoteConfig } from "./knowledge/x8note.js";
+import { loadX8NoteConfig, syncNoteStage } from "./knowledge/x8note.js";
 import { scanEmailForDecisions } from "./knowledge/emailScan.js";
 import { writeWorkerStatus } from "./knowledge/workerStatus.js";
 import { ensureDir, makeRunDir } from "./utils/log.js";
@@ -179,10 +179,65 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
       return { ok: true, message: `[${command.code}] skipped${command.actor ? ` by ${command.actor}` : ""}` };
     }
 
+    case "manual_submit": {
+      // The application is ALREADY IN — filled and submitted by hand on the ATS. Nothing here
+      // touches a browser; the only job is to make sure no later run ever re-opens it.
+      //
+      // That means writing BOTH stores. The queue entry is what the console shows, but every
+      // dedupe guard (hasSubmittedBefore, findCrossAtsDuplicate, the sweep's already-engaged
+      // check) reads the LEDGER. Marking only the queue would leave the ledger saying
+      // "prefilled, never submitted" and the next sweep would re-fill a live application.
+      const entry = await findEntry(command.code);
+      const applications = await loadApplications();
+      const record = applications.find((a) => a.code === command.code || a.id === command.code);
+      if (!entry && !record) return { ok: false, message: `no job known as ${command.code}` };
+
+      if (entry && isSubmittedStatus(entry.status) && entry.status !== "manual_submitted") {
+        return { ok: false, message: `[${command.code}] is already recorded as ${entry.status} — leaving it alone` };
+      }
+      if (entry?.status === "submitting") {
+        // We clicked submit and never recorded the result. If the user then submitted by hand
+        // there may now be two applications, and that is not something to paper over silently.
+        return {
+          ok: false,
+          message: `[${command.code}] is stuck mid-submit from an earlier attempt — check the ATS for a duplicate before marking it manually submitted`,
+        };
+      }
+
+      const at = new Date().toISOString();
+      const who = command.actor ?? command.source;
+      const done: string[] = [];
+
+      if (entry) {
+        await upsertPending({ ...entry, status: "manual_submitted", approvedBy: who, decidedAt: at });
+        done.push("queue");
+      }
+      if (record) {
+        const result = await setApplicationStatus(record.id, "manual_submitted", `submitted manually on the ATS by ${who}`);
+        if (result.unchangedBecause) done.push(`ledger unchanged (${result.unchangedBecause})`);
+        else if (result.record) {
+          done.push("ledger");
+          // Keep the note's stage label in step, or statusAudit reports drift for a record
+          // that is actually correct. Labels only — there is no new content to store.
+          const config = await loadX8NoteConfig();
+          if (config && (await syncNoteStage(config, result.record).catch(() => false))) done.push("x8note");
+        }
+      } else {
+        done.push("no ledger record — nothing to dedupe against");
+      }
+
+      return {
+        ok: true,
+        message: `[${command.code}] recorded as manually submitted on the ATS${who ? ` by ${who}` : ""} (${done.join(", ")})`,
+      };
+    }
+
     case "approve": {
       const entry = await findEntry(command.code);
       if (!entry) return { ok: false, message: `no queue entry for ${command.code}` };
-      if (entry.status === "submitted") return { ok: true, message: `[${command.code}] already submitted` };
+      if (isSubmittedStatus(entry.status)) {
+        return { ok: true, message: `[${command.code}] already ${entry.status === "manual_submitted" ? "submitted by hand on the ATS" : "submitted"} — not submitting again` };
+      }
       if (entry.status === "submitting") {
         // A previous attempt clicked submit and never recorded the result. Never retry that
         // automatically — it has to be confirmed on the ATS by a human.
@@ -258,7 +313,7 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
 
       // A retry re-opens a live form, so every "is this already done?" guard applies exactly as
       // it does on the submit path. Re-filling a submitted application risks a second one.
-      if (entry?.status === "submitted" || record?.status === "submitted") {
+      if (isSubmittedStatus(entry?.status) || record?.status === "submitted" || record?.status === "manual_submitted") {
         return { ok: false, message: `[${command.code}] is already submitted — not re-opening it` };
       }
       if (entry?.status === "submitting") {

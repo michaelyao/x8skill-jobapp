@@ -23,6 +23,7 @@ export const COMMANDS_DONE_DIR = path.join(COMMANDS_DIR, "done");
 export type CommandName =
   | "approve"
   | "skip"
+  | "manual_submit"
   | "change"
   | "retry"
   | "sweep"
@@ -50,6 +51,17 @@ export type Command = Base &
         answers?: FilledAnswer[];
       }
     | { name: "skip"; code: string }
+    | {
+        /**
+         * The user filled and submitted this application themselves on the ATS. Records that
+         * it WENT IN, so no later run re-opens it — the opposite of a skip, which records that
+         * no application exists.
+         */
+        name: "manual_submit";
+        code: string;
+        /** Optional free-text note, kept on the ledger record. */
+        note?: string;
+      }
     | { name: "change"; code: string; instruction: string }
     | {
         name: "retry";
@@ -115,6 +127,8 @@ export interface ClaimedCommand {
 const PRIORITY: Record<string, number> = {
   approve: 0,
   skip: 0,
+  // A decision, like approve and skip: it takes no browser and the user is waiting on it.
+  manual_submit: 0,
   update_answers: 1,
   forget_answers: 1,
   send_review_email: 1,

@@ -188,6 +188,9 @@ export interface ApplicationRecord {
   status:
     | "prefilled_pending_submit"
     | "submitted"
+    /** Filled and submitted BY HAND on the ATS. A real application — see approvalQueue's
+     *  PendingStatus for why this is not a skip. */
+    | "manual_submitted"
     | "already_applied_on_site"
     | "skipped_existing"
     | "unsupported_ats"

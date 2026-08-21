@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic";
 
 const TONE: Record<string, string> = {
   submitted: "good",
+  manual_submitted: "good",
   already_applied_on_site: "good",
   prefilled_pending_submit: "accent",
   expired: "",

@@ -39,6 +39,7 @@ const queueByCode = new Map(queue.filter((q) => q.code).map((q) => [q.code!, q.s
 const QUEUE_EQUIV: Record<string, string[]> = {
   submitted: ["submitted"],
   already_applied_on_site: ["submitted"],
+  manual_submitted: ["manual_submitted"],
   prefilled_pending_submit: ["awaiting_approval", "submitting", "skipped", "error"],
 };
 
@@ -46,7 +47,7 @@ const QUEUE_EQUIV: Record<string, string[]> = {
 // applyJob's record()). A dead posting or a skip has nothing worth storing, so the
 // absence of a note for those is correct — counting it as drift made the audit report 23
 // false mismatches the moment expired postings started being recorded.
-const NOTE_EXPECTED = new Set(["prefilled_pending_submit", "submitted", "already_applied_on_site"]);
+const NOTE_EXPECTED = new Set(["prefilled_pending_submit", "submitted", "already_applied_on_site", "manual_submitted"]);
 
 let mismatches = 0;
 console.log(`${"code".padEnd(8)} ${"ledger".padEnd(26)} ${"queue".padEnd(18)} x8note`);
@@ -62,7 +63,7 @@ for (const r of records) {
     console.log(`${code.padEnd(8)} ${r.status.padEnd(26)} ${(q ?? "—").padEnd(18)} ${stage ?? "—"}${flag}`);
   }
 }
-const submitted = records.filter((r) => r.status === "submitted" || r.status === "already_applied_on_site").length;
+const submitted = records.filter((r) => r.status === "submitted" || r.status === "already_applied_on_site" || r.status === "manual_submitted").length;
 const expectNote = records.filter((r) => NOTE_EXPECTED.has(r.status)).length;
 const byStatus: Record<string, number> = {};
 for (const r of records) byStatus[r.status] = (byStatus[r.status] ?? 0) + 1;

@@ -25,6 +25,7 @@ import { isStale, readWorkerStatus } from "./knowledge/workerStatus.js";
  *   jobapp approve SBXFMD
  *   jobapp retry BXGRTC --hint "the school is Carnegie Mellon University"
  *   jobapp skip QFOBUG
+ *   jobapp manual-submit HDHJVW
  *
  * By default it waits and streams the outcome, because "queued" is a useless answer when the
  * work takes four minutes. Ctrl-C detaches from the output; the daemon owns the work either
@@ -41,7 +42,8 @@ Usage
   jobapp approve <CODE>               re-fill, verify against approved answers, submit
   jobapp retry <CODE> [--hint TEXT]   re-fill a blocked or new job (never submits)
   jobapp change <CODE> --hint TEXT    re-fill applying a correction, then re-review
-  jobapp skip <CODE>                  drop it from the queue
+  jobapp skip <CODE>                  drop it from the queue — no application was filed
+  jobapp manual-submit <CODE>         you filled and submitted it yourself on the ATS
   jobapp history <CODE>               every recorded copy of that application
 
 Flags
@@ -207,7 +209,7 @@ async function showQueue(args: Argv): Promise<number> {
       `${e.code ?? e.key}  ${short(e.company, 22).padEnd(22)} ${short(e.title, 44).padEnd(44)} ${String(e.answers?.length ?? 0).padStart(3)} ans  ${when(e.reviewSentAt)}${flags ? `  [${flags}]` : ""}`,
     );
   }
-  console.log(`\n${rows.length} shown. Review at ${process.env.PUBLIC_URL || "http://localhost:8088"}/queue`);
+  console.log(`\n${rows.length} shown. Review at ${process.env.PUBLIC_URL || "http://localhost:8090"}/queue`);
   return 0;
 }
 
@@ -252,6 +254,8 @@ switch (verb) {
   case "approve":
   case "retry":
   case "skip":
+  case "manual-submit":
+  case "manual_submit":
   case "change": {
     if (!code) {
       console.error(`usage: jobapp ${verb} <CODE>`);
@@ -263,7 +267,8 @@ switch (verb) {
       exit = 1;
       break;
     }
-    exit = await send(verb, code, args);
+    // The verb is hyphenated for typing; the command name is not.
+    exit = await send(verb === "manual-submit" ? "manual_submit" : verb, code, args);
     break;
   }
   case "help":

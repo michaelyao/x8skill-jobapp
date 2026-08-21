@@ -19,6 +19,7 @@ const ENGAGED_STATUSES = new Set<ApplicationRecord["status"]>([
   "prefilled_pending_submit",
   "already_applied_on_site",
   "submitted",
+  "manual_submitted",
   "expired",
 ]);
 
@@ -35,7 +36,10 @@ export async function loadApplications(): Promise<ApplicationRecord[]> {
 
 // Statuses that mean the application actually WENT IN — re-opening these risks a
 // duplicate application, so no override may bypass them.
-const SUBMITTED_STATUSES = new Set<ApplicationRecord["status"]>(["submitted", "already_applied_on_site"]);
+// "manual_submitted" is here for the same reason as the other two: the application exists on
+// the employer's side. It arrived by hand rather than through this tool, which changes nothing
+// about the consequence of re-opening it.
+const SUBMITTED_STATUSES = new Set<ApplicationRecord["status"]>(["submitted", "already_applied_on_site", "manual_submitted"]);
 
 /**
  * Does this ledger record refer to the same job? Any one route is enough — they are
@@ -212,6 +216,45 @@ function normalize(url: string): string {
  */
 function slimForLedger(record: ApplicationRecord): ApplicationRecord {
   return { ...record, jobDescription: "", answers: undefined, resumeContent: undefined };
+}
+
+/**
+ * Change one record's status and nothing else.
+ *
+ * Deliberately NOT recordApplication: records read back from the ledger are slim (the
+ * description, answers and resume text live in the x8note note, not here), so passing one
+ * through the full writer would write those fields back as empty. A re-sync doing exactly
+ * that wiped 30 captured descriptions once already. This touches status, updatedAt and notes,
+ * leaves the per-application folder alone, and refuses to un-submit anything.
+ *
+ * Returns the updated record, or null when there is nothing to update.
+ */
+export async function setApplicationStatus(
+  id: string,
+  status: ApplicationRecord["status"],
+  note?: string,
+): Promise<{ record: ApplicationRecord | null; unchangedBecause?: string }> {
+  const records = await loadApplications();
+  const existing = records.find((r) => r.id === id || r.code === id);
+  if (!existing) return { record: null };
+
+  // An application that went in never becomes un-submitted, and never swaps one submitted
+  // status for another — the first one recorded is the truth about how it happened.
+  if (SUBMITTED_STATUSES.has(existing.status) && existing.status !== status) {
+    return { record: existing, unchangedBecause: `already recorded as ${existing.status}` };
+  }
+
+  const updated: ApplicationRecord = {
+    ...existing,
+    status,
+    updatedAt: new Date().toISOString(),
+    notes: note ? [...(existing.notes ?? []), note] : existing.notes,
+  };
+  await writeJson(
+    APPLICATIONS_JSON_PATH,
+    records.map((r) => (r === existing ? updated : r)).map(slimForLedger),
+  );
+  return { record: updated };
 }
 
 /**
