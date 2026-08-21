@@ -67,8 +67,25 @@ async function main(): Promise<void> {
     const driver = new WorkdayDriver();
     console.log("running the real openApplication (auth + Apply)…");
     await driver.openApplication(page);
-    const root = await driver.resolveRoot(page);
+    let root = await driver.resolveRoot(page);
     await page.waitForTimeout(2500);
+
+    // FIND=<regex> advances through the form (Save and Continue) until a field matching it
+    // appears, so a question several pages in — the ones that actually block — can be dumped.
+    const find = process.env.FIND ? new RegExp(process.env.FIND, "i") : undefined;
+    if (find) {
+      for (let page_ = 0; page_ < 8; page_ += 1) {
+        const probe = await driver.read(root);
+        if (probe.fields.some((f) => find.test(f.label))) {
+          console.log(`found a field matching ${find} on page ${page_ + 1}`);
+          break;
+        }
+        console.log(`page ${page_ + 1}: ${probe.fields.length} field(s), no match — advancing`);
+        if (!(await driver.next(root))) { console.log("no next control; stopping here"); break; }
+        await page.waitForTimeout(2500);
+        root = await driver.resolveRoot(page);
+      }
+    }
 
     // What the reader reports.
     const snapshot = await driver.read(root);

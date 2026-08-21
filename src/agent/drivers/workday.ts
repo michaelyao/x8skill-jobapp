@@ -434,16 +434,24 @@ export class WorkdayDriver extends GenericDriver {
 
     const snapshot = await super.read(root);
 
-    // Also capture Workday's custom comboboxes. The stable signal is a
-    // <button aria-haspopup="listbox"> whose text is a placeholder ("Select One").
-    // The question is its aria-label (minus the trailing "Select One").
+    // Also capture Workday's custom comboboxes: a <button aria-haspopup="listbox"> whose text IS
+    // its value. The real <input> sits beside it at 0x0 with no offsetParent, so super.read —
+    // which collects inputs and filters on visibility — never sees these at all.
+    //
+    // This used to take only buttons showing a placeholder ("Select One"), i.e. only UNFILLED
+    // ones. That is why State was invisible on GE Vernova, Northrop and RTX: it showed
+    // "Pennsylvania", a real value, so it was skipped — and because it was never offered, the
+    // form kept that default while street, city and postal all said Sunnyvale, and Workday
+    // rejected the page with "94085 is not a valid postal code for Pennsylvania". A field holding
+    // the WRONG value needs answering more than an empty one, not less.
     const combos = (await root.evaluate(`(() => {
       const out = [];
       let i = 0;
       for (const b of document.querySelectorAll('button[aria-haspopup="listbox"]')) {
         if (b.offsetParent === null) continue;
         const txt = (b.textContent || "").trim();
-        if (!/^(select one|please select)$/i.test(txt)) continue; // only unfilled
+        if (!txt) continue; // nothing rendered yet
+        const placeholder = /^(select one|please select|select|choose one|choose)$/i.test(txt);
         let key = b.getAttribute("data-agent-key");
         if (!key) { key = "wd" + (i++); b.setAttribute("data-agent-key", key); }
         // The question text is in the enclosing formField container's text (there
@@ -452,11 +460,25 @@ export class WorkdayDriver extends GenericDriver {
         const raw = ff ? (ff.innerText || "") : (b.getAttribute("aria-label") || "");
         // Required iff the field container shows a red-star asterisk / "required".
         const required = /\\*/.test(raw) || /\\brequired\\b/i.test(raw) || b.getAttribute("aria-required") === "true";
-        const label = raw.replace(/select one/gi, "").replace(/\\brequired\\b/gi, "").replace(/\\*/g, "").replace(/\\s+/g, " ").trim().slice(0, 160);
-        if (label) out.push({ key, label, required });
+        // Workday folds its inline validation message into the container text once a page has
+        // been rejected ("... Error: The field ... is and must have a value"), and that container
+        // text is what we use as the question. Left in, the same question arrives TWICE — clean
+        // and error-suffixed — and both count as required, so filling one leaves the other
+        // "empty" and the gate can never pass. validationErrors() already reports the message.
+        const label = raw
+          .replace(/\\s*Error:\\s[\\s\\S]*$/i, "")
+          .replace(txt, "")   // the button text is the VALUE, not part of the question
+          .replace(/select one|please select/gi, "")
+          .replace(/\\*/g, "")
+          .replace(/\\s+/g, " ")
+          .trim()
+          .slice(0, 160);
+        // The button text is the current value, so it doubles as the "is it answered?" signal —
+        // and it must be reported, or a WRONG value reads as an empty field and is never fixed.
+        if (label) out.push({ key, label, required, filled: !placeholder });
       }
       return out;
-    })()`)) as Array<{ key: string; label: string; required: boolean }>;
+    })()`)) as Array<{ key: string; label: string; required: boolean; filled: boolean }>;
 
     // Capture each combobox's real options (open → read → close) so the agent
     // picks an exact option rather than us guessing with fuzzy matching.
@@ -500,7 +522,9 @@ export class WorkdayDriver extends GenericDriver {
         searchable: pagedTaxonomy || undefined,
         sensitive: isSensitive(combo.label),
         widget: "workday-select",
-        filled: false, // only captured while showing the "Select One" placeholder
+        // A placeholder is not an answer; a real value is — even a WRONG one, which is the
+        // whole reason these are reported now instead of skipped. State read "Pennsylvania".
+        filled: combo.filled,
       });
     }
 

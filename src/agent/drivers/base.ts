@@ -406,53 +406,6 @@ export abstract class GenericDriver implements AtsDriver {
         out.push({ key, label, type, options, required, widget: isReactSelect ? "react-select" : "", searchable, filled, groupKey, groupLabel, groupRequired });
       }
 
-      // ── Workday's styled dropdowns ──────────────────────────────────────────────────
-      // Country and State are NOT inputs. Workday renders a <button aria-haspopup="listbox">
-      // showing the current value and parks the real <input> beside it at 0x0 with no
-      // offsetParent. The collection above takes inputs/selects/textareas and filters on
-      // visibility, so BOTH were invisible: the field did not exist as far as the agent was
-      // concerned, and the form silently kept its own default.
-      //
-      // Measured on RTX, GE Vernova and Northrop: State sat at "Pennsylvania" — its button text
-      // said so — while street, city and postal all said Sunnyvale, and Workday rejected the page
-      // with "94085 is not a valid postal code for Pennsylvania". Sixteen turns, each one
-      // re-answering only the thirteen fields the reader COULD see.
-      //
-      // A separate pass on purpose: the loop above dereferences input-only properties
-      // (readOnly, value, checked), so a <button> has no business going through it.
-      var popups = [].slice.call(document.querySelectorAll('[aria-haspopup="listbox"]')).filter(isVisible);
-      for (var pi = 0; pi < popups.length; pi++) {
-        var btn = popups[pi];
-        var wrap = btn.closest('[data-automation-id^="formField-"]');
-        if (!wrap) continue;
-        // Only when the wrapper exposes NO other visible control. A searchable prompt that
-        // already has a real input (Country Phone Code) must not be reported twice.
-        var siblings = [].slice.call(wrap.querySelectorAll("input:not([type=hidden]):not([type=file]), textarea, select")).filter(isVisible);
-        if (siblings.length) continue;
-        var wlab = wrap.querySelector("label, legend");
-        var plabel = ((wlab && wlab.innerText) || btn.getAttribute("aria-label") || "").trim().slice(0, 140);
-        if (!plabel) continue;
-        if (!wrap.getAttribute("data-agent-key")) wrap.setAttribute("data-agent-key", "p" + (i++));
-        var pkey = '[data-agent-key="' + wrap.getAttribute("data-agent-key") + '"] [aria-haspopup="listbox"]';
-        var shown = (btn.innerText || "").trim();
-        // "Select One" and friends are placeholders, not values. Counting one as filled is how a
-        // required dropdown passes the gate while still being empty.
-        var plow = shown.toLowerCase();
-        var isPlaceholder = !shown || plow === "select one" || plow === "select" || plow === "select..." || plow === "choose one" || plow === "choose";
-        out.push({
-          key: pkey,
-          label: plabel,
-          type: "single_select",
-          options: [],
-          required: plabel.indexOf("*") >= 0 || wrap.querySelector("[aria-required=true]") !== null,
-          widget: "workday-select",
-          searchable: false,
-          filled: !isPlaceholder,
-          groupKey: "",
-          groupLabel: "",
-          groupRequired: false,
-        });
-      }
       return out;
     })()`;
     const rawFields = (await root.evaluate(READ_SCRIPT)) as Array<{
@@ -469,11 +422,28 @@ export abstract class GenericDriver implements AtsDriver {
       groupRequired?: boolean;
     }>;
 
+    /**
+     * Workday folds its inline validation message INTO the field's label once a page has been
+     * rejected: "Are you currently enrolled in a degree seeking program? Error: The field ... is
+     * and must have a value." The same question then arrives TWICE — once clean, once with the
+     * error glued on — and both count as required. Filling one leaves the other "empty", so the
+     * required-field gate can never be satisfied and a fill that DID work is reported as blocked.
+     * That is what made RTX log "✓ What is your Current Degree Program?" and still stop on it.
+     *
+     * The message belongs in validationErrors(), which already reports it. Cut it off the label.
+     */
+    const stripError = (label: string): string =>
+      label
+        .replace(/\s*Error:\s[\s\S]*$/i, "")
+        .replace(/\s*Error\s*-\s*Page Error[\s\S]*$/i, "")
+        .replace(/\s+/g, " ")
+        .trim();
+
     const fields: FieldSpec[] = rawFields
       .filter((f) => f.label && !SUBMIT.test(f.label))
-      .map((f) => ({
+      .map((f): FieldSpec => ({
         key: f.key,
-        label: f.label,
+        label: stripError(f.label),
         type: f.type as FieldSpec["type"],
         required: f.required,
         options: f.options.length ? f.options : undefined,
@@ -484,7 +454,15 @@ export abstract class GenericDriver implements AtsDriver {
         groupKey: f.groupKey || undefined,
         groupLabel: f.groupLabel || undefined,
         groupRequired: f.groupRequired || undefined,
-      }));
+      }))
+      // Stripping the error makes the clean and error-suffixed copies identical. Collapse them:
+      // one question is one field, and a duplicate the gate can never satisfy is worse than none.
+      .filter((f, i, all) => {
+        const first = all.findIndex((o) => o.label === f.label && o.type === f.type);
+        if (first === i) return true;
+        if (f.filled && !all[first].filled) all[first].filled = true;
+        return false;
+      });
 
     // For custom dropdowns (react-select etc.), capture the real options so the
     // agent picks an EXACT option instead of us typing a free value.
@@ -629,7 +607,24 @@ export abstract class GenericDriver implements AtsDriver {
     // Workday's styled dropdown: the control IS a <button aria-haspopup="listbox">, so there is no
     // <select> for selectOption() and no input to type into. Clicking it opens a listbox of
     // promptOption rows — exactly what fillReactSelect already drives.
-    if (field.widget === "workday-select") return this.fillReactSelect(root, locator, value, field.key);
+    if (field.widget === "workday-select") {
+      const picked = await this.fillReactSelect(root, locator, value, field.key);
+      if (!picked) return false;
+      // VERIFY. fillReactSelect reported success while RTX kept answering "The field ... is
+      // required and must have a value" — a false success, the one thing this path must never
+      // produce. The control is a button whose text IS its value, so read it back.
+      await locator.page().waitForTimeout(400);
+      const shown = ((await locator.innerText().catch(() => "")) || "").trim();
+      const got = normaliseOption(shown);
+      // A comma-separated answer means alternatives, so any of them landing counts.
+      const wanted = value.split(",").map((v) => normaliseOption(v)).filter(Boolean);
+      const ok = got !== "" && wanted.some((w) => got === w || got.includes(w) || w.includes(got));
+      if (!ok) {
+        console.log(`      ✗ "${field.label.slice(0, 44)}" still reads ${JSON.stringify(shown)} after picking ${JSON.stringify(value.slice(0, 40))} — not reporting that as filled`);
+        return false;
+      }
+      return true;
+    }
 
     if (field.type === "single_select") {
       const options = field.options || [];
