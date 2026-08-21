@@ -253,11 +253,33 @@ export class LlmAgent implements Agent {
     }
 
     let parsed: Array<Partial<FieldAnswer>>;
-    const { json, repaired } = stripToJson(raw);
+    let { json, repaired } = stripToJson(raw);
     try {
       parsed = JSON.parse(json);
     } catch {
-      throw new Error(`[agent] Could not parse ${provider} response as JSON: ${raw.slice(0, 200)}`);
+      // One bad reply must not cost the whole application. Fannie Mae PTPDDZ died exactly here:
+      // the model returned an opening fence and nothing after it, so stripToJson correctly
+      // produced "" and JSON.parse threw — with 17 required fields still pending and two retry
+      // passes unused. The exception also unwound past the ledger write, so the job left no
+      // record at all: not in the queue, not in applications.json, only a line in the log.
+      //
+      // So: ask once more, then degrade to "no answers this turn". The turn loop already knows
+      // what to do with that — re-read, retry the stragglers, and if a required field is still
+      // empty STOP and report blockedRequired. That is a diagnosable outcome with a ledger entry
+      // behind it. An exception is not.
+      console.warn(
+        `  [agent] ${provider} reply was not JSON (${raw.trim().length} char(s): ${JSON.stringify(raw.slice(0, 120))}) — asking once more.`,
+      );
+      try {
+        raw = provider === "airouter" ? await callAirouter(system, user) : await callGemini(system, user);
+        ({ json, repaired } = stripToJson(raw));
+        parsed = JSON.parse(json);
+      } catch {
+        console.warn(
+          `  [agent] ${provider} still did not return JSON — leaving this turn's ${snapshot.fields.length} field(s) unanswered for the retry pass.`,
+        );
+        return [];
+      }
     }
     if (repaired) {
       console.warn(
