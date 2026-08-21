@@ -68,12 +68,14 @@ COPY --from=builder /app/src ./src
 COPY --from=builder /app/web ./web
 COPY --from=builder /app/dist ./dist
 
-# `jobapp` inside the container, so `docker exec jobapp-console jobapp status` just works. It
+# `jobapp` inside the container, so `docker exec jobapp_website jobapp status` just works. It
 # writes a command file for the worker on the host — the same control channel the website uses.
 RUN printf '#!/bin/sh\nexec node /app/dist/cli.js "$@"\n' > /usr/local/bin/jobapp \
  && chmod +x /usr/local/bin/jobapp
 
-EXPOSE 8088
+# No EXPOSE. It is documentation only — compose publishes the port explicitly — and it was
+# actively wrong: it still said 8088 after the website moved to 8090, and since the scheduler
+# shares this image, `docker ps` showed the scheduler advertising a port it never listens on.
 WORKDIR /app/web
 
 # Deliberately NOT `npm start`: that script derives JOBAPP_ROOT as $(cd .. && pwd), which

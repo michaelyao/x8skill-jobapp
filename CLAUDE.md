@@ -100,7 +100,7 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   session the tracker-sheet export needs and the low bot fingerprint the ATS forms need. A
   Linux container has no macOS Chrome, no GUI and no access to it, so containerizing the
   worker would trade the property the automation depends on for a deploy convenience. The
-  console is the opposite: it never drives a browser, so `Dockerfile.web` /
+  console is the opposite: it never drives a browser, so `Dockerfile.jobapp_website` /
   `docker-compose.yml` run it with state bind-mounted at `/jobapp` (`JOBAPP_ROOT`) and
   `data/commands/` read-write as the channel to the native worker. `playwright/` is not
   mounted. Docker is NOT a reboot-safety fix — see the next point.
@@ -174,7 +174,7 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   it matches on requisition id, `identityKey`, `externalJobId` and normalized apply URL, none of
   which need a session. `decideDedupe`/`SheetRow` are gone with it.
 - **The 8-hour tick lives in the container, the work happens in the worker.** `src/scheduler.ts`
-  runs as its own compose service (`jobapp-scheduler`, same image) and only ever writes a command
+  runs as its own compose service (`jobapp_scheduler`, same image) and only ever writes a command
   file — no browser, which is why it can live where there is no Chrome. It enqueues ONE `sweep`
   with `refreshList`, and the worker does the rest. It is an interval, not a wall-clock cron:
   "every 8 hours" is about noticing new postings, so drift is irrelevant and a restart checks
@@ -182,7 +182,7 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   queued, or when the worker is stale — otherwise a slow batch would have two more stacked behind
   it. Its own service rather than cron in the web container: that image has no cron, and adding
   one means supervising two processes in a container built to run one.
-- **The image ships compiled JS, not tsx.** `Dockerfile.web` runs `tsc -p tsconfig.json` in the
+- **The image ships compiled JS, not tsx.** `Dockerfile.jobapp_website` runs `tsc -p tsconfig.json` in the
   builder and copies `dist/`, so the scheduler and the in-container `jobapp` run on plain node.
   Anything running `dist/*.js` needs an ABSOLUTE path and `working_dir: /app` — the image's
   WORKDIR is `/app/web` for `next start`, so a relative `dist/scheduler.js` resolves to

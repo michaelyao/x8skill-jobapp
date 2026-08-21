@@ -36,7 +36,7 @@ one worker — an earlier setup ran a second native console on 8088 against the 
 was pure duplication.
 
 ```bash
-./console-docker.sh up             # the console (8090)
+./jobapp_website.sh up             # the console (8090)
 ./install-services.sh              # the worker as a LaunchAgent, + offers auto-login
 ./install-services.sh --autologin  # only (re)set auto-login
 ./install-services.sh --uninstall
@@ -53,7 +53,7 @@ that fails on startup does not spin.
 
 ```bash
 launchctl list | grep jobapp        # worker
-./console-docker.sh status          # console
+./jobapp_website.sh status          # console
 tail -f logs/worker.log
 ```
 
@@ -105,11 +105,11 @@ Greenhouse to accept a form, and what holds the ATS sessions between runs. A Lin
 neither. So the split is: website in Docker, worker native.
 
 ```bash
-./console-docker.sh up        # preflight, build, start
-./console-docker.sh status
-./console-docker.sh logs
-./console-docker.sh down
-./console-docker.sh rebuild   # after changing web/ or src/
+./jobapp_website.sh up        # preflight, build, start
+./jobapp_website.sh status
+./jobapp_website.sh logs
+./jobapp_website.sh down
+./jobapp_website.sh rebuild   # after changing web/ or src/
 ```
 
 The image holds only the built Next server. All state is bind-mounted at `/jobapp`
@@ -121,26 +121,26 @@ container has no reason to hold live session cookies.
 Two things to know before relying on it:
 
 - **`web-stop.sh` does not apply.** It kills whatever holds port 8088, which for a container
-  is `docker-proxy`. Use `./console-docker.sh down`. `console-docker.sh up` refuses to start
+  is `docker-proxy`. Use `./jobapp_website.sh down`. `jobapp_website.sh up` refuses to start
   if a *native* console already holds the port and points you at `./web-stop.sh`.
 - **Docker does not make it reboot-safe on macOS, and it is an ALTERNATIVE to the console
   daemon, not a companion.** Both bind port 8088; whichever loses crash-loops against the
   winner. `restart: unless-stopped` only acts once the Docker daemon is up, and on macOS that
   daemon *is* Docker Desktop — a GUI-login app. So the container cannot start before someone
   signs in, which is the exact problem the LaunchDaemon exists to solve. `install-services.sh`
-  refuses to install while the container is running; run `./console-docker.sh down` first, or
+  refuses to install while the container is running; run `./jobapp_website.sh down` first, or
   stay on Docker and skip the daemon.
 
 ### The 8-hour tick
 
-`jobapp-scheduler` — its own container, same image — rebuilds the job list and queues the next
+`jobapp_scheduler` — its own container, same image — rebuilds the job list and queues the next
 batch every 8 hours. It never touches a browser; it writes one command file and the worker does
 the work, one application at a time.
 
 ```bash
-docker logs -f jobapp-scheduler
-docker exec jobapp-console jobapp status      # jobapp works inside the container too
-docker exec jobapp-console jobapp sweep --max 5
+docker logs -f jobapp_scheduler
+docker exec jobapp_website jobapp status      # jobapp works inside the container too
+docker exec jobapp_website jobapp sweep --max 5
 ```
 
 It skips a tick if the previous batch is still queued, or if the worker is not running — a sweep

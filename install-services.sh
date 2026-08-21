@@ -21,7 +21,7 @@
 # ---------------------------------------------------------------------------------------
 # THE CONSOLE RUNS IN DOCKER (port 8090). This script does NOT install a console by default.
 #
-# Chosen 2026-08-21: one console, in a container (`./console-docker.sh up`), and the worker as
+# Chosen 2026-08-21: one console, in a container (`./jobapp_website.sh up`), and the worker as
 # a LaunchAgent. Running a second native console alongside it was pure duplication — the same
 # app, the same data, two ports to keep straight.
 #
@@ -295,15 +295,15 @@ ok "config, build and deps present"
 # Running both is a reasonable belt-and-braces setup, because they fail differently: the
 # container cannot start until someone logs in (Docker Desktop is a GUI app), while the daemon
 # starts at boot with no login. The daemon is then the console that is always there.
-container_ports="$(docker ps --filter "name=jobapp-console" --format '{{.Ports}}' 2>/dev/null || true)"
+container_ports="$(docker ps --filter "name=jobapp_website" --format '{{.Ports}}' 2>/dev/null || true)"
 if [ -n "$container_ports" ]; then
   if printf '%s' "$container_ports" | grep -qE "(^|[^0-9])${PORT}->"; then
-    warn "the jobapp-console CONTAINER is published on port $PORT: $container_ports"
+    warn "the jobapp_website CONTAINER is published on port $PORT: $container_ports"
     echo >&2
     echo "  Either give the daemon its own port:" >&2
     echo "      WEB_PORT=8089 ./install-services.sh" >&2
     echo "  or stop the container and let the daemon have $PORT:" >&2
-    echo "      ./console-docker.sh down && ./install-services.sh" >&2
+    echo "      ./jobapp_website.sh down && ./install-services.sh" >&2
     die "refusing to install two consoles on the same port"
   fi
   ok "Docker console is up on $container_ports — this daemon will take $PORT instead (no clash)"
@@ -314,7 +314,7 @@ note "user     $USER_NAME:$GROUP_NAME (uid $UID_NUM)"
 # ----------------------------------------------------------------- console: LaunchDaemon
 if [ "$WITH_CONSOLE" -eq 0 ]; then
   section "Console"
-  ok "left to Docker on 8090 — nothing to install (./console-docker.sh up)"
+  ok "left to Docker on 8090 — nothing to install (./jobapp_website.sh up)"
   # An old console LaunchAgent from a previous install would still grab 8088 at every login,
   # running a second copy of the same app against the same data for no reason.
   if [ -f "$WEB_AGENT_PLIST" ]; then
@@ -393,7 +393,7 @@ section "Verify"
 if [ "$WITH_CONSOLE" -eq 0 ]; then
   dockerhealth="$(curl -fsS --max-time 3 "http://127.0.0.1:8090/api/health" 2>/dev/null || true)"
   if [ -n "$dockerhealth" ]; then ok "Docker console on 8090: $dockerhealth"
-  else warn "Docker console not responding on 8090 — start it with: ./console-docker.sh up"; fi
+  else warn "Docker console not responding on 8090 — start it with: ./jobapp_website.sh up"; fi
 fi
 for _ in $(seq 1 20); do
   [ "$WITH_CONSOLE" -eq 0 ] && break

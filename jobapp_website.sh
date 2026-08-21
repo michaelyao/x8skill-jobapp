@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Run the job console as a container. The worker is NOT part of this — it stays native,
-# because it drives a real headed Chrome (see Dockerfile.web).
+# Run the jobapp WEBSITE as a container. The worker is NOT part of this — it stays native,
+# because it drives a real headed Chrome (see Dockerfile.jobapp_website).
 #
-#   ./console-docker.sh up        # preflight, build if needed, start
-#   ./console-docker.sh down      # stop and remove
-#   ./console-docker.sh rebuild   # rebuild the image and restart
-#   ./console-docker.sh status
-#   ./console-docker.sh logs      # follow
+#   ./jobapp_website.sh up        # preflight, build if needed, start
+#   ./jobapp_website.sh down      # stop and remove
+#   ./jobapp_website.sh rebuild   # rebuild the image and restart
+#   ./jobapp_website.sh status
+#   ./jobapp_website.sh logs      # follow
 #
 # The preflight repeats the checks web-start.sh makes, because they fail the same confusing
 # way in a container: a login page with no accounts behind it, or a missing session secret.
@@ -16,8 +16,8 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
 
 PORT="${WEB_PORT:-8090}"
-SERVICE="console"
-CONTAINER="jobapp-console"
+SERVICE="website"
+CONTAINER="jobapp_website"
 
 die()  { printf '\033[31m✗\033[0m %s\n' "$1" >&2; exit 1; }
 ok()   { printf '\033[32m✓\033[0m %s\n' "$1"; }
@@ -85,7 +85,7 @@ case "${1:-up}" in
   up)
     require_daemon
     preflight
-    echo "Starting the console container on port $PORT …"
+    echo "Starting the website container on port $PORT …"
     compose up -d --build "$SERVICE"
     for _ in $(seq 1 60); do
       sleep 1
@@ -94,12 +94,12 @@ case "${1:-up}" in
     h="$(health)"
     [ -n "$h" ] || die "did not become healthy within 60s — logs:
 $(compose logs --tail 25 "$SERVICE" 2>&1)"
-    ok "console responding: $h"
+    ok "website responding: $h"
     note "local    http://127.0.0.1:$PORT"
     ip="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)"
     [ -n "$ip" ] && note "network  http://$ip:$PORT"
     grep -qE '^PUBLIC_URL=' "$DIR/.env" && note "public   $(grep -E '^PUBLIC_URL=' "$DIR/.env" | cut -d= -f2-)"
-    note "logs     ./console-docker.sh logs"
+    note "logs     ./jobapp_website.sh logs"
     case "$(printf '%s' "$h" | sed -n 's/.*"worker":"\([^"]*\)".*/\1/p')" in
       idle|busy) note "worker   native, running" ;;
       *) warn "the worker is not running — approvals will queue but never execute. Start it with: ./worker-start.sh" ;;

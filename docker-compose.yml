@@ -1,8 +1,8 @@
-# The console only. The worker stays native on the host — see the header of Dockerfile.web
+# The console only. The worker stays native on the host — see the header of Dockerfile.jobapp_website
 # for why it cannot be containerized.
 #
-#   ./console-docker.sh up        # build if needed, then start
-#   ./console-docker.sh status
+#   ./jobapp_website.sh up        # build if needed, then start
+#   ./jobapp_website.sh status
 #
 # Listens on 8090. The NATIVE console (web-start.sh, and the LaunchDaemon that
 # install-services.sh sets up) keeps 8088, so the two can run side by side on the same data/.
@@ -14,12 +14,12 @@
 # the launchd agent it replaced.
 
 services:
-  console:
+  website:
     build:
       context: .
-      dockerfile: Dockerfile.web
-    image: x8skill-jobapp-console:latest
-    container_name: jobapp-console
+      dockerfile: Dockerfile.jobapp_website
+    image: x8skill-jobapp-website:latest
+    container_name: jobapp_website
     restart: unless-stopped
     ports:
       - "${WEB_PORT:-8090}:8090"
@@ -57,9 +57,9 @@ services:
   # the web container: the image has no cron, and adding one would mean supervising two processes
   # in a container built to run one.
   scheduler:
-    image: x8skill-jobapp-console:latest
-    container_name: jobapp-scheduler
-    depends_on: [console]
+    image: x8skill-jobapp-website:latest
+    container_name: jobapp_scheduler
+    depends_on: [website]
     restart: unless-stopped
     # Absolute path and an explicit working_dir: the image's WORKDIR is /app/web (that is where
     # `next start` must run from), so a relative "dist/scheduler.js" resolves to

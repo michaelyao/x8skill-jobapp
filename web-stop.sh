@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stop the job console web server.
+# Stop the jobapp website (native).
 #
 #   ./web-stop.sh
 #   WEB_PORT=3010 ./web-stop.sh

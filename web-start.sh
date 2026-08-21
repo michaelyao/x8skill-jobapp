@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start the job console web server in the background.
+# Start the jobapp website (native, not the container) in the background.
 #
 #   ./web-start.sh              # 0.0.0.0:8088
 #   WEB_PORT=3010 ./web-start.sh
@@ -52,7 +52,7 @@ if [ ! -d "$DIR/web/.next" ]; then
 fi
 
 # --- start --------------------------------------------------------------------
-echo "Starting the console on $HOST:$PORT …"
+echo "Starting the jobapp website on $HOST:$PORT …"
 (
   cd "$DIR/web"
   JOBAPP_ROOT="$DIR" nohup npx next start -H "$HOST" -p "$PORT" >>"$LOG" 2>&1 &
