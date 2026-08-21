@@ -362,6 +362,16 @@ dependent dropdown whose options load only after Country/Territory resolves, so 
 options and dropped. Needs a live DOM dump (`src/debug/inspectMyInfo.ts`) to confirm before
 changing the reader. Until then the run stops fast and says why, instead of burning sixteen turns.
 
+**OPEN BUG — a workday-select fill reports success without committing.** RTX ZJQCPS now reaches
+the application-questions page, and `What is your Current Degree Program?` logs `✓` while the form
+still answers `The field … is required and must have a value`. So `fillReactSelect` is returning
+true for an `aria-haspopup="listbox"` control whose selection did not stick — a FALSE SUCCESS,
+which is the one thing the fill path is not allowed to do ("Nothing reports success without
+verification"). Reading the field back is not enough here either: the button text may update
+optimistically. Next step is to re-read via the same `read()` pass after the click and compare, and
+to check whether the click lands on the option row or on a wrapper. Until then this field blocks
+RTX (5 listings).
+
 **A form that is rejecting the page gets one turn, not sixteen.** `turnLoop` breaks as soon as a
 blocking `validationErrors()` message repeats with nothing newly filled. DUSKAZ spent ~10 minutes
 re-answering thirteen fields against an error that never changed.
