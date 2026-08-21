@@ -362,15 +362,24 @@ dependent dropdown whose options load only after Country/Territory resolves, so 
 options and dropped. Needs a live DOM dump (`src/debug/inspectMyInfo.ts`) to confirm before
 changing the reader. Until then the run stops fast and says why, instead of burning sixteen turns.
 
-**OPEN BUG — a workday-select fill reports success without committing.** RTX ZJQCPS now reaches
+**A Workday taxonomy can offer a CHOOSER instead of the list.** Seen live on RTX's
+`Education — Field of Study`: the prompt returns two rows, `Partial List (First 500 Entries)` and
+`All`, and the search reports "no match for Computer and Information Science" because the real
+options are one level down. Any list whose entries look like list-selection meta rather than
+answers needs one of them clicked first. Not yet handled.
+
+**FIXED — was: a workday-select fill reported success without committing.** The fill is now
+verified by reading the button text back (its text IS its value), so a pick that did not land is
+reported as a failure. It earned itself immediately: it caught the agent answering a yes/no with
+"English", from option capture reading a stray menu (also fixed — Escape first, then scope to
+aria-controls).
+
+ RTX ZJQCPS now reaches
 the application-questions page, and `What is your Current Degree Program?` logs `✓` while the form
 still answers `The field … is required and must have a value`. So `fillReactSelect` is returning
 true for an `aria-haspopup="listbox"` control whose selection did not stick — a FALSE SUCCESS,
 which is the one thing the fill path is not allowed to do ("Nothing reports success without
-verification"). Reading the field back is not enough here either: the button text may update
-optimistically. Next step is to re-read via the same `read()` pass after the click and compare, and
-to check whether the click lands on the option row or on a wrapper. Until then this field blocks
-RTX (5 listings).
+verification"). Reading the button back turned out to be exactly right, and it works.
 
 **A form that is rejecting the page gets one turn, not sixteen.** `turnLoop` breaks as soon as a
 blocking `validationErrors()` message repeats with nothing newly filled. DUSKAZ spent ~10 minutes
