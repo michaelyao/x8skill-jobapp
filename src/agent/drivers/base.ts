@@ -983,9 +983,19 @@ export abstract class GenericDriver implements AtsDriver {
     ].filter((p) => p.length >= 2);
     let lastSeen: string[] = [];
     let typedInto = "";
-    // Attempts that produced NO option list at all — distinct from "the list answered and did
-    // not match", which is what the probes and the bisect below exist for.
-    let neverOpened = 0;
+    // DO NOT add an early-out here for "no option list appeared yet". It was tried (2026-08-21)
+    // and it is wrong: bailing after the two open strategies produced nothing broke the country
+    // phone code, "United States of America (+1)" — the case longListCases.ts exists for. On a
+    // live Workday page that menu often stays empty for the first two attempts and opens on a
+    // later one, where the bisect then finds it seventeen pages down. Measured: the guard fired
+    // on it eight times in one batch, and none of those ten applications reached Review.
+    //
+    // longListCases did NOT catch this, which is the lesson worth keeping: it drives one field
+    // on a freshly opened page, where the menu opens on the first attempt. Mid-application, with
+    // a stray list from the previous field still closing, it does not. A passing case for a
+    // field is not evidence about the timing of that field mid-form.
+    //
+    // The cost this was meant to save is handled by the field deadline instead (30s, turnLoop).
     const menu = () =>
       keySelector
         ? this.scopedOptions(root, keySelector, control)
@@ -1095,28 +1105,7 @@ export abstract class GenericDriver implements AtsDriver {
           break;
         }
       }
-      if (count === 0) {
-        neverOpened += 1;
-        // Attempt 0 types a probe to filter; attempt 1 opens with ArrowDown instead. If NEITHER
-        // produced a single option, there is no list here to drive, and the remaining probes are
-        // just more text typed into a control with no menu — about 6.5s each, for nothing.
-        //
-        // Measured on General Matter (Greenhouse): ten fields behaved this way — Country*,
-        // Location (City)*, School*, Degree*, Clearance Eligibility*, work authorisation — each
-        // burning the full 90s field deadline. That was 15 of that job's 20 minutes, and not one
-        // of them could ever have succeeded.
-        //
-        // This deliberately does NOT fire when options DID appear and merely failed to match:
-        // that is what the remaining probes and the bisect are for, and a long static list
-        // legitimately needs the full deadline (src/debug/longListCases.ts finds its target
-        // seventeen pages down).
-        if (attempt >= 1 && neverOpened > attempt) {
-          console.log(`      ↳ no option list appeared for "${value.slice(0, 40)}" after both open strategies — not a menu we can drive`);
-          return false;
-        }
-        continue; // menu didn't open — retry
-      }
-      neverOpened = 0; // a list appeared; from here the probes are worth trying
+      if (count === 0) continue; // menu didn't open — retry
 
       const readTexts = async (locator: Locator, n: number): Promise<string[]> => {
         const out: string[] = [];
