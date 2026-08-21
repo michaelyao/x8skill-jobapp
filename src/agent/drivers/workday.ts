@@ -489,9 +489,22 @@ export class WorkdayDriver extends GenericDriver {
       try {
         const btn = root.locator(sel).first();
         await btn.scrollIntoViewIfNeeded().catch(() => undefined);
+        // Close anything the PREVIOUS field left open first. The query below is page-wide, so a
+        // stray menu is read as if it were ours — the same bug the skills path documents, where
+        // searching "Social Media" came back with the country-code list from the field before it.
+        // Live consequence here: "Are you currently enrolled in a degree seeking program?" was
+        // offered a LANGUAGE list, and the agent answered "English".
+        await page.keyboard?.press("Escape").catch(() => undefined);
+        await page.waitForTimeout?.(150);
         await btn.click().catch(() => undefined);
         await page.waitForTimeout?.(400);
-        const opt = root.locator('[role="option"], [data-automation-id="promptOption"]');
+        // Scope to the list this button actually controls when it says which one that is; the
+        // page-wide query is only a fallback.
+        const owns = await btn.getAttribute("aria-controls").catch(() => null);
+        const esc = (v: string) => v.replace(/([^a-zA-Z0-9_-])/g, "\\$1");
+        const opt = owns
+          ? root.locator("#" + esc(owns) + ' [role="option"], #' + esc(owns) + ' [data-automation-id="promptOption"]')
+          : root.locator('[role="option"], [data-automation-id="promptOption"]');
         const n = await opt.count().catch(() => 0);
         const list: string[] = [];
         for (let k = 0; k < n; k += 1) {
