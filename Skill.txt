@@ -54,3 +54,16 @@ Segment Anything (Meta AI)
 FastAPI:
 FastAPI
 
+
+# Entries under REMOVE are taken OFF the form, not added to it. Uploading the resume makes
+# the ATS populate Skills from its own parse of the PDF, and it guesses badly — these six
+# came back on a live Workday application alongside the real ones. Nothing above adds them,
+# so the only way they leave the form is by being deleted after the autofill.
+# Matching is EXACT: "Natural Language" goes, "Language Processing" stays.
+REMOVE:
+Quality Assurance (QA)
+Social Media
+Teaching
+Verification
+Microsoft Office
+Natural Language

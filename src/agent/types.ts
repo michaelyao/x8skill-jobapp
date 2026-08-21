@@ -93,6 +93,12 @@ export interface AtsDriver {
   validationErrors?(root: Root): Promise<string[]>;
   /** Attach the resume; true only if a file was actually set this call. */
   uploadDocuments(root: Root, resumePath: string): Promise<boolean>;
+  /**
+   * Delete skills the resume autofill added that the curated plan says do not belong.
+   * Returns the labels confirmed gone. Optional: only forms with a skills taxonomy have
+   * anything to prune.
+   */
+  pruneSkills?(root: Root): Promise<string[]>;
   /** Advance to the next page/turn. Returns false if there is no next control. */
   next(root: Root): Promise<boolean>;
   /**

@@ -12,6 +12,7 @@
     "hash-password": "node tools/hash-password.mjs",
     "cmd": "tsx src/cli.ts",
     "test:skills": "tsx src/debug/skillPromptCases.ts",
+    "test:skill-removal": "tsx src/debug/skillRemovalCases.ts",
     "test:longlist": "tsx src/debug/longListCases.ts"
   },
   "repository": {

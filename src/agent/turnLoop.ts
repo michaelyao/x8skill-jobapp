@@ -202,6 +202,21 @@ export async function runApplication(
       if (resumeUploaded) console.log("    ✓ resume attached");
     }
 
+    // Prune BEFORE reading. The resume autofill commits skills the ATS guessed from the PDF,
+    // and a committed value reads as filled — so the fill path never revisits it and the wrong
+    // ones would go in untouched. Reading after the prune also means the review email shows
+    // the form as it will actually be submitted, not as the autofill left it.
+    if (driver.pruneSkills) {
+      const dropped = await driver.pruneSkills(root).catch(() => [] as string[]);
+      if (dropped.length) {
+        console.log(`    ✂ removed ${dropped.length} autofilled skill(s): ${dropped.join(", ")}`);
+        // Recorded in the human-readable fill list, never in `answers`: answers is what the
+        // replay types and what compareToApproved checks value-for-value, and a removal is
+        // not a value the form holds.
+        filled.push(`Skills — removed autofilled: ${dropped.join(", ")}`);
+      }
+    }
+
     const snapshot = await driver.read(root);
     for (const f of snapshot.fields) {
       const k = `${f.label}\u0000${f.type}`;

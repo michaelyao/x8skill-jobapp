@@ -1,5 +1,5 @@
 import type { Locator, Page } from "playwright";
-import { loadSkillPicks } from "../../knowledge/skillPlan.js";
+import { loadSkillPicks, loadSkillRemovals, pillsToRemove, type SkillPill } from "../../knowledge/skillPlan.js";
 import { isSensitive } from "../llmAgent.js";
 import type { AtsDriver, FieldAnswer, FieldSpec, PageSnapshot, Root } from "../types.js";
 
@@ -785,6 +785,137 @@ export abstract class GenericDriver implements AtsDriver {
     }
     console.log(`      ↳ selected ${selected} skill(s) from skill.txt`);
     return selected > 0;
+  }
+
+  /**
+   * Delete skills the resume autofill put on the form that do not belong there.
+   *
+   * Uploading the resume makes the ATS populate Skills from its own parse of the PDF. It
+   * guesses badly — a live Workday application came back listing "Teaching", "Social Media",
+   * "Verification", "Quality Assurance (QA)", "Microsoft Office" and "Natural Language"
+   * alongside the real ones. None of those are in skill.txt's plan, so nothing in the fill
+   * path adds them and nothing in the fill path takes them off either: an autofilled value is
+   * already committed, so the field reads as filled and is never offered for filling. Without
+   * this pass they go in exactly as the ATS guessed them.
+   *
+   * Two rules make it safe to run on every turn:
+   *
+   * - The match is EXACT (trimmed, case-insensitive) against the REMOVE section of skill.txt.
+   *   A substring rule would take "Language Processing" out with "Natural Language" and
+   *   "Formal Verification" out with "Verification" — both of which are wanted.
+   * - It only looks inside a container whose own label asks about skills. A committed pill
+   *   elsewhere on the page is somebody else's answer, and deleting one because its text
+   *   happened to match would be silent data loss.
+   *
+   * Returns the labels actually removed — confirmed gone by a re-read, not by the click
+   * having been dispatched.
+   */
+  async pruneSkills(root: Root): Promise<string[]> {
+    const removals = await loadSkillRemovals();
+    if (!removals.length) return [];
+
+    const MARK = "data-jobapp-prune";
+    /**
+     * Read every committed pill on the page, with the container that holds it.
+     *
+     * The page script only OBSERVES — which pills to delete is decided in TypeScript by
+     * pillsToRemove, where the rule can be tested (src/debug/skillRemovalCases.ts). A
+     * matching rule that only exists inside an evaluate() string cannot be.
+     */
+    const COLLECT = `(() => {
+      const clean = (t) => (t || "").replace(/\\s+/g, " ").trim();
+      // The container's LABEL, not its whole text — the text includes the pills.
+      const labelOf = (box) => {
+        const el = box.querySelector('label, legend, [id$="-label"]');
+        return clean((el && el.textContent) || box.getAttribute("aria-label") || "");
+      };
+      const out = [];
+      let n = 0;
+      const boxes = Array.from(document.querySelectorAll('[data-automation-id^="formField-"], [data-automation-id*="skill" i], fieldset, [role="group"]'));
+      for (const box of boxes) {
+        const pills = box.querySelectorAll('[data-automation-id="selectedItem"], [data-automation-id="selectedItemList"] li, [class*="multi-value"]');
+        for (const pill of Array.from(pills)) {
+          const nameEl = pill.querySelector('[data-automation-id="selectedItemName"], [class*="multi-value__label"]');
+          const mark = pill.getAttribute("${MARK}") || String(n++);
+          pill.setAttribute("${MARK}", mark);
+          out.push({
+            mark: mark,
+            containerId: box.getAttribute("data-automation-id") || "",
+            containerLabel: labelOf(box),
+            text: clean(nameEl ? nameEl.textContent : pill.textContent),
+          });
+        }
+      }
+      return JSON.stringify(out);
+    })()`;
+
+    const collect = async (): Promise<SkillPill[]> => {
+      try {
+        return JSON.parse((await root.evaluate(COLLECT)) as string) as SkillPill[];
+      } catch {
+        return [];
+      }
+    };
+
+    const targets = pillsToRemove(await collect(), removals);
+    if (!targets.length) return [];
+
+    // The delete affordance has no single stable id across Workday versions and react-select,
+    // so try the specific ones before the generic. The bare `button` is last on purpose: the
+    // only control inside a committed pill is its own delete.
+    const DELETE_SELECTORS = [
+      '[data-automation-id="DELETE_charm"]',
+      '[data-automation-id*="delete" i]',
+      'button[aria-label*="delete" i]',
+      'button[aria-label*="remove" i]',
+      '[role="button"][aria-label*="delete" i]',
+      '[role="button"][aria-label*="remove" i]',
+      '[class*="multi-value__remove"]',
+      '[class*="wd-icon-close"]',
+      "button",
+      '[role="button"]',
+    ];
+
+    /** Is a pill with this label still committed to a skills container? */
+    const stillPresent = async (label: string): Promise<boolean> =>
+      pillsToRemove(await collect(), [label]).length > 0;
+
+    const page = "page" in root ? (root as { page(): Page }).page() : (root as Page);
+    const removed: string[] = [];
+    const stuck: string[] = [];
+
+    for (const target of targets) {
+      const pill = root.locator(`[${MARK}="${target.mark}"]`).first();
+      if (!(await pill.count().catch(() => 0))) continue;
+      let gone = false;
+      for (const selector of DELETE_SELECTORS) {
+        const control = pill.locator(selector).first();
+        if (!(await control.count().catch(() => 0))) continue;
+        await control.scrollIntoViewIfNeeded().catch(() => undefined);
+        await control.click({ timeout: 4000 }).catch(() => undefined);
+        await page.waitForTimeout(250);
+        // Verified, not assumed. A click that dispatched but did not delete must never be
+        // reported as a removal, or the review claims a skill is gone while it is still on
+        // the form and about to be submitted.
+        if (!(await stillPresent(target.label))) {
+          gone = true;
+          break;
+        }
+      }
+      if (gone) removed.push(target.label);
+      else stuck.push(target.label);
+    }
+
+    // Clear the markers, so a later turn re-finds anything still there rather than treating
+    // it as already handled.
+    await root
+      .evaluate(`(() => { document.querySelectorAll('[${MARK}]').forEach((el) => el.removeAttribute('${MARK}')); return true; })()`)
+      .catch(() => undefined);
+
+    if (stuck.length) {
+      console.log(`      ↳ could NOT remove ${stuck.length} autofilled skill(s) — still on the form: ${stuck.join(", ")}`);
+    }
+    return removed;
   }
 
   protected async fillReactSelect(root: Root, control: Locator, value: string, keySelector?: string): Promise<boolean> {
