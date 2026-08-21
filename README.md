@@ -14,7 +14,7 @@ change) and a background poller submits the exact answers you approved.
 
 ```bash
 npm install
-npm start                 # fill jobs
+npm start                 # queue the next 10 jobs for the worker to apply to
 npm run worker            # the daemon that owns Chrome and executes console actions
 npm run check             # type-check
 
@@ -59,6 +59,31 @@ tail -f logs/worker.log
 
 `web-start.sh` / `worker-start.sh` still start either one by hand — useful over SSH.
 
+### Applying to jobs
+
+Nothing outside the worker drives a browser. `npm start` and `./bin/jobapp` are both clients:
+they plan the batch (pure file work) and enqueue commands. The worker applies to them **one at a
+time** through the single Chrome profile, so a batch of ten never means ten browsers — and a
+decision you make meanwhile jumps ahead of them.
+
+```bash
+npm start                                # queue the next 10
+MAX_JOBS=3 npm start                     # queue 3 instead
+JOB_ID=DVDFRR FORCE_RETRY=1 npm start    # re-run one job by its code
+SKIP_REFRESH=1 npm start                 # reuse the job list instead of rebuilding
+SUPPORTED_ONLY=1 LATEST_FIRST=1 npm start
+
+./bin/jobapp sweep --max 10              # same thing from the CLI
+./bin/jobapp refresh                     # rebuild the job list (all three sources)
+./bin/jobapp apply PTPDDZ                # one job: fill, stop at Review, never submit
+./bin/jobapp status
+```
+
+A sweep is capped at 10 by default, counted **after** the dedupe checks so a run of
+already-applied jobs does not eat the cap. Dedupe is `data/applications.json` alone now — the
+Google tracker sheet is retired, because reading it needed a browser *and* a human to press
+Enter, which no scheduled run could ever do.
+
 <details>
 <summary>Optional: a native console daemon on 8088</summary>
 
@@ -75,9 +100,9 @@ are written atomically with identical content).
 
 The console can run as a container instead of a native process. The **worker cannot**, and the
 setup does not try: it drives a real headed Chrome using the persistent profile in
-`playwright/.auth`, which is what carries the live Google session the tracker-sheet export
-needs and what keeps the bot fingerprint low enough for Workday and Greenhouse to accept a
-form. A Linux container has none of that. So the split is: console in Docker, worker native.
+`playwright/.auth`, which is what keeps the bot fingerprint low enough for Workday and
+Greenhouse to accept a form, and what holds the ATS sessions between runs. A Linux container has
+neither. So the split is: website in Docker, worker native.
 
 ```bash
 ./console-docker.sh up        # preflight, build, start
