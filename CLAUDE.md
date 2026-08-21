@@ -173,6 +173,20 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   Enter, so it could never run on a schedule. `applications.json` is the only dedupe source now —
   it matches on requisition id, `identityKey`, `externalJobId` and normalized apply URL, none of
   which need a session. `decideDedupe`/`SheetRow` are gone with it.
+- **The 8-hour tick lives in the container, the work happens in the worker.** `src/scheduler.ts`
+  runs as its own compose service (`jobapp-scheduler`, same image) and only ever writes a command
+  file — no browser, which is why it can live where there is no Chrome. It enqueues ONE `sweep`
+  with `refreshList`, and the worker does the rest. It is an interval, not a wall-clock cron:
+  "every 8 hours" is about noticing new postings, so drift is irrelevant and a restart checks
+  immediately instead of waiting for a slot. It SKIPS a tick when a sweep/refresh/apply is still
+  queued, or when the worker is stale — otherwise a slow batch would have two more stacked behind
+  it. Its own service rather than cron in the web container: that image has no cron, and adding
+  one means supervising two processes in a container built to run one.
+- **The image ships compiled JS, not tsx.** `Dockerfile.web` runs `tsc -p tsconfig.json` in the
+  builder and copies `dist/`, so the scheduler and the in-container `jobapp` run on plain node.
+  Anything running `dist/*.js` needs an ABSOLUTE path and `working_dir: /app` — the image's
+  WORKDIR is `/app/web` for `next start`, so a relative `dist/scheduler.js` resolves to
+  `/app/web/dist/` and dies with MODULE_NOT_FOUND.
 - **Credentials stay in `.env`.** `profile.ts` must read them from `process.env`, never hardcode.
 - **profile.json must not contain `loginPassword`.** It is stripped in `profile.ts` before writing.
 - **Simplify parsing reads the raw GitHub URL** (`raw.githubusercontent.com`), not the rendered page.

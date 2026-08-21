@@ -131,6 +131,25 @@ Two things to know before relying on it:
   refuses to install while the container is running; run `./console-docker.sh down` first, or
   stay on Docker and skip the daemon.
 
+### The 8-hour tick
+
+`jobapp-scheduler` — its own container, same image — rebuilds the job list and queues the next
+batch every 8 hours. It never touches a browser; it writes one command file and the worker does
+the work, one application at a time.
+
+```bash
+docker logs -f jobapp-scheduler
+docker exec jobapp-console jobapp status      # jobapp works inside the container too
+docker exec jobapp-console jobapp sweep --max 5
+```
+
+It skips a tick if the previous batch is still queued, or if the worker is not running — a sweep
+can mean ten applications at several minutes each, so stacking them would only bury the queue.
+Tune with `SCHEDULE_EVERY_MS` and `SCHEDULE_MAX_JOBS` in `docker-compose.yml`.
+
+The website image ships compiled JS (`dist/`), so both the scheduler and the in-container
+`jobapp` run on plain node with no transpiler in production.
+
 ### Surviving a reboot
 
 `~/Library/LaunchAgents` is loaded at **GUI login, not at boot**. On a machine you only reach
