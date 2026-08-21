@@ -9,7 +9,7 @@ import type { ApplicationRecord } from "@core/types.js";
 import { ensureEnv } from "./env";
 
 /**
- * Read-only view of the state the worker owns. The console NEVER writes application state —
+ * Read-only view of the state the worker owns. The website NEVER writes application state —
  * it enqueues commands and the worker applies them. Keeping that one-way is what stops two
  * processes racing on the same JSON.
  */
@@ -146,7 +146,7 @@ export interface RunSummary {
   total: number;
 }
 
-/** Run history from logs/<run>/summary.json — the console's "what happened when". */
+/** Run history from logs/<run>/summary.json — the website's "what happened when". */
 export async function getRuns(limit = 20): Promise<RunSummary[]> {
   const logsDir = path.join(ROOT, "logs");
   const dirs = (await fs.readdir(logsDir).catch(() => [])).sort().reverse().slice(0, limit);

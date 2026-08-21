@@ -95,27 +95,27 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   `ignoreDefaultArgs: ["--enable-automation"]` + `args: ["--disable-blink-features=AutomationControlled"]`
   (in `runner.ts`), prefer real Chrome headed with the persistent profile, use human-like typing
   (`pressSequentially` w/ delay) and let pages settle. Never try to defeat explicit CAPTCHAs.
-- **The worker is never containerized; the console may be.** The worker drives a real headed
+- **The worker is never containerized; the website may be.** The worker drives a real headed
   Chrome on the host with the `playwright/.auth` profile — that profile is the live Google
   session the tracker-sheet export needs and the low bot fingerprint the ATS forms need. A
   Linux container has no macOS Chrome, no GUI and no access to it, so containerizing the
   worker would trade the property the automation depends on for a deploy convenience. The
-  console is the opposite: it never drives a browser, so `Dockerfile.jobapp_website` /
+  website is the opposite: it never drives a browser, so `Dockerfile.jobapp_website` /
   `docker-compose.yml` run it with state bind-mounted at `/jobapp` (`JOBAPP_ROOT`) and
   `data/commands/` read-write as the channel to the native worker. `playwright/` is not
   mounted. Docker is NOT a reboot-safety fix — see the next point.
-- **One console, in Docker on 8090; the worker native as a LaunchAgent.** Decided 2026-08-21.
-  A second native console on 8088 ran the same app against the same `data/` for no benefit —
-  don't reintroduce it. `install-services.sh` installs the WORKER only; the native console
-  daemon is opt-in behind `--with-console-daemon` (port 8088, so it cannot clash with the
-  container). Two consoles sharing `data/` is *safe* if you ever want the fallback — the
-  console never writes application state (the worker is the single writer) and the derived
+- **One website, in Docker on 8088; the worker native as a LaunchAgent.** Decided 2026-08-21.
+  A second native website on 8088 ran the same app against the same `data/` for no benefit —
+  don't reintroduce it. `install-services.sh` installs the WORKER only; the native website
+  daemon is opt-in behind `--with-website-daemon` (port 8088, so it cannot clash with the
+  container). Two websites sharing `data/` is *safe* if you ever want the fallback — the
+  website never writes application state (the worker is the single writer) and the derived
   files it rewrites on read are written atomically with identical content — but safe is not the
   same as useful.
 - **Auto-login is the single link that makes a reboot recover.** reboot → auto-login → GUI
   session → Docker Desktop (a login item) → container (`restart: unless-stopped`) → worker
   LaunchAgent. Every link needs that session, so without auto-login nothing comes back.
-- **LaunchAgents load at GUI login, not at boot — which is why a console daemon is the only
+- **LaunchAgents load at GUI login, not at boot — which is why a website daemon is the only
   thing that can start without one.** A reboot with nobody signed in leaves an agent absent and the logs
   silent; from SSH, `launchctl managername` is `Background` and
   `launchctl bootstrap gui/$(id -u) …` fails with `125: Domain does not support specified
@@ -124,7 +124,7 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   `bootstrap` both work then. The 125 happens only when NO GUI session exists. So "it failed
   from SSH" is not evidence about the mechanism; re-check `launchctl list` after a login before
   concluding a service is missing. (Two workers ran at once on 2026-08-21 because a GUI login
-  had quietly loaded the agent while a hand-started one was already going.) `--with-console-daemon`
+  had quietly loaded the agent while a hand-started one was already going.) `--with-website-daemon`
   runs as the USER not root — root-owned files in `data/` would be unwritable by the worker —
   and invokes `web/node_modules/.bin/next` directly, never `npx`, which wants a writable npm
   cache under `$HOME`. Headed Chrome *does* launch over SSH (Playwright spawns the binary
@@ -229,7 +229,7 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   approved one; "equivalent" is not a judgement this code is allowed to make. Do not relax
   `compareToApproved` into similarity matching.
 - **The guard sequence exists once.** `submitApprovedEntry` is the only path to a submit, shared by the
-  email poller and the console worker. It previously existed twice and the copies had already drifted.
+  email poller and the website worker. It previously existed twice and the copies had already drifted.
 - **Never submit the same application twice.** The poller runs unattended every 15 min
   (`install-cron.sh`), so every layer below must hold. Do not remove any of them:
   1. `listAwaiting()` returns ONLY `awaiting_approval` — a `submitted` entry can never be picked up.

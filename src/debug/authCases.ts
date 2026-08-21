@@ -1,5 +1,5 @@
 /**
- * Auth cases for the web console. Pure — no network, no files. Run: npx tsx src/debug/authCases.ts
+ * Auth cases for the web website. Pure — no network, no files. Run: npx tsx src/debug/authCases.ts
  */
 import { authenticate, canRun, hashPassword, loadUsers, signSession, verifySession } from "../auth/users.js";
 

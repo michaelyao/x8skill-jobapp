@@ -56,7 +56,7 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
   // a way to write the answer in by hand and have it stick for every future form.
   const [newQuestion, setNewQuestion] = useState("");
   const [newAnswer, setNewAnswer] = useState("");
-  // Marking a job manually submitted is not undoable through the console: it tells every
+  // Marking a job manually submitted is not undoable through the website: it tells every
   // dedupe guard the application exists, and nothing will re-open it afterwards. So it asks
   // once rather than firing on a single mis-click next to "Approve".
   const [confirmManual, setConfirmManual] = useState(false);

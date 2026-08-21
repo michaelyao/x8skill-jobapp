@@ -39,11 +39,11 @@ export interface SubmitOutcome {
 
 /**
  * Submit ONE approved application, with the full guard sequence. Shared by the email poller
- * and the web console's worker so the two can never drift apart — these guards are the only
+ * and the web website's worker so the two can never drift apart — these guards are the only
  * thing standing between an approval and a duplicate application, and a second copy of them
  * would eventually diverge.
  *
- * `replayAnswers` is what actually gets typed into the form. When the console sends edited
+ * `replayAnswers` is what actually gets typed into the form. When the website sends edited
  * answers they arrive here, which is why "submitted == approved" still holds after an edit:
  * the edit happens before approval, and no LLM runs on this path.
  */
@@ -143,7 +143,7 @@ export async function submitApprovedEntry(
     });
     return {
       result: "held_for_reapproval",
-      message: `[${label}] NOT submitted — the form no longer matches what you approved (${reasons.length} difference${reasons.length === 1 ? "" : "s"}). Review it again in the console.`,
+      message: `[${label}] NOT submitted — the form no longer matches what you approved (${reasons.length} difference${reasons.length === 1 ? "" : "s"}). Review it again in the website.`,
       answers,
       applications,
     };

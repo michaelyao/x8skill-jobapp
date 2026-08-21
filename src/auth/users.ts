@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 
 /**
- * Multi-user auth for the web console.
+ * Multi-user auth for the web website.
  *
  * Credentials live in .env as scrypt hashes — never plaintext, and never in the repo. The
  * .env parser (src/utils/env.ts) splits on the first "=", strips surrounding quotes and does
@@ -68,7 +68,7 @@ function parseStored(username: string, value: string): StoredUser | null {
   return { username: username.toLowerCase(), role: asRole(role), saltHex, hashHex };
 }
 
-/** Every configured account. Empty means the console is unusable — fail closed, never open. */
+/** Every configured account. Empty means the website is unusable — fail closed, never open. */
 export function loadUsers(env: NodeJS.ProcessEnv = process.env): StoredUser[] {
   const users = new Map<string, StoredUser>();
 

@@ -29,8 +29,8 @@ import type { FilteredJob } from "./types.js";
 
 /**
  * The worker daemon. It owns Chrome and is the ONLY process that writes application state;
- * the web console only enqueues commands. Replaces the 15-minute approvals cron so an action
- * taken in the console happens within seconds.
+ * the web website only enqueues commands. Replaces the 15-minute approvals cron so an action
+ * taken in the website happens within seconds.
  *
  * Run: npm run worker   (or via launchd — see install-worker.sh)
  */
@@ -286,11 +286,11 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
         { answers: await loadAnswers(), applications, deps: started.deps },
         {
           replayAnswers: command.answers ?? fresh.answers,
-          note: command.answers?.length ? "approved in console (answers edited)" : "approved in console",
+          note: command.answers?.length ? "approved in website (answers edited)" : "approved in website",
         },
       );
       // A hold is not a failure — the command ran, and the correct answer was "don't submit".
-      // It is reported as ok so the console shows the reason rather than a red FAILED.
+      // It is reported as ok so the website shows the reason rather than a red FAILED.
       return {
         ok: outcome.result === "submitted" || outcome.result === "already_submitted" || outcome.result === "held_for_reapproval",
         message: outcome.message,
@@ -364,7 +364,7 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
       const record = applications.find((a) => a.code === command.code || a.id === command.code);
       // A brand-new posting exists in neither the queue nor the ledger — only in the CSV. It
       // is the most ordinary thing to want to run, and refusing it would mean the terminal and
-      // the console can name a job the worker then claims not to know.
+      // the website can name a job the worker then claims not to know.
       const listed = entry || record ? undefined : (await loadInternshipList().catch(() => [])).find((j) => j.id === command.code);
       if (!entry && !record && !listed) return { ok: false, message: `no job known as ${command.code}` };
 
@@ -428,7 +428,7 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
         // stale — leaving it would show the user differences against answers no longer in play.
         const requeued = await findEntry(command.code);
         if (requeued?.reapproval) await updatePendingStatus(requeued.key, requeued.status, { reapproval: null });
-        return { ok: true, message: `[${command.code}] re-filled and queued — review it in the console` };
+        return { ok: true, message: `[${command.code}] re-filled and queued — review it in the website` };
       }
       if (outcome.reachedReview) return { ok: true, message: `[${command.code}] reached review but was not queued` };
       const why = outcome.blockedRequired?.length
@@ -535,7 +535,7 @@ if (freed.length) console.log(`worker: released ${freed.length} command(s) a pre
 
   // Keep the heartbeat fresh WHILE a command runs. writeWorkerStatus() with no patch only
   // refreshes lastTickAt, so state and activity are preserved. Without this the file is not
-  // touched for the whole of a submit — minutes — and the console declares the worker stale
+  // touched for the whole of a submit — minutes — and the website declares the worker stale
   // during precisely the operation the user is watching.
   const heartbeat = setInterval(() => {
     void writeWorkerStatus();

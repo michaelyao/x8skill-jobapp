@@ -530,7 +530,7 @@ compares what the form now holds against what the user approved, and the submit 
 only touched when every value matches. A reworded question passes when the value going into it
 is exactly the approved one; a new question, a changed value or an extra repeated block does
 not. On a hold, nothing is submitted, the entry returns to `awaiting_approval` carrying
-`reapproval` (both answer sets and the reasons), and the console shows the differences with the
+`reapproval` (both answer sets and the reasons), and the website shows the differences with the
 re-filled answers for a fresh decision.
 
 The three outcomes, stated plainly:
@@ -541,7 +541,7 @@ The three outcomes, stated plainly:
 | Question reworded, same answer | submitted — the value is the approved one |
 | New question, changed value, extra block | **not submitted**, held for re-approval with the diff |
 
-**The console shows all of it.** `/history` lists every job with recorded copies and how much
+**The website shows all of it.** `/history` lists every job with recorded copies and how much
 changed across its life; `/history/<CODE>` shows each copy annotated with what changed since
 the previous one, with rewordings rendered as both strings and the diverging tail highlighted.
 Jobs queued before rounds existed have a baseline rebuilt from the approval queue by

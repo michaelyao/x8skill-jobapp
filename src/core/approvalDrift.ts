@@ -113,7 +113,7 @@ export function compareToApproved(approved: FilledAnswer[], current: FilledAnswe
   return { drifts, vanished, matched, rewordedButSame, safeToSubmit: drifts.length === 0 && vanished.length === 0 };
 }
 
-/** Human-readable lines for the console, the queue entry and the log. */
+/** Human-readable lines for the website, the queue entry and the log. */
 export function describeDrift(report: DriftReport): string[] {
   const lines = report.drifts.map((d) =>
     d.kind === "value changed"

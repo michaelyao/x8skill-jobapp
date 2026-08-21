@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-// The web console runs with its own cwd (web/), so paths cannot be derived from cwd alone —
+// The web website runs with its own cwd (web/), so paths cannot be derived from cwd alone —
 // data/ and logs/ live at the repo root regardless of who is running.
 export const ROOT_DIR = process.env.JOBAPP_ROOT || process.cwd();
 export const DATA_DIR = path.join(ROOT_DIR, "data");

@@ -126,7 +126,7 @@ export interface AnswerDiff {
 }
 
 /**
- * What the ANSWERS did between two rounds — an edit in the console, a re-fill producing a
+ * What the ANSWERS did between two rounds — an edit in the website, a re-fill producing a
  * different value, or an answer disappearing because its question did. This is the half of
  * "what changed" that matters when the form itself did not.
  */
@@ -161,7 +161,7 @@ export async function listJobsWithRounds(): Promise<Array<{ code: string; rounds
   return out.sort((a, b) => b.latest.localeCompare(a.latest));
 }
 
-/** One-line summaries suitable for an error message or the console. */
+/** One-line summaries suitable for an error message or the website. */
 export function describeDiff(diff: RoundDiff): string[] {
   const lines: string[] = [];
   for (const r of diff.reworded) {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start the worker daemon — the process that owns Chrome and executes everything the console
+# Start the worker daemon — the process that owns Chrome and executes everything the website
 # asks for (approve, skip, retry, sweep). Replaces the 15-minute approvals cron.
 #
 #   ./worker-start.sh
@@ -90,4 +90,4 @@ printf '\033[32m✓\033[0m worker running (pid %s)\n' "$pid"
 note "state    ${state:-starting}"
 note "log      $LOG"
 note "commands $DIR/data/commands/"
-[ -z "$state" ] && warn "no heartbeat yet — check the log if the console still reports it stale"
+[ -z "$state" ] && warn "no heartbeat yet — check the log if the website still reports it stale"

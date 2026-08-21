@@ -8,7 +8,7 @@ import { ROOT_DIR } from "../config.js";
  * Skips keys that are already set in the environment.
  */
 export function loadEnv(): void {
-  // ROOT_DIR honours JOBAPP_ROOT, so the web console (cwd = web/) still finds the
+  // ROOT_DIR honours JOBAPP_ROOT, so the web website (cwd = web/) still finds the
   // repo-root .env where the credentials and API keys live.
   const envPath = path.join(ROOT_DIR, ".env");
   let content: string;

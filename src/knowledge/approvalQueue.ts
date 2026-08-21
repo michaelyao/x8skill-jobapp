@@ -63,11 +63,11 @@ export interface PendingEntry {
   status: PendingStatus;
   attempts: number; // Phase-B submit attempts
   lastError?: string;
-  /** Set when answers were edited in the console before approving. The edited answers ARE the
+  /** Set when answers were edited in the website before approving. The edited answers ARE the
    *  approved ones (they are what the ReplayAgent replays). */
   editedInConsoleAt?: string;
-  editedBy?: string; // console account that edited the answers
-  approvedBy?: string; // console account that approved it ("email" when approved by reply)
+  editedBy?: string; // website account that edited the answers
+  approvedBy?: string; // website account that approved it ("email" when approved by reply)
   /** Set when an approved job was re-filled and the live form no longer matched what was
    *  approved. The submit was refused; these are the exact differences, awaiting a decision. */
   reapproval?: {

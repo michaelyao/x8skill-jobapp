@@ -207,7 +207,7 @@ export abstract class GenericDriver implements AtsDriver {
         // start date". Prefix them with the nearest identifying ancestors.
         // A REPEATED block (Work Experience 1/2/3, Education 1/2, Language 1/2) presents the
         // same labels over and over: three fields called "Company*", three called "Job Title*".
-        // Without the block name nothing — not the agent, not the reviewer reading the console,
+        // Without the block name nothing — not the agent, not the reviewer reading the website,
         // not the comparison that decides whether a submit matches what was approved — can tell
         // which position is which. Workday names each block in a heading or a panelSet item id;
         // take that and put it in front of the label.
@@ -225,7 +225,7 @@ export abstract class GenericDriver implements AtsDriver {
             // A SECTION heading ("Work Experience") names the group, not the row. Workday's
             // review page numbers the rows 1..6; the form does not, so seven employment blocks
             // all arrived as "Work Experience — Company*" and collapsed onto one another —
-            // which is why the console showed a single experience while the screenshot showed
+            // which is why the website showed a single experience while the screenshot showed
             // six. Derive the ordinal from the row's position among its sibling rows.
             if (!/\\d\\s*$/.test(headText)) {
               var rowEl = c;

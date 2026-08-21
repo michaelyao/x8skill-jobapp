@@ -16,7 +16,7 @@ import { isStale, readWorkerStatus } from "./knowledge/workerStatus.js";
 /**
  * Terminal client for the worker.
  *
- * It does NOT drive a browser. Like the web console, it only writes a command file and lets
+ * It does NOT drive a browser. Like the web website, it only writes a command file and lets
  * the daemon — which owns Chrome — execute it. That is the whole point: `npm start` and
  * `npm run approvals` each launch their own Chrome and become a second driver competing for a
  * profile that can only have one; this shares the single lane instead.
@@ -226,7 +226,7 @@ async function showQueue(args: Argv): Promise<number> {
       `${e.code ?? e.key}  ${short(e.company, 22).padEnd(22)} ${short(e.title, 44).padEnd(44)} ${String(e.answers?.length ?? 0).padStart(3)} ans  ${when(e.reviewSentAt)}${flags ? `  [${flags}]` : ""}`,
     );
   }
-  console.log(`\n${rows.length} shown. Review at ${process.env.PUBLIC_URL || "http://localhost:8090"}/queue`);
+  console.log(`\n${rows.length} shown. Review at ${process.env.PUBLIC_URL || "http://localhost:8088"}/queue`);
   return 0;
 }
 

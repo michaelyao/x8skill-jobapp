@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Make the console and the worker survive a reboot with nobody signed in.
+# Make the website and the worker survive a reboot with nobody signed in.
 #
-#   ./install-services.sh                 # worker + auto-login (console stays in Docker)
-#   ./install-services.sh --with-console-daemon
+#   ./install-services.sh                 # worker + auto-login (website stays in Docker)
+#   ./install-services.sh --with-website-daemon
 #   ./install-services.sh --no-autologin  # install both, leave auto-login alone
 #   ./install-services.sh --autologin     # only (re)set auto-login
 #   ./install-services.sh --uninstall
 #   ./install-services.sh --dry-run       # generate + validate both plists, change nothing
 #
-# The console daemon listens on 8088. The Docker console listens on 8090, so the two do not
+# The optional native website daemon listens on 8089. The Docker website has 8088, so they do not
 # clash and can run side by side on the same data/. To put the daemon somewhere else, the value
 # is baked into the plist at install time:
 #
@@ -19,15 +19,15 @@
 # once for sudo, and again by macOS if you enable auto-login.
 #
 # ---------------------------------------------------------------------------------------
-# THE CONSOLE RUNS IN DOCKER (port 8090). This script does NOT install a console by default.
+# THE WEBSITE RUNS IN DOCKER (port 8088). This script does NOT install a website by default.
 #
-# Chosen 2026-08-21: one console, in a container (`./jobapp_website.sh up`), and the worker as
-# a LaunchAgent. Running a second native console alongside it was pure duplication — the same
+# Chosen 2026-08-21: one website, in a container (`./jobapp_website.sh up`), and the worker as
+# a LaunchAgent. Running a second native website alongside it was pure duplication — the same
 # app, the same data, two ports to keep straight.
 #
-# So by default this installs the WORKER only, plus auto-login. Pass --with-console-daemon if
-# you ever want the native console back as a boot-time daemon (it starts without a login,
-# which the container cannot — Docker Desktop is a GUI login item). It takes 8088, not 8090,
+# So by default this installs the WORKER only, plus auto-login. Pass --with-website-daemon if
+# you ever want the native website back as a boot-time daemon (it starts without a login,
+# which the container cannot — Docker Desktop is a GUI login item). It takes 8089, not 8088,
 # so it would not clash with the container.
 #
 # ---------------------------------------------------------------------------------------
@@ -40,7 +40,7 @@
 # `launchctl bootstrap gui/$(id -u) …` fails with "125: Domain does not support specified
 # action".
 #
-#   Console -> LaunchDaemon (/Library/LaunchDaemons). Starts at BOOT, no login needed. It is
+#   Website -> LaunchDaemon (/Library/LaunchDaemons). Starts at BOOT, no login needed. It is
 #              a plain HTTP server that never drives a browser, so it has no business needing
 #              a GUI session. This is what makes the site reboot-proof on its own.
 #
@@ -68,7 +68,7 @@ USER_NAME="$(id -un)"
 GROUP_NAME="$(id -gn)"
 NODE_BIN="$(dirname "$(command -v node)")"
 PATH_VALUE="$NODE_BIN:/usr/bin:/bin:/usr/sbin:/sbin"
-PORT="${WEB_PORT:-8088}"
+PORT="${WEB_PORT:-8089}"
 
 ok()   { printf '\033[32m✓\033[0m %s\n' "$1"; }
 note() { printf '  %s\n' "$1"; }
@@ -78,10 +78,10 @@ section() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 
 DO_INSTALL=1
 DO_AUTOLOGIN=ask
-# The console lives in Docker; a native console daemon is opt-in.
-WITH_CONSOLE=0
+# The website lives in Docker; a native website daemon is opt-in.
+WITH_WEBSITE=0
 case "${1:-}" in
-  --with-console-daemon) WITH_CONSOLE=1 ;;
+  --with-website-daemon) WITH_WEBSITE=1 ;;
   --uninstall)    DO_INSTALL=0 ;;
   --no-autologin) DO_AUTOLOGIN=no ;;
   --autologin)    DO_INSTALL=0; DO_AUTOLOGIN=force ;;
@@ -125,7 +125,7 @@ write_web_plist() {
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key><string>$PATH_VALUE</string>
-    <!-- Without this the console resolves data/ relative to web/ and shows an empty queue. -->
+    <!-- Without this the website resolves data/ relative to web/ and shows an empty queue. -->
     <key>JOBAPP_ROOT</key><string>$DIR</string>
     <key>NODE_ENV</key><string>production</string>
     <!-- launchd does not reliably set HOME for a daemon running as UserName, and node
@@ -145,7 +145,7 @@ write_web_plist() {
 </dict>
 </plist>
 PLIST
-  plutil -lint "$1" >/dev/null || die "generated console plist is malformed"
+  plutil -lint "$1" >/dev/null || die "generated website plist is malformed"
 }
 
 write_worker_plist() {
@@ -192,7 +192,7 @@ set_autologin() {
   if ! fdesetup status | grep -q "FileVault is Off"; then
     warn "FileVault is ON. macOS ignores auto-login on a FileVault volume — the disk unlock"
     warn "at boot needs a person. Reboot safety for the WORKER is not achievable this way;"
-    warn "the console daemon is unaffected and still starts at boot."
+    warn "the website daemon is unaffected and still starts at boot."
     return 0
   fi
 
@@ -236,7 +236,7 @@ if [ "$DO_INSTALL" -eq 0 ] && [ "$DO_AUTOLOGIN" != "force" ] && [ "$DO_AUTOLOGIN
   # that basis would delete the plist out from under a still-running daemon.
   sudo launchctl bootout "system/$WEB_LABEL" 2>/dev/null || true
   sudo rm -f "$WEB_DAEMON_PLIST"
-  ok "console daemon removed"
+  ok "website daemon removed"
 
   launchctl bootout "gui/$UID_NUM/$WORKER_LABEL" 2>/dev/null || launchctl unload "$WORKER_PLIST" 2>/dev/null || true
   rm -f "$WORKER_PLIST"
@@ -257,13 +257,13 @@ if [ "$DO_AUTOLOGIN" = "dryrun" ]; then
   mkdir -p "$out"
   write_web_plist "$out/$WEB_LABEL.plist"
   write_worker_plist "$out/$WORKER_LABEL.plist"
-  section "Console daemon → $WEB_DAEMON_PLIST"
+  section "Website daemon → $WEB_DAEMON_PLIST"
   cat "$out/$WEB_LABEL.plist"
   section "Worker agent → $WORKER_PLIST"
   cat "$out/$WORKER_LABEL.plist"
   section "Validation"
   ok "both plists are well-formed (plutil -lint)"
-  note "exec (console)  $(plutil -extract ProgramArguments.0 raw -o - "$out/$WEB_LABEL.plist") $(plutil -extract ProgramArguments.1 raw -o - "$out/$WEB_LABEL.plist") … -p $PORT"
+  note "exec (website)  $(plutil -extract ProgramArguments.0 raw -o - "$out/$WEB_LABEL.plist") $(plutil -extract ProgramArguments.1 raw -o - "$out/$WEB_LABEL.plist") … -p $PORT"
   note "exec (worker)   $(plutil -extract ProgramArguments.0 raw -o - "$out/$WORKER_LABEL.plist") $(plutil -extract ProgramArguments.1 raw -o - "$out/$WORKER_LABEL.plist")"
   for f in "$(plutil -extract EnvironmentVariables.JOBAPP_ROOT raw -o - "$out/$WEB_LABEL.plist")" \
            "$DIR/web/node_modules/.bin/next" "$DIR/node_modules/.bin/tsx" "$DIR/web/.next" "$DIR/.env"; do
@@ -284,17 +284,17 @@ grep -qE '^WEB_SESSION_SECRET=.{32,}' "$DIR/.env" \
 mkdir -p "$AGENTS" "$DIR/logs" "$DIR/data"
 ok "config, build and deps present"
 
-# The Docker console can coexist with this daemon, but ONLY on a different port. Two servers
+# The Docker website can coexist with this daemon, but ONLY on a different port. Two servers
 # on one port means the loser crash-loops against the winner every 30 seconds.
 #
-# Sharing data/ between them is safe: the console never writes application state (the worker is
+# Sharing data/ between them is safe: the website never writes application state (the worker is
 # the single writer), and the derived files it does rewrite on read — answers.json, Q&A.md —
 # are written atomically with identical content, so a concurrent write replaces bytes with the
 # same bytes.
 #
 # Running both is a reasonable belt-and-braces setup, because they fail differently: the
 # container cannot start until someone logs in (Docker Desktop is a GUI app), while the daemon
-# starts at boot with no login. The daemon is then the console that is always there.
+# starts at boot with no login. The daemon is then the website that is always there.
 container_ports="$(docker ps --filter "name=jobapp_website" --format '{{.Ports}}' 2>/dev/null || true)"
 if [ -n "$container_ports" ]; then
   if printf '%s' "$container_ports" | grep -qE "(^|[^0-9])${PORT}->"; then
@@ -304,34 +304,34 @@ if [ -n "$container_ports" ]; then
     echo "      WEB_PORT=8089 ./install-services.sh" >&2
     echo "  or stop the container and let the daemon have $PORT:" >&2
     echo "      ./jobapp_website.sh down && ./install-services.sh" >&2
-    die "refusing to install two consoles on the same port"
+    die "refusing to install two websites on the same port"
   fi
-  ok "Docker console is up on $container_ports — this daemon will take $PORT instead (no clash)"
+  ok "Docker website is up on $container_ports — this daemon will take $PORT instead (no clash)"
 fi
 note "node     $NODE_BIN/node"
 note "user     $USER_NAME:$GROUP_NAME (uid $UID_NUM)"
 
-# ----------------------------------------------------------------- console: LaunchDaemon
-if [ "$WITH_CONSOLE" -eq 0 ]; then
-  section "Console"
-  ok "left to Docker on 8090 — nothing to install (./jobapp_website.sh up)"
-  # An old console LaunchAgent from a previous install would still grab 8088 at every login,
+# ----------------------------------------------------------------- website: LaunchDaemon
+if [ "$WITH_WEBSITE" -eq 0 ]; then
+  section "Website"
+  ok "left to Docker on 8088 — nothing to install (./jobapp_website.sh up)"
+  # An old website LaunchAgent from a previous install would still grab 8088 at every login,
   # running a second copy of the same app against the same data for no reason.
   if [ -f "$WEB_AGENT_PLIST" ]; then
     launchctl bootout "gui/$UID_NUM/$WEB_LABEL" 2>/dev/null || true
     rm -f "$WEB_AGENT_PLIST"
-    ok "removed a leftover console LaunchAgent (it duplicated the container)"
+    ok "removed a leftover website LaunchAgent (it duplicated the container)"
   fi
 else
 
-section "Console → LaunchDaemon (starts at boot, no login required)"
+section "Website → LaunchDaemon (starts at boot, no login required)"
 
 # Both would bind port $PORT the moment someone logs in at the GUI, and the loser crash-loops
 # against the winner every 30 seconds.
 if [ -f "$WEB_AGENT_PLIST" ]; then
   launchctl bootout "gui/$UID_NUM/$WEB_LABEL" 2>/dev/null || launchctl unload "$WEB_AGENT_PLIST" 2>/dev/null || true
   rm -f "$WEB_AGENT_PLIST"
-  ok "removed the old console LaunchAgent (the daemon replaces it — two would fight for port $PORT)"
+  ok "removed the old website LaunchAgent (the daemon replaces it — two would fight for port $PORT)"
 fi
 
 TMP_PLIST="$(mktemp)"
@@ -343,7 +343,7 @@ sudo install -o root -g wheel -m 644 "$TMP_PLIST" "$WEB_DAEMON_PLIST"
 rm -f "$TMP_PLIST"
 ok "wrote $WEB_DAEMON_PLIST (root:wheel 644)"
 
-# Free the port first, or the daemon crash-loops against a console started by hand.
+# Free the port first, or the daemon crash-loops against a website started by hand.
 [ -x "$DIR/web-stop.sh" ] && "$DIR/web-stop.sh" >/dev/null 2>&1 || true
 
 sudo launchctl bootout "system/$WEB_LABEL" 2>/dev/null || true
@@ -390,44 +390,44 @@ fi
 
 # ------------------------------------------------------------------------------- verify
 section "Verify"
-if [ "$WITH_CONSOLE" -eq 0 ]; then
-  dockerhealth="$(curl -fsS --max-time 3 "http://127.0.0.1:8090/api/health" 2>/dev/null || true)"
-  if [ -n "$dockerhealth" ]; then ok "Docker console on 8090: $dockerhealth"
-  else warn "Docker console not responding on 8090 — start it with: ./jobapp_website.sh up"; fi
+if [ "$WITH_WEBSITE" -eq 0 ]; then
+  dockerhealth="$(curl -fsS --max-time 3 "http://127.0.0.1:8088/api/health" 2>/dev/null || true)"
+  if [ -n "$dockerhealth" ]; then ok "Docker website on 8088: $dockerhealth"
+  else warn "Docker website not responding on 8088 — start it with: ./jobapp_website.sh up"; fi
 fi
 for _ in $(seq 1 20); do
-  [ "$WITH_CONSOLE" -eq 0 ] && break
+  [ "$WITH_WEBSITE" -eq 0 ] && break
   sleep 1
   health="$(curl -fsS --max-time 3 "http://127.0.0.1:$PORT/api/health" 2>/dev/null || true)"
   [ -n "$health" ] && break
 done
-if [ "$WITH_CONSOLE" -eq 1 ]; then
+if [ "$WITH_WEBSITE" -eq 1 ]; then
   if [ -n "${health:-}" ]; then
-    ok "console daemon responding on port $PORT: $health"
+    ok "website daemon responding on port $PORT: $health"
   else
-    warn "console daemon not responding yet — check $DIR/logs/web.log and: sudo launchctl print system/$WEB_LABEL"
+    warn "website daemon not responding yet — check $DIR/logs/web.log and: sudo launchctl print system/$WEB_LABEL"
   fi
 fi
 
-[ "$WITH_CONSOLE" -eq 1 ] && sudo launchctl print "system/$WEB_LABEL" 2>/dev/null | awk '/state = /{print "  daemon state   "$3} /last exit code/{print "  last exit      "$4}' || true
+[ "$WITH_WEBSITE" -eq 1 ] && sudo launchctl print "system/$WEB_LABEL" 2>/dev/null | awk '/state = /{print "  daemon state   "$3} /last exit code/{print "  last exit      "$4}' || true
 autolog="$(defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser 2>/dev/null || echo "off")"
 note "auto-login     $autolog"
 note "worker         $(pgrep -f 'tsx src/worker.ts' >/dev/null && echo running || echo 'not running (starts at next login)')"
 
 section "What survives a reboot now"
-if [ "$WITH_CONSOLE" -eq 1 ]; then
-  echo "  Console (daemon, $PORT): yes — starts at boot before any login."
+if [ "$WITH_WEBSITE" -eq 1 ]; then
+  echo "  Website (daemon, $PORT): yes — starts at boot before any login."
 fi
 if [ "$autolog" = "$USER_NAME" ]; then
-  echo "  Console (Docker, 8090):  yes — auto-login starts Docker Desktop, which restarts the container."
+  echo "  Website (Docker, 8088):  yes — auto-login starts Docker Desktop, which restarts the container."
   echo "  Worker:                  yes — LaunchAgent, loaded by the auto-login session."
 else
-  echo "  Console (Docker, 8090):  NO — Docker Desktop is a GUI login item, so it needs a login."
+  echo "  Website (Docker, 8088):  NO — Docker Desktop is a GUI login item, so it needs a login."
   echo "  Worker:                  NO — it needs a GUI session, and auto-login is off."
   echo "                           Fix both with: ./install-services.sh --autologin"
 fi
 echo
-note "console    http://127.0.0.1:$PORT  (daemon)"
+note "website    http://127.0.0.1:$PORT  (daemon)"
 note "status:    sudo launchctl print system/$WEB_LABEL ; launchctl list | grep jobapp"
 note "restart:   sudo launchctl kickstart -k system/$WEB_LABEL"
 note "logs:      $DIR/logs/web.log · $DIR/logs/worker.log"

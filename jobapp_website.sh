@@ -15,7 +15,7 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
 
-PORT="${WEB_PORT:-8090}"
+PORT="${WEB_PORT:-8088}"
 SERVICE="website"
 CONTAINER="jobapp_website"
 
@@ -39,7 +39,7 @@ require_daemon() {
   echo "  open -a Docker  ->  error 125, Domain does not support specified action" >&2
   echo >&2
   echo "Log in at the machine once (or enable automatic login), then re-run this." >&2
-  echo "Meanwhile the native console still works:  ./web-start.sh" >&2
+  echo "Meanwhile the native website still works:  ./web-start.sh" >&2
   exit 1
 }
 
@@ -57,7 +57,7 @@ preflight() {
   fi
 
   # Every path in docker-compose.yml is a single-FILE bind mount. Docker creates a DIRECTORY
-  # in place of a missing source, and the console then reads a directory as a config file and
+  # in place of a missing source, and the website then reads a directory as a config file and
   # fails in a way that looks nothing like the cause.
   local f
   for f in .env .x8note.config "Q&A.txt" "Q&A.md" resumes.config; do
@@ -65,7 +65,7 @@ preflight() {
   done
   mkdir -p "$DIR/data" "$DIR/logs"
 
-  # A native console from web-start.sh holds the same port. Two servers on one data/ is not
+  # A native website from web-start.sh holds the same port. Two servers on one data/ is not
   # itself unsafe (the worker serializes the real work), but the second one cannot bind.
   local holder
   holder="$(lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | head -1 || true)"

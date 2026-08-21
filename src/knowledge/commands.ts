@@ -5,9 +5,9 @@ import type { FilledAnswer } from "../agent/types.js";
 import { writeJsonAtomic } from "../utils/atomicWrite.js";
 
 /**
- * The command queue: how the web console asks the worker to do something.
+ * The command queue: how the web website asks the worker to do something.
  *
- * The console NEVER drives Playwright and never writes application state. It drops an intent
+ * The website NEVER drives Playwright and never writes application state. It drops an intent
  * here; the worker — the only process that owns Chrome and the only writer of
  * applications.json / pending-approvals.json / Q&A.txt — picks it up. That single-writer
  * split is what keeps two processes from racing on the same JSON, which has corrupted state
@@ -35,7 +35,7 @@ interface Base {
   id: string;
   createdAt: string; // ISO
   source: string; // "web" | "cli" | ...
-  /** Which console account asked for this. With more than one user, "who approved this" has
+  /** Which website account asked for this. With more than one user, "who approved this" has
    *  to be answerable from the record alone. */
   actor?: string;
 }
@@ -45,7 +45,7 @@ export type Command = Base &
     | {
         name: "approve";
         code: string;
-        /** Present when the user edited answers in the console. These BECOME the approved
+        /** Present when the user edited answers in the website. These BECOME the approved
          *  answers and are what the ReplayAgent replays — "submitted == approved" holds
          *  because the edit happens before approval, not after. */
         answers?: FilledAnswer[];
@@ -268,7 +268,7 @@ export async function completeCommand(file: string, result: Omit<CommandResult, 
   await finish(file, { ...result, finishedAt: new Date().toISOString() });
 }
 
-/** Commands still waiting (for the console to show "queued"). */
+/** Commands still waiting (for the website to show "queued"). */
 export async function pendingCommands(): Promise<Command[]> {
   await ensureDirs();
   const names = (await fs.readdir(COMMANDS_DIR).catch(() => [])).filter((f) => f.endsWith(".json") && !f.startsWith(".tmp-"));
@@ -283,7 +283,7 @@ export async function pendingCommands(): Promise<Command[]> {
   return out;
 }
 
-/** Recently completed commands, newest first — the console's activity feed. */
+/** Recently completed commands, newest first — the website's activity feed. */
 export async function recentCommands(limit = 25): Promise<Array<Command & { result?: CommandResult }>> {
   await ensureDirs();
   const names = (await fs.readdir(COMMANDS_DONE_DIR).catch(() => [])).filter((f) => f.endsWith(".json")).sort().reverse();

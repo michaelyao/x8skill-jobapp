@@ -15,28 +15,28 @@ change) and a background poller submits the exact answers you approved.
 ```bash
 npm install
 npm start                 # queue the next 10 jobs for the worker to apply to
-npm run worker            # the daemon that owns Chrome and executes console actions
+npm run worker            # the daemon that owns Chrome and executes your decisions
 npm run check             # type-check
 
-./web-start.sh            # start the web console (0.0.0.0:8088)
+./web-start.sh            # start the website natively (0.0.0.0:8088)
 ./web-stop.sh             # stop it
 
-./worker-start.sh         # start the worker (owns Chrome, executes console actions)
+./worker-start.sh         # start the worker (owns Chrome, carries out your decisions)
 ./worker-stop.sh          # stop it gracefully (--force to kill mid-task)
 ```
 
-Both services are needed: the console queues your decisions, the worker carries them out.
-A console with no worker looks healthy but silently never submits anything — `web-start.sh`
+Both services are needed: the website queues your decisions, the worker carries them out.
+A website with no worker looks healthy but silently never submits anything — `web-start.sh`
 warns when that is the case, and `/api/health` reports the worker's state.
 
 ### Run them permanently
 
-**The console runs in Docker on 8090. The worker runs natively as a LaunchAgent.** One console,
-one worker — an earlier setup ran a second native console on 8088 against the same data, which
+**The website runs in Docker on 8088. The worker runs natively as a LaunchAgent.** One website,
+one worker — an earlier setup ran a second native website alongside it against the same data, which
 was pure duplication.
 
 ```bash
-./jobapp_website.sh up             # the console (8090)
+./jobapp_website.sh up             # the website (8088)
 ./install-services.sh              # the worker as a LaunchAgent, + offers auto-login
 ./install-services.sh --autologin  # only (re)set auto-login
 ./install-services.sh --uninstall
@@ -53,7 +53,7 @@ that fails on startup does not spin.
 
 ```bash
 launchctl list | grep jobapp        # worker
-./jobapp_website.sh status          # console
+./jobapp_website.sh status          # website
 tail -f logs/worker.log
 ```
 
@@ -85,20 +85,20 @@ Google tracker sheet is retired, because reading it needed a browser *and* a hum
 Enter, which no scheduled run could ever do.
 
 <details>
-<summary>Optional: a native console daemon on 8088</summary>
+<summary>Optional: a native website daemon on 8089</summary>
 
 The container cannot start until someone logs in, because Docker Desktop is a GUI login item.
-If you want a console that is up at boot regardless, `./install-services.sh
---with-console-daemon` installs the native console as a **LaunchDaemon** on 8088 — no login, no
+If you want a website that is up at boot regardless, `./install-services.sh
+--with-website-daemon` installs the native website as a **LaunchDaemon** on 8089 — no login, no
 Docker, no VM in the chain. It coexists with the container (different port, and sharing `data/`
-is safe: the console never writes application state, and the derived files it rewrites on read
+is safe: the website never writes application state, and the derived files it rewrites on read
 are written atomically with identical content).
 
 </details>
 
-### Running the console in Docker
+### Running the website in Docker
 
-The console can run as a container instead of a native process. The **worker cannot**, and the
+The website runs as a container. The **worker cannot**, and the
 setup does not try: it drives a real headed Chrome using the persistent profile in
 `playwright/.auth`, which is what keeps the bot fingerprint low enough for Workday and
 Greenhouse to accept a form, and what holds the ATS sessions between runs. A Linux container has
@@ -115,16 +115,15 @@ neither. So the split is: website in Docker, worker native.
 The image holds only the built Next server. All state is bind-mounted at `/jobapp`
 (`JOBAPP_ROOT`), so the container and the native worker read and write the *same* files —
 `data/commands/` is the control channel between them, which is why it is mounted read-write.
-`playwright/` is deliberately not mounted: the console never drives a browser, so the
+`playwright/` is deliberately not mounted: the website never drives a browser, so the
 container has no reason to hold live session cookies.
 
 Two things to know before relying on it:
 
 - **`web-stop.sh` does not apply.** It kills whatever holds port 8088, which for a container
   is `docker-proxy`. Use `./jobapp_website.sh down`. `jobapp_website.sh up` refuses to start
-  if a *native* console already holds the port and points you at `./web-stop.sh`.
-- **Docker does not make it reboot-safe on macOS, and it is an ALTERNATIVE to the console
-  daemon, not a companion.** Both bind port 8088; whichever loses crash-loops against the
+  if a *native* website already holds the port and points you at `./web-stop.sh`.
+- **Docker does not make it reboot-safe on macOS.** Both bind port 8088; whichever loses crash-loops against the
   winner. `restart: unless-stopped` only acts once the Docker daemon is up, and on macOS that
   daemon *is* Docker Desktop — a GUI-login app. So the container cannot start before someone
   signs in, which is the exact problem the LaunchDaemon exists to solve. `install-services.sh`
@@ -163,7 +162,7 @@ launchctl bootstrap gui/$(id -u) ...   ->  125: Domain does not support specifie
 open -a Docker                         ->  125: same thing
 ```
 
-With the console in Docker, **auto-login is the single thing that makes a reboot recover**:
+With the website in Docker, **auto-login is the single thing that makes a reboot recover**:
 
 ```
 reboot -> auto-login creates a GUI session
@@ -238,7 +237,7 @@ If you fill and submit an application yourself on the employer's site, mark it �
 ledger still reads "prefilled, never submitted" and the next sweep re-opens a live application.
 
 ```bash
-jobapp manual-submit HDHJVW      # or "I submitted this myself…" on the job's console page
+jobapp manual-submit HDHJVW      # or "I submitted this myself…" on the job's page
 ```
 
 This is **not** a skip. A skip records that no application exists; this records that one does,

@@ -4,7 +4,7 @@ import { DATA_DIR } from "../config.js";
 import { writeJsonAtomic } from "../utils/atomicWrite.js";
 
 /**
- * The worker's heartbeat, written every tick and read by the console. This is what makes the
+ * The worker's heartbeat, written every tick and read by the website. This is what makes the
  * site show live progress ("submitting DVDFRR", "filling 12/61") instead of a static list.
  *
  * Deliberately a separate file from application state: the worker rewrites it constantly, and
@@ -19,7 +19,7 @@ export interface WorkerStatus {
   /** Human-readable, e.g. "submitting approved [DVDFRR] PDT Partners". */
   activity?: string;
   code?: string;
-  /** Set while a sweep is running so the console can show a progress bar. */
+  /** Set while a sweep is running so the website can show a progress bar. */
   progress?: { done: number; total: number };
   since: string; // ISO — when the current state began
   lastTickAt: string; // ISO — staleness check: no tick for a while means the worker is down

@@ -5,7 +5,7 @@ import { isResponse, requireUser } from "@/lib/session";
 export const runtime = "nodejs";
 
 /**
- * The ONLY write path from the console, and it writes a command — never application state.
+ * The ONLY write path from the website, and it writes a command — never application state.
  * The worker applies it. Every guard that prevents a double submission lives on the worker
  * side, so a malicious or buggy request here cannot bypass them.
  */

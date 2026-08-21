@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
  * The page for ONE application, whatever state it is in.
  *
  * /queue/[code] only exists while a job is awaiting a decision, so every row on /applications used
- * to link straight out to the employer's posting — leaving the console with no page for the 55
+ * to link straight out to the employer's posting — leaving the website with no page for the 55
  * prefilled, 10 submitted or 23 expired records it knows the most about.
  */
 
