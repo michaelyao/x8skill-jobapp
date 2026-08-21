@@ -103,16 +103,43 @@ export class WorkdayDriver extends GenericDriver {
       }
       return false;
     };
+    /**
+     * Some tenants put a sign-in METHOD chooser before the credential form: an SSO button, "OR",
+     * and a plain-email button. NVIDIA's reads "Sign in with Google / OR / Sign in with email".
+     *
+     * That page has no input fields and no footer Next button, so the reader reported
+     * "0 field(s), submitReady=false" and the turn loop stopped with "No next control" — 0 filled
+     * and no indication why. Take the email branch; the SSO one leads into Google's consent flow,
+     * which is not something to drive.
+     */
+    const chooseEmailSignIn = async (): Promise<boolean> => {
+      const el = page
+        .getByRole("button", { name: /sign in with email|continue with email|use email/i })
+        .or(page.getByRole("link", { name: /sign in with email|continue with email|use email/i }))
+        .first();
+      if (!(await el.isVisible().catch(() => false))) return false;
+      console.log("    [workday] sign-in method chooser — taking the email branch.");
+      await el.click().catch(() => undefined);
+      await page.waitForTimeout(1200);
+      return true;
+    };
+
     const goToSignIn = async () => {
       if (await count('[data-automation-id="signInLink"]')) {
         await page.locator('[data-automation-id="signInLink"]').first().click().catch(() => undefined);
+        await chooseEmailSignIn();
         return;
       }
       const el = page.getByRole("link", { name: /^sign in$/i }).or(page.getByRole("button", { name: /^sign in$/i })).first();
       if (await el.count().catch(() => 0)) await el.click().catch(() => undefined);
+      await chooseEmailSignIn();
     };
 
     await page.getByRole("button", { name: /accept cookies|accept all/i }).first().click({ timeout: 1500 }).catch(() => undefined);
+
+    // The chooser can BE the landing page — arriving mid-flow on a saved application, with no
+    // "Sign in" link to click first — so try it here as well as inside goToSignIn.
+    await chooseEmailSignIn();
 
     // MANUAL_AUTH=1: skip auto create/sign-in/reset. The user signs in themselves
     // in the headed browser (handles email-validation, existing accounts, CAPTCHAs),
@@ -165,6 +192,14 @@ export class WorkdayDriver extends GenericDriver {
       const pw = page.locator('input[type="password"]');
       const pwCount = await pw.count().catch(() => 0);
       const hasEmailField = (await count(emailSel)) > 0;
+
+      // A sign-in METHOD chooser has NEITHER a password field nor an email field, so every
+      // branch below misses it and this loop spins all 16 steps achieving nothing — the run then
+      // ends at "0 field(s) / No next control" with no clue why. RTX shows Google / LinkedIn / OR
+      // / "Sign in with email"; NVIDIA shows Google / OR / email. Both appear AFTER the Apply
+      // click, which is why handling it earlier in openApplication does not help — at that point
+      // the page does not exist yet.
+      if (pwCount === 0 && !hasEmailField && (await chooseEmailSignIn())) continue;
 
       // Create Account page — try this FIRST (per policy).
       if (pwCount >= 2) {

@@ -336,6 +336,36 @@ Discovered from live DOM inspection (F5 / Cohesity applications):
 - **Custom comboboxes**: `[role="combobox"]` — click to open, then pick from `[role="listbox"] [role="option"]`.
 - **"How Did You Hear About Us?"**: Open combobox, prefer college/university > company website > LinkedIn > job board.
 
+### Workday failure signatures seen live (2026-08-21 batch: 1/17 reached Review)
+
+A failure taxonomy, because the log line alone does not tell you which of these it is. `0 field(s),
+submitReady=false` followed by `No next control — stopping` means **we are not on the form** — do
+not go looking for a filling bug.
+
+| Signature | Cause | Fix |
+|---|---|---|
+| `0 field(s)` + `No next control`, page is in French ("Postuler", "Ouvrir une session") | the URL carried a `/fr-CA/` locale — 7 of 49 Workday URLs in the live list, ALL RTX | `workdayEnglishUrl()` rewrites the locale to `en-US` before `goto`. **5 of 11 failures in one batch.** |
+| `0 field(s)` + `No next control`, page shows "Sign in with Google / OR / Sign in with email" | a sign-in METHOD chooser before the credential form (NVIDIA). No inputs, no footer button, so the reader sees nothing | `chooseEmailSignIn()` takes the email branch. Never drive the SSO branch — it leads into Google's consent flow. |
+| Same N fields re-answered every turn, `form error: … is not a valid postal code for …` | a **required State field the reader did not report**, so the form keeps its own default (Pennsylvania) while street/city/postal say Sunnyvale | UNRESOLVED — see below |
+| `posting expired/closed` | genuinely closed | nothing to fix |
+
+**The locale is not cosmetic.** Filling a French form would be worse than failing: every field
+label would miss the answer store too. `normalizeUrl` folds the locale as well, so the same
+posting in two languages is ONE job — without that, `/fr-CA/` and `/en-US/` of one requisition
+dedupe as different listings and could both be applied to.
+
+**The State field, unresolved.** GE Vernova DUSKAZ and Northrop GXGMCV both filled Address Line 1,
+City and Postal Code and never touched State — the screenshot shows it present and required, and
+the reader has filled `State` 33 times on other tenants, so the pattern in `llmAgent`'s address
+block is right and the field is simply absent from the snapshot on these pages. Suspected: a
+dependent dropdown whose options load only after Country/Territory resolves, so it is read with no
+options and dropped. Needs a live DOM dump (`src/debug/inspectMyInfo.ts`) to confirm before
+changing the reader. Until then the run stops fast and says why, instead of burning sixteen turns.
+
+**A form that is rejecting the page gets one turn, not sixteen.** `turnLoop` breaks as soon as a
+blocking `validationErrors()` message repeats with nothing newly filled. DUSKAZ spent ~10 minutes
+re-answering thirteen fields against an error that never changed.
+
 ### Workday auth flow (complete)
 
 ```

@@ -25,6 +25,31 @@ export function normalizeCompany(value: string): string {
   return normalizeWhitespace(value).toLowerCase();
 }
 
+/**
+ * Workday puts a locale in the path: `<tenant>.wdN.myworkdayjobs.com/<locale>/<site>/job/...`.
+ *
+ * The job trackers capture whatever locale the poster used. Measured on the live list: 7 of 49
+ * Workday URLs were `/fr-CA/`, all of them RTX, and every RTX application failed at `0 field(s),
+ * submitReady=false / No next control` — because the page was in FRENCH. The Apply button reads
+ * "Postuler", which the APPLY regex does not match, so the driver never even opened the form.
+ * (Filling it in French would be worse: every field label would miss the answer store too.)
+ *
+ * So navigate in English. Also used by normalizeUrl, so the same posting in two locales is ONE
+ * job — without that, /fr-CA/ and /en-US/ of the same requisition dedupe as different listings
+ * and could both be applied to.
+ */
+export function workdayEnglishUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (!/\.myworkdayjobs\.com$/i.test(parsed.hostname)) return url;
+    // Only a leading /xx-YY/ segment is a locale. A path segment further in is site or job data.
+    parsed.pathname = parsed.pathname.replace(/^\/[a-z]{2}-[A-Z]{2}(?=\/)/, "/en-US");
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 export function normalizeUrl(url: string): string {
   try {
     const parsed = new URL(url);
@@ -36,7 +61,9 @@ export function normalizeUrl(url: string): string {
       }
     }
     parsed.pathname = parsed.pathname.replace(/\/+$/, "");
-    return parsed.toString();
+    // Fold the Workday locale, so the same posting in two languages is one job. See
+    // workdayEnglishUrl: the live list carried both /fr-CA/ and /en-US/ RTX URLs.
+    return workdayEnglishUrl(parsed.toString());
   } catch {
     return url.trim();
   }

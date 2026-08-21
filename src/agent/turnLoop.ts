@@ -286,6 +286,17 @@ export async function runApplication(
     const signature = after.fields.map((f) => f.label).sort().join("|");
     if (newLabels.length === 0 && signature === lastSignature) {
       noProgress += 1;
+      // A form that is ACTIVELY REJECTING the page needs no second opinion. GE Vernova DUSKAZ ran
+      // SIXTEEN turns re-answering the same thirteen fields while the page said "94085 is not a
+      // valid postal code for Pennsylvania" the entire time — roughly ten minutes to reach a
+      // conclusion that was available on turn four. If nothing new was filled AND the form is
+      // showing a blocking error, another identical turn cannot change it.
+      const blocking = (await driver.validationErrors?.(root).catch(() => [])) ?? [];
+      if (blocking.length) {
+        blockedRequired = blocking.map((e) => `form error: ${e}`);
+        console.log(`  Form is rejecting the page and nothing new is being filled — stopping. ${blocking.map((e) => `"${e}"`).join("; ")}`);
+        break;
+      }
       if (noProgress >= 2) {
         // Report what the FORM says is wrong, not just that we stopped making progress.
         const errors = (await driver.validationErrors?.(root).catch(() => [])) ?? [];

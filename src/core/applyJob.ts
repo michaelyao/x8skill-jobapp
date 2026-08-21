@@ -28,7 +28,7 @@ import { findRequisitionId } from "./requisitionId.js";
 import { withRequisitionId } from "./jobIdentity.js";
 import { captureJobDescription, fetchGreenhouseJobDescription } from "../utils/jobDescription.js";
 import { askUserForField, confirmSubmit } from "../utils/prompts.js";
-import { normalizeQuestion } from "../utils/normalize.js";
+import { normalizeQuestion, workdayEnglishUrl } from "../utils/normalize.js";
 import type { Agent, AtsDriver, FilledAnswer } from "../agent/types.js";
 import type {
   AnswerEntry,
@@ -85,7 +85,13 @@ async function detectDriver(page: Page): Promise<AtsDriver | undefined> {
   return undefined;
 }
 
-async function gotoWithRetry(page: Page, url: string, attempts = 3): Promise<void> {
+async function gotoWithRetry(page: Page, rawUrl: string, attempts = 3): Promise<void> {
+  // Always open Workday in English. The trackers capture whatever locale the poster used, and
+  // every RTX listing in the live list was /fr-CA/ — where the Apply button reads "Postuler", the
+  // APPLY regex misses it, and the run ends at "0 field(s) / No next control" without ever
+  // opening the form. Five of eleven failures in one batch were exactly this.
+  const url = workdayEnglishUrl(rawUrl);
+  if (url !== rawUrl) console.log(`  opening in English (was ${rawUrl.match(/\/([a-z]{2}-[A-Z]{2})\//)?.[1] ?? "?"})`);
   let lastError: unknown;
   for (let i = 0; i < attempts; i += 1) {
     try {
