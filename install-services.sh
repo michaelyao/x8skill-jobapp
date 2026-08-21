@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Make the website and the worker survive a reboot with nobody signed in.
 #
-#   ./install-services.sh                 # worker + auto-login (website stays in Docker)
+#   ./install-services.sh                 # worker only (website stays in Docker)
 #   ./install-services.sh --with-website-daemon
-#   ./install-services.sh --no-autologin  # install both, leave auto-login alone
 #   ./install-services.sh --autologin     # only (re)set auto-login
 #   ./install-services.sh --uninstall
 #   ./install-services.sh --dry-run       # generate + validate both plists, change nothing
@@ -15,8 +14,8 @@
 #   WEB_PORT=8089 ./install-services.sh
 #
 # Run it as YOURSELF, not with sudo — it needs $HOME and your uid to place the LaunchAgent,
-# and calls sudo itself for the parts that need root. You will be asked for your password
-# once for sudo, and again by macOS if you enable auto-login.
+# and calls sudo itself for the parts that need root. You will be asked for your password once
+# for sudo.
 #
 # ---------------------------------------------------------------------------------------
 # THE WEBSITE RUNS IN DOCKER (port 8088). This script does NOT install a website by default.
@@ -77,7 +76,9 @@ die()  { printf '\033[31m✗\033[0m %s\n' "$1" >&2; exit 1; }
 section() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 
 DO_INSTALL=1
-DO_AUTOLOGIN=ask
+# Decided 2026-08-21: auto-login is NOT wanted — someone always signs in after a reboot. So this
+# does not prompt for it. `--autologin` still sets it if that ever changes.
+DO_AUTOLOGIN=no
 # The website lives in Docker; a native website daemon is opt-in.
 WITH_WEBSITE=0
 case "${1:-}" in
@@ -422,9 +423,14 @@ if [ "$autolog" = "$USER_NAME" ]; then
   echo "  Website (Docker, 8088):  yes — auto-login starts Docker Desktop, which restarts the container."
   echo "  Worker:                  yes — LaunchAgent, loaded by the auto-login session."
 else
-  echo "  Website (Docker, 8088):  NO — Docker Desktop is a GUI login item, so it needs a login."
-  echo "  Worker:                  NO — it needs a GUI session, and auto-login is off."
-  echo "                           Fix both with: ./install-services.sh --autologin"
+  # Auto-login is off by choice. Everything still recovers on its own — it just waits for the
+  # login rather than happening at boot. Nothing to run by hand afterwards.
+  echo "  Auto-login is off by choice, so recovery waits for someone to sign in. After that,"
+  echo "  all three come back with NO commands needed:"
+  echo "    Docker Desktop  starts at login (login item)"
+  echo "    website + scheduler  restart: unless-stopped, so they follow Docker up"
+  echo "    worker          LaunchAgent, RunAtLoad"
+  echo "  Verify with:  ./jobapp_website.sh status  ·  launchctl list | grep jobapp"
 fi
 echo
 note "website    http://127.0.0.1:$PORT  (daemon)"

@@ -112,9 +112,13 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   website never writes application state (the worker is the single writer) and the derived
   files it rewrites on read are written atomically with identical content — but safe is not the
   same as useful.
-- **Auto-login is the single link that makes a reboot recover.** reboot → auto-login → GUI
-  session → Docker Desktop (a login item) → container (`restart: unless-stopped`) → worker
-  LaunchAgent. Every link needs that session, so without auto-login nothing comes back.
+- **Recovery waits for a login, and that is the chosen design.** Decided 2026-08-21: auto-login
+  is NOT wanted — someone always signs in after a reboot. Do not re-propose it, and do not add a
+  boot-time workaround for it. The chain is: login → Docker Desktop (a login item) → website +
+  scheduler (`restart: unless-stopped`) → worker LaunchAgent (`RunAtLoad`). Every link is
+  automatic ONCE that session exists, so there is nothing to run by hand after a reboot; the only
+  property being given up is starting before anyone signs in. `install-services.sh` therefore
+  does not prompt for auto-login (`--autologin` still sets it if that ever changes).
 - **LaunchAgents load at GUI login, not at boot — which is why a website daemon is the only
   thing that can start without one.** A reboot with nobody signed in leaves an agent absent and the logs
   silent; from SSH, `launchctl managername` is `Background` and

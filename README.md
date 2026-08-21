@@ -162,7 +162,8 @@ launchctl bootstrap gui/$(id -u) ...   ->  125: Domain does not support specifie
 open -a Docker                         ->  125: same thing
 ```
 
-With the website in Docker, **auto-login is the single thing that makes a reboot recover**:
+**Auto-login is deliberately off** — someone always signs in after a reboot. That is the whole
+recovery procedure: sign in, and the chain below runs itself. Nothing to type.
 
 ```
 reboot -> auto-login creates a GUI session
@@ -171,8 +172,9 @@ reboot -> auto-login creates a GUI session
        -> the worker LaunchAgent loads
 ```
 
-Every link needs that session. Without auto-login all four stay down until someone sits at the
-machine. `./install-services.sh --autologin` sets it.
+Every link is automatic once that session exists. The only property given up is coming back
+*before* anyone signs in — if you ever want that, `./install-services.sh --autologin` sets it
+(FileVault must stay off, and anyone with physical access then gets a logged-in desktop).
 
 Note the `gui/$(id -u)` domain *is* reachable over SSH once somebody is logged in — the failure
 above happens only when no GUI session exists at all.
