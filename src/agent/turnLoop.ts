@@ -10,8 +10,22 @@ export interface TurnLoopOptions {
   onLearn?: (field: FieldSpec) => Promise<string | null>;
 }
 
-/** How long one field may take before it is treated as a failure. */
-const FIELD_TIMEOUT_MS = Number(process.env.FIELD_TIMEOUT_MS ?? 90_000);
+/**
+ * How long one field may take before it is treated as a failure.
+ *
+ * Was 90s, which is far past anything a SUCCESS needs. Measured: the worst legitimate case in
+ * the suite — a static alphabetical list of ~250 country codes, shown fourteen at a time, whose
+ * target sits seventeen pages down and is reached by bisecting the scroll position — fills in
+ * 4.2s (src/debug/longListCases.ts). Every real fill observed is single-digit seconds.
+ *
+ * What 90s actually bought was failure. Garda Capital (Greenhouse) spent 4.5 of its 6m31s on
+ * three fields that were never going to accept a value, and General Matter spent 19.5 minutes
+ * across thirteen of them. A field that has not taken a value in 30s is not going to at 90.
+ *
+ * 30s keeps ~7x headroom over the slowest measured success and cuts the cost of a hopeless
+ * field to a third. Raise it with FIELD_TIMEOUT_MS if a form ever proves it needs more.
+ */
+const FIELD_TIMEOUT_MS = Number(process.env.FIELD_TIMEOUT_MS ?? 30_000);
 
 /**
  * Resolve to false if the work outruns its deadline. The promise is abandoned rather than

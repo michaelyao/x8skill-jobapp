@@ -17,6 +17,30 @@ function parseDate(value: string): { y: number; m: number; day: number } | null 
   return null;
 }
 
+/**
+ * Compare an answer to an option's label without typography deciding the outcome.
+ *
+ * General Matter (Greenhouse) offered "Bachelor\u2019s Degree" with a typographic apostrophe while
+ * the model answered "Bachelor's Degree" with a straight one. The option was ON SCREEN and in the
+ * list we had already read — "saw: Associate\u2019s Degree | Bachelor\u2019s Degree" — and all four
+ * match strategies missed it, including the substring fallback, because a single character
+ * differed. The field then burned its full 90s deadline and was reported as "would not take it".
+ *
+ * Curly quotes, the various dashes and NBSP all come from the same class of mistake: text authored
+ * in a rich editor compared against text a model typed. Fold them, collapse whitespace, lowercase.
+ * Nothing here is lossy in a way that could match two genuinely different options.
+ */
+export function normaliseOption(text: string): string {
+  return text
+    .replace(/[\u2018\u2019\u02BC\u00B4\u2032`]/g, "'")
+    .replace(/[\u201C\u201D\u2033]/g, '"')
+    .replace(/[\u2010-\u2015\u2212]/g, "-")
+    .replace(/[\u00A0\u2007\u202F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 export const SUBMIT = /submit application|^submit$/i;
 export const APPLY = /^(apply|apply now|apply for this (job|role|position)|apply to this job|i'?m interested)\b/i;
 export const NEXT = /^(next|continue|save and continue|review|save|proceed)\b/i;
@@ -939,7 +963,7 @@ export abstract class GenericDriver implements AtsDriver {
 
   private async fillReactSelectOne(root: Root, control: Locator, value: string, keySelector?: string): Promise<boolean> {
     const page = control.page();
-    const want = value.trim().toLowerCase();
+    const want = normaliseOption(value);
     const firstWord = value.trim().split(/[\s,/(]+/)[0] ?? value;
     // The FULL value gets two clean attempts before anything is shortened: a full word is what
     // a taxonomy is most likely to contain, and these menus are flaky enough that one miss
@@ -959,6 +983,9 @@ export abstract class GenericDriver implements AtsDriver {
     ].filter((p) => p.length >= 2);
     let lastSeen: string[] = [];
     let typedInto = "";
+    // Attempts that produced NO option list at all — distinct from "the list answered and did
+    // not match", which is what the probes and the bisect below exist for.
+    let neverOpened = 0;
     const menu = () =>
       keySelector
         ? this.scopedOptions(root, keySelector, control)
@@ -1068,7 +1095,28 @@ export abstract class GenericDriver implements AtsDriver {
           break;
         }
       }
-      if (count === 0) continue; // menu didn't open — retry
+      if (count === 0) {
+        neverOpened += 1;
+        // Attempt 0 types a probe to filter; attempt 1 opens with ArrowDown instead. If NEITHER
+        // produced a single option, there is no list here to drive, and the remaining probes are
+        // just more text typed into a control with no menu — about 6.5s each, for nothing.
+        //
+        // Measured on General Matter (Greenhouse): ten fields behaved this way — Country*,
+        // Location (City)*, School*, Degree*, Clearance Eligibility*, work authorisation — each
+        // burning the full 90s field deadline. That was 15 of that job's 20 minutes, and not one
+        // of them could ever have succeeded.
+        //
+        // This deliberately does NOT fire when options DID appear and merely failed to match:
+        // that is what the remaining probes and the bisect are for, and a long static list
+        // legitimately needs the full deadline (src/debug/longListCases.ts finds its target
+        // seventeen pages down).
+        if (attempt >= 1 && neverOpened > attempt) {
+          console.log(`      ↳ no option list appeared for "${value.slice(0, 40)}" after both open strategies — not a menu we can drive`);
+          return false;
+        }
+        continue; // menu didn't open — retry
+      }
+      neverOpened = 0; // a list appeared; from here the probes are worth trying
 
       const readTexts = async (locator: Locator, n: number): Promise<string[]> => {
         const out: string[] = [];
@@ -1087,7 +1135,7 @@ export abstract class GenericDriver implements AtsDriver {
       };
       let texts = await readTexts(opts, count);
       lastSeen = texts;
-      const lead = (t: string) => t.toLowerCase().split(/[,(:—–-]/)[0].trim();
+      const lead = (t: string) => normaliseOption(t).split(/[,(:—–-]/)[0].trim();
       // Workday's skill search returns the taxonomy's canonical entries AND a free-text row for
       // whatever was typed — searching "python" yields both "Python (Programming Language)" and
       // a bare "python". Prefer the canonical one: it is the entry a recruiter's search matches,
@@ -1104,9 +1152,9 @@ export abstract class GenericDriver implements AtsDriver {
         idx = (us ?? withCode[0])?.i ?? -1;
       }
       if (idx < 0) idx = texts.findIndex((t) => lead(t) === want && t.length > want.length);
-      if (idx < 0) idx = texts.findIndex((t) => t.toLowerCase() === want);
+      if (idx < 0) idx = texts.findIndex((t) => normaliseOption(t) === want);
       if (idx < 0) idx = texts.findIndex((t) => lead(t) === want);
-      if (idx < 0) idx = texts.findIndex((t) => t.toLowerCase().includes(want) || want.includes(t.toLowerCase()));
+      if (idx < 0) idx = texts.findIndex((t) => normaliseOption(t).includes(want) || want.includes(normaliseOption(t)));
       if (idx < 0) {
         // ReactVirtualized renders only the rows in view. Scroll the listbox and re-read before
         // concluding the value is absent.
