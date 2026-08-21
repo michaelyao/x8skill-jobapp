@@ -217,6 +217,34 @@ Per type in `src/agent/drivers/base.ts`, with Workday overrides in `src/agent/dr
 Nothing reports success without verification. Returning `true` straight after a click is what
 made "How Did You Hear About Us?\*" show a checkmark on every turn while staying empty.
 
+### Skills the ATS filled in for us
+
+Uploading the resume makes Workday populate Skills from its own parse of the PDF. It guesses
+badly: an LPL application came back listing `Teaching`, `Social Media`, `Verification`,
+`Quality Assurance (QA)`, `Microsoft Office` and `Natural Language` next to the real ones.
+
+Nothing in the fill path touched them. `skill.txt` only says what to ADD, and an autofilled
+value is already committed — so the field reads as filled, the gate is satisfied, and it is
+never offered for filling. Those six would have gone in exactly as guessed.
+
+So `skill.txt` gained a `REMOVE:` section and `GenericDriver.pruneSkills` deletes what it
+names, called once per turn from the loop **before** `read()` — so the snapshot, and therefore
+the review email, shows the form as it will actually be submitted.
+
+Two rules make it safe to run on every turn of every form:
+
+- **Exact match only**, trimmed and case-insensitive. `Natural Language` goes; `Language
+  Processing` and `Natural Language Processing (NLP)` stay. `Verification` goes; `Formal
+  Verification` stays. A substring rule silently deletes skills the candidate has.
+- **Scoped to a container whose own label asks about skills** — its label, never its full
+  text, which contains the pills. `Teaching` in a Skills box is the ATS's bad guess; the same
+  word in "Areas of Interest" is the candidate's answer.
+
+The decision is a pure function (`pillsToRemove`), not logic inside an `evaluate()` string, so
+it has cases: `src/debug/skillRemovalCases.ts`. The page script only observes. Removal is
+confirmed by a re-read — a click that dispatched without deleting is reported as stuck, never
+as removed, or the review would claim a skill is gone while it sits on the form.
+
 ---
 
 ## 8. The turn loop and the required-field gate
@@ -315,6 +343,35 @@ cross-checks all three stores and prints mismatches (currently 0 across 93 recor
 Related: `ENGAGED_STATUSES` includes `submitted` and `expired`, so a finished application is
 never re-filled and a dead posting is never re-opened; and `recordApplication` refuses to
 demote a submitted record, whatever a later re-open reports.
+
+### `manual_submitted` — filled and submitted by hand
+
+Sometimes the application is done on the ATS directly, outside this tool. That is not a skip:
+a skip means no application exists, while this one went in and is the *most* important kind to
+never touch again. Recording it as a skip is how a live application gets applied for twice.
+
+The `manual_submit` command takes no browser — the work is already done. What it does is write
+**both** stores:
+
+| Store | Why it must be written |
+|---|---|
+| queue entry → `manual_submitted` | drops out of `listAwaiting()`, so the poller can never pick it up; `isSubmittedStatus()` makes approve and retry refuse it |
+| ledger record → `manual_submitted` | every dedupe guard reads the LEDGER. Marking only the queue leaves `hasSubmittedBefore()` saying no, and the next sweep re-fills a live application |
+| x8note `stage_` label | labels only, via `syncNoteStage` — keeps `statusAudit` from reporting drift on a record that is correct |
+
+`manual_submitted` is in both `ENGAGED_STATUSES` and `SUBMITTED_STATUSES`, which is what makes
+the guards above hold without each one naming it.
+
+The ledger write is `setApplicationStatus`, deliberately **not** `recordApplication`: records
+read back from the ledger are slim (description, answers and resume text live in the note), so
+putting one through the full writer would write those fields back empty — the same shape of
+bug that once wiped 30 captured descriptions. It touches status, `updatedAt` and `notes`, and
+refuses to swap one submitted status for another: the first one recorded is the truth about
+how the application happened.
+
+One case is refused rather than recorded: an entry stuck in `submitting`. We clicked submit and
+never learned the outcome, so if the user then submitted by hand there may be two applications
+— worth a look at the ATS, not a silent tidy-up.
 
 ---
 

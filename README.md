@@ -31,44 +31,117 @@ warns when that is the case, and `/api/health` reports the worker's state.
 
 ### Run them permanently
 
+**The console runs in Docker on 8090. The worker runs natively as a LaunchAgent.** One console,
+one worker — an earlier setup ran a second native console on 8088 against the same data, which
+was pure duplication.
+
 ```bash
-./install-services.sh              # launchd agents: start at login, restart on crash
+./console-docker.sh up             # the console (8090)
+./install-services.sh              # the worker as a LaunchAgent, + offers auto-login
+./install-services.sh --autologin  # only (re)set auto-login
 ./install-services.sh --uninstall
 ```
 
-This also removes the `*/15` approvals cron entry — the worker does that job now, within
-seconds rather than up to fifteen minutes, and leaving both installed means two processes
-racing for the same Chrome profile.
+Run the installer as yourself, not with `sudo` — it needs your `$HOME` and uid to place the
+LaunchAgent, and calls `sudo` itself only where root is required.
 
-After a crash launchd waits **30 seconds** before restarting (`ThrottleInterval`, so a service
-that fails on startup does not spin). If you kill something and it seems gone, wait half a
-minute before concluding it is dead.
+The worker cannot be containerized and cannot be a daemon: it drives a real headed Chrome with
+the persistent profile, which needs a GUI (Aqua) session. That is what auto-login is for.
 
-```bash
-launchctl list | grep jobapp                                  # status
-launchctl kickstart -k gui/$(id -u)/com.studiox8.jobapp.web    # force a restart
-tail -f logs/web.log logs/worker.log
-```
-
-`web-start.sh` refuses to start twice, checks that `WEB_SESSION_SECRET` and at least one
-account exist, builds on first run, waits for the port, and reports the worker's state.
-`web-stop.sh` kills whatever holds the port — `pkill -f "next start"` misses it, because
-the process re-execs as `next-server`.
-
-Useful flags — the full table is in [DESIGN.md](DESIGN.md#14-operating-it):
+After a crash launchd waits **30 seconds** before restarting (`ThrottleInterval`), so a service
+that fails on startup does not spin.
 
 ```bash
-NO_SUBMIT=1 npm start                    # never submit during the fill, only email + queue
-JOB_ID=DVDFRR FORCE_RETRY=1 npm start    # re-run one job by its code
-SKIP_REFRESH=1 npm start                 # reuse the job list instead of rebuilding
-MAX_JOBS=3 npm start                     # small test run
+launchctl list | grep jobapp        # worker
+./console-docker.sh status          # console
+tail -f logs/worker.log
 ```
 
-Install the 15-minute approval poller so approvals submit on their own:
+`web-start.sh` / `worker-start.sh` still start either one by hand — useful over SSH.
+
+<details>
+<summary>Optional: a native console daemon on 8088</summary>
+
+The container cannot start until someone logs in, because Docker Desktop is a GUI login item.
+If you want a console that is up at boot regardless, `./install-services.sh
+--with-console-daemon` installs the native console as a **LaunchDaemon** on 8088 — no login, no
+Docker, no VM in the chain. It coexists with the container (different port, and sharing `data/`
+is safe: the console never writes application state, and the derived files it rewrites on read
+are written atomically with identical content).
+
+</details>
+
+### Running the console in Docker
+
+The console can run as a container instead of a native process. The **worker cannot**, and the
+setup does not try: it drives a real headed Chrome using the persistent profile in
+`playwright/.auth`, which is what carries the live Google session the tracker-sheet export
+needs and what keeps the bot fingerprint low enough for Workday and Greenhouse to accept a
+form. A Linux container has none of that. So the split is: console in Docker, worker native.
 
 ```bash
-./install-cron.sh
+./console-docker.sh up        # preflight, build, start
+./console-docker.sh status
+./console-docker.sh logs
+./console-docker.sh down
+./console-docker.sh rebuild   # after changing web/ or src/
 ```
+
+The image holds only the built Next server. All state is bind-mounted at `/jobapp`
+(`JOBAPP_ROOT`), so the container and the native worker read and write the *same* files —
+`data/commands/` is the control channel between them, which is why it is mounted read-write.
+`playwright/` is deliberately not mounted: the console never drives a browser, so the
+container has no reason to hold live session cookies.
+
+Two things to know before relying on it:
+
+- **`web-stop.sh` does not apply.** It kills whatever holds port 8088, which for a container
+  is `docker-proxy`. Use `./console-docker.sh down`. `console-docker.sh up` refuses to start
+  if a *native* console already holds the port and points you at `./web-stop.sh`.
+- **Docker does not make it reboot-safe on macOS, and it is an ALTERNATIVE to the console
+  daemon, not a companion.** Both bind port 8088; whichever loses crash-loops against the
+  winner. `restart: unless-stopped` only acts once the Docker daemon is up, and on macOS that
+  daemon *is* Docker Desktop — a GUI-login app. So the container cannot start before someone
+  signs in, which is the exact problem the LaunchDaemon exists to solve. `install-services.sh`
+  refuses to install while the container is running; run `./console-docker.sh down` first, or
+  stay on Docker and skip the daemon.
+
+### Surviving a reboot
+
+`~/Library/LaunchAgents` is loaded at **GUI login, not at boot**. On a machine you only reach
+over SSH, a reboot with nobody signing in leaves both services absent, with nothing in the
+logs to explain it — this happened on 2026-08-19. From an SSH session you cannot even fix it
+by hand:
+
+```
+launchctl managername                  ->  Background        (not Aqua)
+launchctl bootstrap gui/$(id -u) ...   ->  125: Domain does not support specified action
+open -a Docker                         ->  125: same thing
+```
+
+With the console in Docker, **auto-login is the single thing that makes a reboot recover**:
+
+```
+reboot -> auto-login creates a GUI session
+       -> Docker Desktop starts (it is a login item)
+       -> the container restarts (restart: unless-stopped)
+       -> the worker LaunchAgent loads
+```
+
+Every link needs that session. Without auto-login all four stay down until someone sits at the
+machine. `./install-services.sh --autologin` sets it.
+
+Note the `gui/$(id -u)` domain *is* reachable over SSH once somebody is logged in — the failure
+above happens only when no GUI session exists at all.
+
+Auto-login requires FileVault to be **off** (it is) — macOS ignores auto-login on an encrypted
+volume, because the boot-time disk unlock needs a person. The installer checks and says so
+rather than appearing to succeed. The trade is real and worth stating: anyone with physical
+access to the machine gets a logged-in desktop.
+
+Headed Chrome *does* launch from an SSH session (Playwright spawns the binary directly rather
+than through LaunchServices), so `./worker-start.sh` works as a stopgap before auto-login is
+on. `open -a` and `launchctl bootstrap gui/…` go through the GUI domain and do not.
 
 ## Serving it at job.studiox8.com
 
@@ -114,6 +187,19 @@ location /api/stream {
    you approved. Replies are matched to a job by its 6-letter code only.
 
 If a job can't be completed, you get a debug email with the screenshot and the reason instead.
+
+### When you apply by hand
+
+If you fill and submit an application yourself on the employer's site, mark it — otherwise the
+ledger still reads "prefilled, never submitted" and the next sweep re-opens a live application.
+
+```bash
+jobapp manual-submit HDHJVW      # or "I submitted this myself…" on the job's console page
+```
+
+This is **not** a skip. A skip records that no application exists; this records that one does,
+so nothing re-opens, re-fills or re-submits it. It touches no browser. An application already
+mid-submit is refused instead — check the ATS for a duplicate first.
 
 ## Where things live
 

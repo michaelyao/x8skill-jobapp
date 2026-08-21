@@ -95,6 +95,65 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   `ignoreDefaultArgs: ["--enable-automation"]` + `args: ["--disable-blink-features=AutomationControlled"]`
   (in `runner.ts`), prefer real Chrome headed with the persistent profile, use human-like typing
   (`pressSequentially` w/ delay) and let pages settle. Never try to defeat explicit CAPTCHAs.
+- **The worker is never containerized; the console may be.** The worker drives a real headed
+  Chrome on the host with the `playwright/.auth` profile — that profile is the live Google
+  session the tracker-sheet export needs and the low bot fingerprint the ATS forms need. A
+  Linux container has no macOS Chrome, no GUI and no access to it, so containerizing the
+  worker would trade the property the automation depends on for a deploy convenience. The
+  console is the opposite: it never drives a browser, so `Dockerfile.web` /
+  `docker-compose.yml` run it with state bind-mounted at `/jobapp` (`JOBAPP_ROOT`) and
+  `data/commands/` read-write as the channel to the native worker. `playwright/` is not
+  mounted. Docker is NOT a reboot-safety fix — see the next point.
+- **One console, in Docker on 8090; the worker native as a LaunchAgent.** Decided 2026-08-21.
+  A second native console on 8088 ran the same app against the same `data/` for no benefit —
+  don't reintroduce it. `install-services.sh` installs the WORKER only; the native console
+  daemon is opt-in behind `--with-console-daemon` (port 8088, so it cannot clash with the
+  container). Two consoles sharing `data/` is *safe* if you ever want the fallback — the
+  console never writes application state (the worker is the single writer) and the derived
+  files it rewrites on read are written atomically with identical content — but safe is not the
+  same as useful.
+- **Auto-login is the single link that makes a reboot recover.** reboot → auto-login → GUI
+  session → Docker Desktop (a login item) → container (`restart: unless-stopped`) → worker
+  LaunchAgent. Every link needs that session, so without auto-login nothing comes back.
+- **LaunchAgents load at GUI login, not at boot — which is why a console daemon is the only
+  thing that can start without one.** A reboot with nobody signed in leaves an agent absent and the logs
+  silent; from SSH, `launchctl managername` is `Background` and
+  `launchctl bootstrap gui/$(id -u) …` fails with `125: Domain does not support specified
+  action` (`open -a Docker` fails identically). IMPORTANT correction to an earlier claim: the
+  `gui/$(id -u)` domain IS reachable over SSH once somebody is logged in — `bootout` and
+  `bootstrap` both work then. The 125 happens only when NO GUI session exists. So "it failed
+  from SSH" is not evidence about the mechanism; re-check `launchctl list` after a login before
+  concluding a service is missing. (Two workers ran at once on 2026-08-21 because a GUI login
+  had quietly loaded the agent while a hand-started one was already going.) `--with-console-daemon`
+  runs as the USER not root — root-owned files in `data/` would be unwritable by the worker —
+  and invokes `web/node_modules/.bin/next` directly, never `npx`, which wants a writable npm
+  cache under `$HOME`. Headed Chrome *does* launch over SSH (Playwright spawns the binary
+  directly), so `./worker-start.sh` is the stopgap.
+- **Autofilled skills are PRUNED, and only by exact match.** Uploading the resume makes the ATS
+  populate Skills from its own parse of the PDF, and it guesses badly. `skill.txt` only says
+  what to ADD, and an autofilled value is already committed — so the field reads as filled and
+  is never offered for filling. The `REMOVE:` section of `skill.txt` names what to delete and
+  `GenericDriver.pruneSkills` does it, called from `turnLoop` BEFORE `read()` so the review
+  shows the form as it will be submitted. Matching is EXACT (trimmed, case-insensitive):
+  "Natural Language" goes, "Language Processing" stays; "Verification" goes, "Formal
+  Verification" stays. Do not relax it into substring or similarity matching — that silently
+  deletes skills the candidate has. Removal is scoped to a container whose own LABEL asks
+  about skills (never its full text, which contains the pills), and confirmed by a re-read: a
+  click that dispatched without deleting is reported as stuck, never as removed. The decision
+  is a pure function (`pillsToRemove`), NOT logic inside an `evaluate()` string, so it can be
+  tested. Cases: `src/debug/skillRemovalCases.ts`.
+- **`manual_submitted` is a submitted status, not a skip, and must be written to BOTH stores.**
+  A skip means no application exists; this means the user filled and submitted it by hand on
+  the ATS, so it is the most important kind to never re-open. The `manual_submit` command
+  writes the queue entry (so `listAwaiting()` drops it and `isSubmittedStatus()` makes approve
+  and retry refuse it) AND the ledger record (every dedupe guard reads the LEDGER —
+  `hasSubmittedBefore` would otherwise say no and the next sweep would re-fill a live
+  application). It is in `ENGAGED_STATUSES` and `SUBMITTED_STATUSES` so the guards hold without
+  naming it. The ledger write is `setApplicationStatus`, never `recordApplication`: ledger
+  records are slim, so the full writer would write the description and answers back empty. An
+  entry stuck in `submitting` is REFUSED rather than marked — we clicked and never learned the
+  outcome, so a hand submission on top of it may mean two applications, which is worth a look
+  at the ATS rather than a silent tidy-up.
 - **Credentials stay in `.env`.** `profile.ts` must read them from `process.env`, never hardcode.
 - **profile.json must not contain `loginPassword`.** It is stripped in `profile.ts` before writing.
 - **Simplify parsing reads the raw GitHub URL** (`raw.githubusercontent.com`), not the rendered page.
