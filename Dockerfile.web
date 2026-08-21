@@ -1,0 +1,71 @@
+# The job console, containerized.
+#
+# THE WORKER IS NOT IN HERE, AND MUST NOT BE. It drives a real headed Chrome using the
+# persistent profile in playwright/.auth — that is what carries the live Google session the
+# tracker-sheet export needs, and what keeps the bot fingerprint low enough for Workday and
+# Greenhouse to accept a form (see CLAUDE.md "Keep automation stealthy"). A Linux container
+# has no macOS Chrome, no GUI, and no access to that profile. Containerizing it would trade
+# the one property the automation depends on for a nicer deploy story.
+#
+# The console is the opposite case: it never drives a browser (DESIGN.md), it only reads and
+# writes files. So the image carries just the built Next server at /app, and every piece of
+# state is bind-mounted at /jobapp — the same files the native worker uses. data/commands/ is
+# the bridge between the two.
+
+FROM node:22-slim AS builder
+WORKDIR /app
+
+# Deps first, so a source-only edit re-uses these layers instead of re-installing.
+COPY web/package.json web/package-lock.json ./web/
+RUN cd web && npm ci
+
+# The ROOT deps are needed too — not at runtime, but for the type-check pass. The console
+# imports fs readers from ../src, and those files import Playwright's TYPES
+# (src/agent/types.ts: `import type { Frame, Page } from "playwright"`). Without the
+# declarations present, `next build` fails with "Cannot find module 'playwright'" even though
+# nothing here ever calls it.
+#
+# --ignore-scripts is what keeps this cheap: playwright's postinstall would otherwise download
+# ~400MB of browsers into an image that must never drive one.
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts
+
+# The console imports pure fs readers from ../src through the @core/* alias, resolved by
+# next.config.mjs `externalDir` + web/tsconfig paths. src/ and the ROOT tsconfig must both be
+# in the context or every @core import fails to resolve at build time.
+COPY tsconfig.json ./
+COPY src ./src
+COPY web ./web
+
+# Every route in this app is dynamic (it reads cookies), so `next build` prerenders nothing
+# and never touches data/. The placeholder root exists only so path.join has a base.
+RUN mkdir -p /build-root/data \
+ && cd web \
+ && JOBAPP_ROOT=/build-root NEXT_TELEMETRY_DISABLED=1 npx next build
+
+
+FROM node:22-slim AS runtime
+WORKDIR /app
+
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    JOBAPP_ROOT=/jobapp \
+    WEB_HOST=0.0.0.0 \
+    WEB_PORT=8088
+
+# curl is the healthcheck. Without it the container reports "starting" forever.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/tsconfig.json ./tsconfig.json
+COPY --from=builder /app/src ./src
+COPY --from=builder /app/web ./web
+
+EXPOSE 8088
+WORKDIR /app/web
+
+# Deliberately NOT `npm start`: that script derives JOBAPP_ROOT as $(cd .. && pwd), which
+# inside the image is /app — the source tree, not the mounted state. It would come up healthy
+# and show an empty queue.
+CMD ["sh", "-c", "exec npx next start -H \"$WEB_HOST\" -p \"$WEB_PORT\""]

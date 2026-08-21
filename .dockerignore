@@ -1,0 +1,43 @@
+# The image needs the console sources and nothing else. Everything below is either bulk that
+# slows every build, or a credential that must never end up in a layer.
+
+.git
+.DS_Store
+node_modules
+dist
+
+# Built and installed inside the image instead.
+web/node_modules
+web/.next
+web/tsconfig.tsbuildinfo
+web/next-env.d.ts
+
+# State — bind-mounted at /jobapp at run time, never baked in.
+data
+logs
+
+# ~250MB of live Google and ATS session cookies, Login Data and Trust Tokens.
+# The console has no use for them; keep them out of the build context entirely.
+playwright
+
+# Secrets. Mounted read-only at run time.
+.env
+.env.save
+.x8note.config
+
+# Personal documents and generated job data.
+*.pdf
+*.log
+Q&A.txt
+Q&A.md
+text version.txt
+nathan resume 2026.md
+nathan resume 2026.txt
+resumes.config
+internships_summer2027.csv
+internships_summer2027.md
+available_openings.md
+
+# Ad-hoc DOM-inspection scratch.
+_*.mjs
+_*.ts
