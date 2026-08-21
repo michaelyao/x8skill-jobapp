@@ -1,6 +1,6 @@
 import { normalizeCompany, normalizeUrl, stableHash } from "../utils/normalize.js";
 import { reqIdFromUrl } from "./requisitionId.js";
-import type { AtsType, DedupeDecision, JobIdentity, JobListing, SheetRow } from "../types.js";
+import type { AtsType, JobIdentity, JobListing } from "../types.js";
 
 export function detectAtsType(url: string): AtsType {
   const lower = url.toLowerCase();
@@ -80,45 +80,4 @@ export function withRequisitionId(identity: JobIdentity, companyReqId: string | 
   return { ...identity, companyReqId };
 }
 
-export function decideDedupe(identity: JobIdentity, rows: SheetRow[]): DedupeDecision {
-  const normalizedCompany = normalizeCompany(identity.company);
-  const normalizedTitle = identity.title.trim().toLowerCase();
-
-  for (const row of rows) {
-    const rowCompany = normalizeCompany(row.company ?? "");
-    const rowTitle = (row.title ?? "").trim().toLowerCase();
-    const rowJobId = (row.jobId ?? "").trim();
-    const rowUrl = row.applyLink?.trim() ?? "";
-    const appliedSignal = (row.status ?? "").toLowerCase();
-
-    if (rowCompany === normalizedCompany && rowJobId && rowJobId === identity.externalJobId) {
-      return {
-        shouldSkip: true,
-        reason: `matched sheet by company + job id${appliedSignal ? ` (${row.status})` : ""}`,
-        matchedRow: row,
-      };
-    }
-
-    if (rowUrl && normalizeUrl(rowUrl) === identity.normalizedApplyUrl) {
-      return {
-        shouldSkip: true,
-        reason: `matched sheet by apply url${appliedSignal ? ` (${row.status})` : ""}`,
-        matchedRow: row,
-      };
-    }
-
-    if (rowCompany === normalizedCompany && rowTitle === normalizedTitle && appliedSignal) {
-      return {
-        shouldSkip: true,
-        reason: `matched sheet by company + title (${row.status})`,
-        matchedRow: row,
-      };
-    }
-  }
-
-  return {
-    shouldSkip: false,
-    reason: "no sheet match",
-  };
-}
 

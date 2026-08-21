@@ -24,6 +24,7 @@ export type CommandName =
   | "approve"
   | "skip"
   | "manual_submit"
+  | "apply"
   | "change"
   | "retry"
   | "sweep"
@@ -69,7 +70,33 @@ export type Command = Base &
          *  way an emailed change request is. A plain retry sends nothing. */
         instruction?: string;
       }
-    | { name: "sweep"; jobIds?: string[]; maxJobs?: number; refreshList?: boolean }
+    | {
+        /**
+         * Apply to one job: open the form, fill it, stop at Review, queue it for approval.
+         * NEVER submits. Identical operation to "retry" — same handler, because a fresh job
+         * and a re-run differ only in whether we have seen it before.
+         */
+        name: "apply";
+        code: string;
+        /** Optional steer for the fill, applied the way a change request is. */
+        instruction?: string;
+      }
+    | {
+        /**
+         * Choose the next jobs and enqueue one "apply" per job. Does NOT touch a browser: the
+         * apply commands do, one at a time, which is what keeps a sweep of ten jobs from
+         * becoming ten Chromes.
+         */
+        name: "sweep";
+        jobIds?: string[];
+        /** Defaults to DEFAULT_SWEEP_CAP (10). */
+        maxJobs?: number;
+        /** Rebuild the job list first (as a separate refresh_list command). */
+        refreshList?: boolean;
+        supportedOnly?: boolean;
+        latestFirst?: boolean;
+        forceRetry?: boolean;
+      }
     | { name: "refresh_list" }
     | { name: "update_answers"; entries: Array<{ question: string; answer: string }> }
     | { name: "forget_answers"; questions: string[] }
@@ -87,8 +114,21 @@ async function ensureDirs(): Promise<void> {
   await fs.mkdir(COMMANDS_DONE_DIR, { recursive: true });
 }
 
+/**
+ * A command as the caller supplies it: everything but the fields we stamp.
+ *
+ * Distributed over the union deliberately. A plain `Omit<Command, …>` collapses a discriminated
+ * union to just its COMMON keys, so `{ name: "apply", code }` failed to type-check and every
+ * caller worked around it with `as never` — which also silenced real mistakes.
+ *
+ * The Enqueueable helper exists because a conditional type only distributes over a NAKED type
+ * parameter; writing the conditional on `Command` directly does nothing.
+ */
+type Enqueueable<C> = C extends unknown ? Omit<C, "id" | "createdAt"> & { source?: string } : never;
+export type NewCommand = Enqueueable<Command>;
+
 /** Queue a command. Written to a temp name then renamed, so the worker never reads a partial file. */
-export async function enqueueCommand(cmd: Omit<Command, "id" | "createdAt"> & { source?: string }): Promise<Command> {
+export async function enqueueCommand(cmd: NewCommand): Promise<Command> {
   await ensureDirs();
   const full = {
     ...cmd,
@@ -131,6 +171,8 @@ const PRIORITY: Record<string, number> = {
   forget_answers: 1,
   change: 2,
   retry: 3,
+  // Background work, same class as retry: a sweep enqueues these and they take minutes each.
+  apply: 3,
   refresh_list: 4,
   sweep: 4,
 };

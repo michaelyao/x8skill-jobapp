@@ -1,4 +1,4 @@
-import { enqueueCommand } from "@core/knowledge/commands.js";
+import { enqueueCommand, type NewCommand } from "@core/knowledge/commands.js";
 import { canRun } from "@core/auth/users.js";
 import { isResponse, requireUser } from "@/lib/session";
 
@@ -9,7 +9,7 @@ export const runtime = "nodejs";
  * The worker applies it. Every guard that prevents a double submission lives on the worker
  * side, so a malicious or buggy request here cannot bypass them.
  */
-const ALLOWED = new Set(["approve", "skip", "manual_submit", "change", "retry", "sweep", "refresh_list", "update_answers", "forget_answers"]);
+const ALLOWED = new Set(["approve", "skip", "manual_submit", "apply", "change", "retry", "sweep", "refresh_list", "update_answers", "forget_answers"]);
 
 export async function POST(request: Request): Promise<Response> {
   const user = await requireUser();
@@ -28,14 +28,16 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: `Your role (${user.role}) cannot run "${name}".` }, { status: 403 });
   }
 
-  const needsCode = ["approve", "skip", "manual_submit", "change", "retry"].includes(name);
+  const needsCode = ["approve", "skip", "manual_submit", "apply", "change", "retry"].includes(name);
   if (needsCode && !body.code) return Response.json({ error: "Missing job code" }, { status: 400 });
   if (name === "change" && !String(body.instruction ?? "").trim()) {
     return Response.json({ error: "Describe the change" }, { status: 400 });
   }
 
   const { name: _drop, ...rest } = body;
-  const command = await enqueueCommand({ name, ...rest, source: "web", actor: user.username } as never);
+  // `name` is validated against ALLOWED above; the body is untyped JSON, so this one cast is
+  // real — it asserts the request matches the command it names. The worker re-validates.
+  const command = await enqueueCommand({ name, ...rest, source: "web", actor: user.username } as NewCommand);
 
   return Response.json({
     ok: true,

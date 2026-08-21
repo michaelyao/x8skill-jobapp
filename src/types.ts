@@ -37,21 +37,7 @@ export interface JobIdentity {
   companyReqId?: string;
 }
 
-export interface SheetRow {
-  rowNumber: number;
-  raw: Record<string, string>;
-  company?: string;
-  title?: string;
-  applyLink?: string;
-  jobId?: string;
-  status?: string;
-}
 
-export interface DedupeDecision {
-  shouldSkip: boolean;
-  reason: string;
-  matchedRow?: SheetRow;
-}
 
 export interface ProfileData {
   rawText: string;

@@ -10,7 +10,9 @@ import { jobFromEntry, submitApprovedEntry } from "./core/submitApproved.js";
 import { addLearnedAnswer, forgetLearnedAnswers, loadAnswers, syncAnswersMarkdown } from "./knowledge/answerStore.js";
 import { normalizeQuestion } from "./utils/normalize.js";
 import { hasSubmittedBefore, loadApplications, setApplicationStatus } from "./knowledge/applications.js";
+import { planSweep } from "./core/selectJobs.js";
 import {
+  enqueueCommand,
   releaseOrphanedClaims,
   claimNextCommand,
   completeCommand,
@@ -18,7 +20,7 @@ import {
   type Command,
 } from "./knowledge/commands.js";
 import { isSubmittedStatus, loadPendingQueue, updatePendingStatus, upsertPending, type PendingEntry } from "./knowledge/approvalQueue.js";
-import { loadInternshipList } from "./sources/internshipList.js";
+import { loadInternshipList, refreshInternshipCsv } from "./sources/internshipList.js";
 import { loadProfile } from "./knowledge/profile.js";
 import { loadX8NoteConfig, syncNoteStage } from "./knowledge/x8note.js";
 import { writeWorkerStatus } from "./knowledge/workerStatus.js";
@@ -295,12 +297,68 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
       };
     }
 
+    case "refresh_list": {
+      // Rebuild the job list from job_sites.txt. Two of the three sources are plain HTTP;
+      // interndock is JS-rendered, so the builder launches its OWN throwaway headless Chromium
+      // for it. That is not the persistent auth profile and takes no browser lock — but it is
+      // still a browser, which is why this runs here and not in the container.
+      const before = (await loadInternshipList().catch(() => [])).length;
+      await writeWorkerStatus({ state: "busy", activity: "rebuilding the job list" });
+      await refreshInternshipCsv();
+      const after = (await loadInternshipList().catch(() => [])).length;
+      const delta = after - before;
+      return {
+        ok: true,
+        message: `job list rebuilt: ${after} listing(s)${delta === 0 ? " (unchanged)" : delta > 0 ? `, ${delta} new` : `, ${-delta} fewer`}`,
+      };
+    }
+
+    case "sweep": {
+      // Decide what to apply to, then enqueue ONE apply command per job. No browser here.
+      //
+      // The queue is the pacing mechanism. Applying inline would mean a sweep holds Chrome for
+      // however long ten applications take, with a decision you make in the meantime stuck
+      // behind it — the problem "your decisions jump the queue" fixed. As separate commands,
+      // each apply is one claimable unit and an approve outranks all of them.
+      if (command.refreshList) {
+        await enqueueCommand({ name: "refresh_list", source: `sweep:${command.source}`, actor: command.actor });
+      }
+
+      const plan = await planSweep({
+        jobIds: command.jobIds,
+        maxJobs: command.maxJobs,
+        supportedOnly: command.supportedOnly,
+        latestFirst: command.latestFirst,
+        forceRetry: command.forceRetry,
+      });
+
+      for (const job of plan.selected) {
+        if (!job.id) continue; // apply addresses a job by its CSV code
+        await enqueueCommand({ name: "apply", code: job.id, source: `sweep:${command.source}`, actor: command.actor });
+      }
+
+      const queued = plan.selected.filter((j) => j.id).length;
+      const why = new Map<string, number>();
+      for (const s of plan.skipped) why.set(s.reason, (why.get(s.reason) ?? 0) + 1);
+      const detail = [...why.entries()].map(([reason, n]) => `${n} ${reason}`).join(", ");
+      return {
+        ok: true,
+        message:
+          `swept ${plan.considered} listing(s) → queued ${queued} application(s)` +
+          (plan.heldBackByCap ? `, ${plan.heldBackByCap} held back by the cap` : "") +
+          (detail ? ` (skipped: ${detail})` : "") +
+          (command.refreshList ? " · list refresh queued first" : ""),
+      };
+    }
+
+    case "apply":
     case "change":
     case "retry": {
-      // Re-run a job that stopped before Review — usually because a required question had no
-      // answer, and that answer has since been added to the Q&A store — or re-fill an already
-      // reviewed one applying a correction ("change"). The two are the same operation: a FILL,
-      // never a submit, ending with the job back in the queue awaiting a human decision.
+      // Apply to a job, or re-run one that stopped before Review (usually because a required
+      // question had no answer, and that answer has since been added), or re-fill a reviewed
+      // one applying a correction ("change"). All three are the same operation: a FILL, never
+      // a submit, ending with the job in the queue awaiting a human decision. Sharing one
+      // handler is deliberate — every "is this already done?" guard below then exists once.
       const applications = await loadApplications();
       const entry = await findEntry(command.code);
       const record = applications.find((a) => a.code === command.code || a.id === command.code);
@@ -348,7 +406,7 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
       await writeWorkerStatus({
         state: "busy",
         code: command.code,
-        activity: `re-filling [${command.code}] ${job.company}`,
+        activity: `${command.name === "apply" ? "filling" : "re-filling"} [${command.code}] ${job.company}`,
         holdsBrowserLock: true,
       });
 
@@ -359,7 +417,7 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
         interactive: false,
         changeInstruction: command.instruction,
         baseNotes: [
-          `${command.name === "change" ? "change requested" : "retried"} from console${command.actor ? ` by ${command.actor}` : ""}`,
+          `${command.name === "change" ? "change requested" : command.name === "apply" ? "applied" : "retried"} from ${command.source}${command.actor ? ` by ${command.actor}` : ""}`,
           ...(command.instruction ? [`instruction: ${command.instruction}`] : []),
         ],
       });
@@ -424,8 +482,13 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
       };
     }
 
-    default:
-      return { ok: false, message: `command "${command.name}" is not implemented yet` };
+    default: {
+      // Unreachable by type: every member of the Command union is handled above. Kept because
+      // commands arrive as JSON files on disk, so a name this build does not know is possible —
+      // an older file, or a hand-written one.
+      const unrecognised = command as { name?: unknown };
+      return { ok: false, message: `unrecognised command "${String(unrecognised.name)}"` };
+    }
   }
 }
 

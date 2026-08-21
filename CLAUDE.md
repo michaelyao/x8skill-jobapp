@@ -154,6 +154,25 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   entry stuck in `submitting` is REFUSED rather than marked — we clicked and never learned the
   outcome, so a hand submission on top of it may mean two applications, which is worth a look
   at the ATS rather than a silent tidy-up.
+- **Only the worker launches Chrome.** `src/worker.ts` is the one place in the production path
+  that calls `launchPersistentContext`, and it holds `data/.browser.lock`. `npm start` used to
+  launch its own Chrome on the same profile while taking NO lock, so a hand-run fill could
+  collide with the worker mid-application — Chrome is single-instance per user-data-dir. It is a
+  client now: it plans the batch (pure file work) and enqueues a `sweep`. The only other browser
+  launches are hand-run `src/debug/` tools and the throwaway headless Chromium that
+  `tools/build_internships.mjs` uses for the JS-rendered interndock page. Do not add a browser
+  launch anywhere else.
+- **A sweep enqueues; it does not apply.** `planSweep` (no browser) picks jobs and the worker
+  enqueues one `apply` command each, capped at `DEFAULT_SWEEP_CAP` (10). Applying inline would
+  hold Chrome for as long as ten applications take, with your decisions stuck behind it — the
+  problem the command priority table fixed. As separate commands each apply is one claimable
+  unit, drained ONE AT A TIME, and an approve outranks all of them.
+- **`apply`, `retry` and `change` are one handler.** A fresh job, a re-run and a correction differ
+  only in what we knew beforehand; the "is this already done?" guards must not exist three times.
+- **The Google tracker sheet is retired.** Reading it needed a browser AND a human to press
+  Enter, so it could never run on a schedule. `applications.json` is the only dedupe source now —
+  it matches on requisition id, `identityKey`, `externalJobId` and normalized apply URL, none of
+  which need a session. `decideDedupe`/`SheetRow` are gone with it.
 - **Credentials stay in `.env`.** `profile.ts` must read them from `process.env`, never hardcode.
 - **profile.json must not contain `loginPassword`.** It is stripped in `profile.ts` before writing.
 - **Simplify parsing reads the raw GitHub URL** (`raw.githubusercontent.com`), not the rendered page.

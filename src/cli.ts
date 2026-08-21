@@ -6,6 +6,7 @@ import {
   recentCommands,
   type Command,
   type CommandResult,
+  type NewCommand,
 } from "./knowledge/commands.js";
 import { loadPendingQueue, type PendingEntry } from "./knowledge/approvalQueue.js";
 import { loadApplications } from "./knowledge/applications.js";
@@ -26,6 +27,8 @@ import { isStale, readWorkerStatus } from "./knowledge/workerStatus.js";
  *   jobapp retry BXGRTC --hint "the school is Carnegie Mellon University"
  *   jobapp skip QFOBUG
  *   jobapp manual-submit HDHJVW
+ *   jobapp sweep --max 10
+ *   jobapp refresh
  *
  * By default it waits and streams the outcome, because "queued" is a useless answer when the
  * work takes four minutes. Ctrl-C detaches from the output; the daemon owns the work either
@@ -39,6 +42,9 @@ const HELP = `jobapp — terminal client for the job application worker
 Usage
   jobapp status                       what the worker is doing, what is queued
   jobapp queue [--all]                applications awaiting your approval
+  jobapp sweep [--max N]              pick the next N jobs (default 10) and queue them
+  jobapp refresh                      rebuild the job list from job_sites.txt
+  jobapp apply <CODE>                 apply to one job by code (fill only, never submits)
   jobapp approve <CODE>               re-fill, verify against approved answers, submit
   jobapp retry <CODE> [--hint TEXT]   re-fill a blocked or new job (never submits)
   jobapp change <CODE> --hint TEXT    re-fill applying a correction, then re-review
@@ -47,6 +53,7 @@ Usage
   jobapp history <CODE>               every recorded copy of that application
 
 Flags
+  --max N        how many jobs a sweep should queue (default 10)
   --no-wait      enqueue and exit instead of streaming the outcome
   --json         machine-readable output
   -h, --help     this text
@@ -55,7 +62,7 @@ Nothing here submits without an explicit approve, and an approve only submits va
 have already read — see DESIGN.md §18.
 `;
 
-type Argv = { _: string[]; hint?: string; wait: boolean; json: boolean; all: boolean };
+type Argv = { _: string[]; hint?: string; wait: boolean; json: boolean; all: boolean; max?: number };
 
 function parseArgs(argv: string[]): Argv {
   const out: Argv = { _: [], wait: true, json: false, all: false };
@@ -65,6 +72,10 @@ function parseArgs(argv: string[]): Argv {
     else if (a === "--no-wait") out.wait = false;
     else if (a === "--json") out.json = true;
     else if (a === "--all") out.all = true;
+    else if (a === "--max") {
+      const n = Number.parseInt(argv[++i] ?? "", 10);
+      if (!Number.isNaN(n) && n > 0) out.max = n;
+    }
     else if (a === "-h" || a === "--help") out._.push("help");
     else out._.push(a);
   }
@@ -132,7 +143,12 @@ async function waitFor(id: string, json: boolean): Promise<number> {
   }
 }
 
-async function send(name: Command["name"], code: string | undefined, args: Argv): Promise<number> {
+async function send(
+  name: Command["name"],
+  code: string | undefined,
+  args: Argv,
+  extra: Record<string, unknown> = {},
+): Promise<number> {
   if (code) {
     const found = await resolveCode(code);
     if (!found.ok) {
@@ -146,9 +162,10 @@ async function send(name: Command["name"], code: string | undefined, args: Argv)
     name,
     ...(code ? { code: code.toUpperCase() } : {}),
     ...(args.hint ? { instruction: args.hint } : {}),
+    ...extra,
     source: "cli",
     actor: actor(),
-  } as never);
+  } as NewCommand);
 
   if (!args.wait) {
     console.log(args.json ? JSON.stringify({ queued: command.id }) : `queued (${command.id}) — the worker takes it within ~10s`);
@@ -251,8 +268,16 @@ switch (verb) {
   case "history":
     exit = code ? await history(code, args) : ((console.error("usage: jobapp history <CODE>"), 1) as number);
     break;
+  case "sweep":
+    exit = await send("sweep", undefined, args, { maxJobs: args.max, refreshList: true });
+    break;
+  case "refresh":
+  case "refresh_list":
+    exit = await send("refresh_list", undefined, args);
+    break;
   case "approve":
   case "retry":
+  case "apply":
   case "skip":
   case "manual-submit":
   case "manual_submit":

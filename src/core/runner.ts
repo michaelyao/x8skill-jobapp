@@ -1,179 +1,88 @@
-import fs from "node:fs/promises";
-import path from "node:path";
-import { chromium } from "playwright";
-import { AUTH_DIR } from "../config.js";
-import { LlmAgent } from "../agent/llmAgent.js";
-import { applyToJob, type ApplyDeps } from "./applyJob.js";
-import { buildJobIdentity, decideDedupe } from "./jobIdentity.js";
-import { loadAnswers } from "../knowledge/answerStore.js";
-import { loadApplications, hasAppliedBefore, hasSubmittedBefore } from "../knowledge/applications.js";
-import { loadProfile } from "../knowledge/profile.js";
-import { loadX8NoteConfig } from "../knowledge/x8note.js";
-import { loadInternshipList, refreshInternshipCsv } from "../sources/internshipList.js";
-import { loadTrackerSheetRows } from "../sources/trackerSheet.js";
-import { ensureDir, makeRunDir, writeJson, writeSummaryMarkdown } from "../utils/log.js";
-import { waitForUserConfirmation } from "../utils/prompts.js";
-import type { RunSummaryItem } from "../types.js";
+import { enqueueCommand } from "../knowledge/commands.js";
+import { DEFAULT_SWEEP_CAP, planSweep } from "./selectJobs.js";
+import { isStale, readWorkerStatus } from "../knowledge/workerStatus.js";
 
-const agent = new LlmAgent();
-
+/**
+ * `npm start` — ask the worker to apply to the next batch of jobs.
+ *
+ * This used to BE the fill run: it launched its own Chrome against the persistent profile and
+ * worked through the list itself. That is exactly one browser too many. The worker owns Chrome
+ * and takes the lock; nothing here took it, so a hand-run `npm start` could open a second
+ * Chrome on the same user-data-dir while the worker was mid-application — the same class of
+ * collision as two workers, minus the orphan.
+ *
+ * So this is a client now, like the website and ./bin/jobapp. It plans the batch (pure file
+ * work — no browser), enqueues one `apply` per job, and exits. The worker drains them ONE AT A
+ * TIME, so ten queued applications never mean ten Chromes, and a decision you make meanwhile
+ * outranks all of them.
+ *
+ * Env, all optional:
+ *   MAX_JOBS=3        cap this batch (default 10)
+ *   JOB_ID=A,B        only these CSV codes
+ *   SKIP_REFRESH=1    do not rebuild the job list first
+ *   SUPPORTED_ONLY=1  only ATS we can drive
+ *   LATEST_FIRST=1    freshest postings first
+ *   FORCE_RETRY=1     re-open jobs already in the ledger (never ones already submitted)
+ */
 export async function run(): Promise<void> {
-  const maxJobs = parseOptionalPositiveInt(process.env.MAX_JOBS);
-  const profile = await loadProfile();
-  let answers = await loadAnswers();
-  const runDir = makeRunDir();
-  await ensureDir(runDir);
+  const maxJobs = positiveInt(process.env.MAX_JOBS) ?? DEFAULT_SWEEP_CAP;
+  const jobIds = (process.env.JOB_ID || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const refreshList = process.env.SKIP_REFRESH !== "1";
 
-  // RESET_PROFILE=1 wipes the dedicated automation Chrome profile before launch —
-  // a clean recovery from a corrupted profile (you'll re-login to Google once).
-  if (process.env.RESET_PROFILE === "1") {
-    await fs.rm(AUTH_DIR, { recursive: true, force: true });
-    console.log("RESET_PROFILE=1 — cleared the automation Chrome profile; you'll re-login to Google once.");
+  const worker = await readWorkerStatus();
+  if (!worker || isStale(worker)) {
+    // Without the worker nothing drains the queue, and silently enqueuing would look like
+    // success while nothing happened.
+    console.error("The worker is not running, so nothing would execute these.");
+    console.error("Start it with:  ./worker-start.sh    (or: launchctl kickstart gui/$(id -u)/com.studiox8.jobapp.worker)");
+    process.exitCode = 1;
+    return;
   }
 
-  const context = await chromium.launchPersistentContext(AUTH_DIR, {
-    channel: "chrome",
-    headless: false,
-    viewport: { width: 1440, height: 1000 },
-    // Hide the "Chrome is being controlled by automated test software" infobar
-    // and reduce the automation fingerprint (navigator.webdriver).
-    ignoreDefaultArgs: ["--enable-automation"],
-    args: ["--disable-blink-features=AutomationControlled"],
+  // Plan here purely to report it. The worker re-plans when it runs the sweep, because the
+  // ledger may have moved on by then — this is a preview, not the decision.
+  const plan = await planSweep({
+    jobIds,
+    maxJobs,
+    supportedOnly: process.env.SUPPORTED_ONLY === "1",
+    latestFirst: process.env.LATEST_FIRST === "1",
+    forceRetry: process.env.FORCE_RETRY === "1",
   });
 
-  try {
-    const page = context.pages()[0] ?? (await context.newPage());
+  console.log(`${plan.considered} listing(s) in the job list.`);
+  const why = new Map<string, number>();
+  for (const s of plan.skipped) why.set(s.reason, (why.get(s.reason) ?? 0) + 1);
+  for (const [reason, n] of why) console.log(`  ${n} skipped — ${reason}`);
+  if (plan.heldBackByCap) console.log(`  ${plan.heldBackByCap} held back by the cap of ${maxJobs}`);
 
-    // Build the consolidated list from every source in job_sites.txt, then read
-    // the curated CSV as our candidate set (already filtered + region-ordered).
-    await refreshInternshipCsv();
-    let filteredJobs = await loadInternshipList();
-    console.log(`Loaded ${filteredJobs.length} candidate jobs from internships_summer2027.csv (sources: job_sites.txt).`);
-
-    // JOB_ID=LSQJ (or a comma-separated list) targets specific jobs by CSV code.
-    const onlyIds = (process.env.JOB_ID || "").split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
-    if (onlyIds.length) {
-      filteredJobs = filteredJobs.filter((job) => job.id && onlyIds.includes(job.id.toUpperCase()));
-      console.log(`JOB_ID filter → ${filteredJobs.length} job(s): ${onlyIds.join(", ")}`);
-    }
-
-    // SUPPORTED_ONLY=1: only attempt jobs on ATS we can actually drive.
-    if (process.env.SUPPORTED_ONLY === "1") {
-      const supported = /myworkdayjobs\.com|\.wd[0-9]\.|ashbyhq\.com|greenhouse\.io|lever\.co/i;
-      const before = filteredJobs.length;
-      filteredJobs = filteredJobs.filter((job) => supported.test(job.applyUrl));
-      console.log(`SUPPORTED_ONLY=1 → ${filteredJobs.length}/${before} jobs on supported ATS (Workday/Ashby/Greenhouse/Lever).`);
-    }
-
-    // LATEST_FIRST=1: process freshest postings first. "age" holds the CSV "Posted"
-    // value: "0d".."30d" (day counts, freshest) sort before explicit dates / "1mo".
-    if (process.env.LATEST_FIRST === "1") {
-      const freshOrder = (age: string): number => {
-        const a = (age || "").trim();
-        const m = a.match(/^(\d+)d$/);
-        if (m) return Number(m[1]);
-        if (/^1mo$/i.test(a)) return 40;
-        return a ? 60 : 99; // explicit dates = older; blank = last
-      };
-      filteredJobs = [...filteredJobs].sort((x, y) => freshOrder(x.age) - freshOrder(y.age));
-      console.log(`LATEST_FIRST=1 → sorted ${filteredJobs.length} jobs freshest-first.`);
-    }
-    await writeJson(path.join(runDir, "filtered-jobs.json"), filteredJobs);
-
-    // SKIP_SHEET=1 bypasses the interactive Google-sheet dedupe (handy for quick
-    // single-job tests). The local ledger still prevents re-applying.
-    let trackerRows: Awaited<ReturnType<typeof loadTrackerSheetRows>> = [];
-    if (process.env.SKIP_SHEET === "1") {
-      console.log("SKIP_SHEET=1 — skipping the Google tracker sheet dedupe.");
-    } else {
-      await page.goto(
-        "https://docs.google.com/spreadsheets/d/1Ugo160-wF1YvOtnwNa__7A9Lep9mBR5plEdhJ0oZh-A/edit?gid=0#gid=0",
-        { waitUntil: "domcontentloaded" },
-      );
-      await waitForUserConfirmation(
-        "The tracker sheet is open. Sign into Google if prompted, wait for the sheet to load, then press Enter.",
-      );
-      trackerRows = await loadTrackerSheetRows(page);
-      await writeJson(path.join(runDir, "tracker-rows.json"), trackerRows);
-      console.log(`Loaded ${trackerRows.length} rows from the tracker sheet.`);
-    }
-
-    let applications = await loadApplications();
-    console.log(`Loaded ${applications.length} prior application(s) from the local ledger.`);
-
-    const x8note = await loadX8NoteConfig();
-    console.log(
-      x8note
-        ? `x8note sync enabled → ${x8note.baseUrl} (notebook: ${x8note.notebook}).`
-        : "x8note sync disabled (no .x8note.config or X8NOTE_DISABLE=1).",
-    );
-
-    const summary: RunSummaryItem[] = [];
-
-    const jobsToProcess = typeof maxJobs === "number" ? filteredJobs.slice(0, maxJobs) : filteredJobs;
-    if (typeof maxJobs === "number") {
-      console.log(`Limiting this run to ${jobsToProcess.length} job(s) because MAX_JOBS=${maxJobs}.`);
-    }
-
-    const deps: ApplyDeps = { context, profile, agent, x8note, runDir };
-    // Approval can take days, so the fill run never blocks on it: it emails the
-    // review, waits only a short grace period for an immediate reply, then queues
-    // the job for the Phase-B approval poller and moves on. Default grace: 2 min.
-    const interactive = process.env.NO_LEARN !== "1" && process.stdin.isTTY === true;
-
-    for (const job of jobsToProcess) {
-      const identity = buildJobIdentity(job);
-      const dedupe = decideDedupe(identity, trackerRows);
-      const notes: string[] = [dedupe.reason];
-      if (job.needsManualLocationReview) notes.push("manual location review suggested");
-
-      const alreadyEngaged = hasAppliedBefore(applications, identity);
-      if (alreadyEngaged) notes.push("already in local application ledger");
-
-      // FORCE_RETRY=1 re-opens a job the ledger already holds. Needed because a run
-      // that stopped blocked is recorded "prefilled_pending_submit", which otherwise
-      // skips it forever — so a fix to the form handling could never be applied to the
-      // jobs it was written for. It deliberately does NOT override a job we actually
-      // submitted (or that the ATS reports as applied): that would duplicate an
-      // application, which cannot be undone. Tracker-sheet skips also still win.
-      const forceRetry = process.env.FORCE_RETRY === "1" && !hasSubmittedBefore(applications, identity);
-      if (alreadyEngaged && forceRetry) {
-        notes.push("FORCE_RETRY — re-opening despite the ledger record");
-        console.log(`FORCE_RETRY — re-opening [${job.id ?? "----"}] despite its ledger record (never submitted).`);
-      }
-
-      if (dedupe.shouldSkip || (alreadyEngaged && !forceRetry)) {
-        summary.push({ company: job.company, title: job.title, applyUrl: job.applyUrl, outcome: "skipped_existing", notes });
-        continue;
-      }
-
-      console.log(`Opening [${job.id ?? "----"}] ${job.company} - ${job.title} (${job.region ?? "?"})`);
-      const outcome = await applyToJob(job, identity, answers, applications, deps, {
-        mode: "fill",
-        interactive,
-        baseNotes: notes,
-      });
-      answers = outcome.answers;
-      applications = outcome.applications;
-      summary.push(outcome.summaryItem);
-    }
-
-    await writeJson(path.join(runDir, "applications-ledger.json"), applications);
-    await writeJson(path.join(runDir, "summary.json"), summary);
-    await writeSummaryMarkdown(path.join(runDir, "summary.md"), summary);
-    console.log(`Run complete. Logs written to ${runDir}`);
-  } finally {
-    await context.close();
+  if (!plan.selected.length) {
+    console.log("\nNothing to apply to right now.");
+    return;
   }
+
+  console.log(`\nQueueing ${plan.selected.length} application(s):`);
+  for (const job of plan.selected) {
+    console.log(`  ${job.id ?? "----"}  ${job.company} — ${job.title}`);
+  }
+
+  const cmd = await enqueueCommand({
+    name: "sweep",
+    jobIds,
+    maxJobs,
+    refreshList,
+    supportedOnly: process.env.SUPPORTED_ONLY === "1",
+    latestFirst: process.env.LATEST_FIRST === "1",
+    forceRetry: process.env.FORCE_RETRY === "1",
+    source: "cli",
+  });
+
+  console.log(`\nSweep queued (${cmd.id}).${refreshList ? " The job list is rebuilt first." : ""}`);
+  console.log("The worker applies to them one at a time. Watch it with:");
+  console.log("  ./bin/jobapp status        tail -f logs/worker.log");
 }
 
-function parseOptionalPositiveInt(value: string | undefined): number | undefined {
-  if (!value) {
-    return undefined;
-  }
+function positiveInt(value: string | undefined): number | undefined {
+  if (!value) return undefined;
   const parsed = Number.parseInt(value, 10);
-  if (Number.isNaN(parsed) || parsed <= 0) {
-    return undefined;
-  }
-  return parsed;
+  return Number.isNaN(parsed) || parsed <= 0 ? undefined : parsed;
 }
