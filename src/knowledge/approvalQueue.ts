@@ -62,11 +62,7 @@ export interface PendingEntry {
   updatedAt: string; // ISO
   status: PendingStatus;
   attempts: number; // Phase-B submit attempts
-  processedReplyIds?: string[]; // reply message ids already acted on (avoid re-triggering)
   lastError?: string;
-  /** Set when a review email was explicitly requested from the console. The Gmail scan only
-   *  considers entries with this set — email approval is opt-in per job, not automatic. */
-  emailRequestedAt?: string;
   /** Set when answers were edited in the console before approving. The edited answers ARE the
    *  approved ones (they are what the ReplayAgent replays). */
   editedInConsoleAt?: string;
@@ -127,17 +123,6 @@ export async function upsertPending(
   else entries.push(merged);
   await writeQueue(entries);
   return merged;
-}
-
-/** Record a reply message id as acted-on so it never re-triggers on later polls. */
-export async function markReplyProcessed(key: string, messageId: string): Promise<void> {
-  const entries = await readQueue();
-  const idx = entries.findIndex((e) => e.key === key);
-  if (idx < 0) return;
-  const ids = new Set(entries[idx].processedReplyIds ?? []);
-  ids.add(messageId);
-  entries[idx] = { ...entries[idx], processedReplyIds: [...ids], updatedAt: new Date().toISOString() };
-  await writeQueue(entries);
 }
 
 /** Update the status (and optionally attempts/error) of a pending entry by key. */

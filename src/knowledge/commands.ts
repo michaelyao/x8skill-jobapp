@@ -28,7 +28,6 @@ export type CommandName =
   | "retry"
   | "sweep"
   | "refresh_list"
-  | "send_review_email"
   | "update_answers";
 
 interface Base {
@@ -72,7 +71,6 @@ export type Command = Base &
       }
     | { name: "sweep"; jobIds?: string[]; maxJobs?: number; refreshList?: boolean }
     | { name: "refresh_list" }
-    | { name: "send_review_email"; code: string }
     | { name: "update_answers"; entries: Array<{ question: string; answer: string }> }
     | { name: "forget_answers"; questions: string[] }
   );
@@ -131,7 +129,6 @@ const PRIORITY: Record<string, number> = {
   manual_submit: 0,
   update_answers: 1,
   forget_answers: 1,
-  send_review_email: 1,
   change: 2,
   retry: 3,
   refresh_list: 4,

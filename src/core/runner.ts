@@ -119,7 +119,6 @@ export async function run(): Promise<void> {
     // Approval can take days, so the fill run never blocks on it: it emails the
     // review, waits only a short grace period for an immediate reply, then queues
     // the job for the Phase-B approval poller and moves on. Default grace: 2 min.
-    const graceMs = Number(process.env.APPROVE_TIMEOUT_MS ?? 120000);
     const interactive = process.env.NO_LEARN !== "1" && process.stdin.isTTY === true;
 
     for (const job of jobsToProcess) {
@@ -152,7 +151,6 @@ export async function run(): Promise<void> {
       const outcome = await applyToJob(job, identity, answers, applications, deps, {
         mode: "fill",
         interactive,
-        graceMs,
         baseNotes: notes,
       });
       answers = outcome.answers;

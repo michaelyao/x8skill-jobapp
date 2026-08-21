@@ -90,7 +90,6 @@ export async function submitApprovedEntry(
     applyToJob(job, identity, answers, applications, ctx.deps, {
       mode: "submit",
       interactive: false,
-      graceMs: 0,
       replayAnswers: approvedAnswers,
       refillOnSubmit: refill,
       replayAgent,

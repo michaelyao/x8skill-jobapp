@@ -202,7 +202,6 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
             </button>
           )}
           <button onClick={() => setShowChange((v) => !v)} disabled={busy !== null}>Request re-fill…</button>
-          <button onClick={() => send("send_review_email")} disabled={busy !== null}>Send to my email</button>
           {edited ? <span className="pill warn">{editedCount} edited — these become the approved answers</span> : null}
           {edited ? (
             <label className="muted" style={{ fontSize: 13, display: "flex", gap: 6, alignItems: "center" }}>

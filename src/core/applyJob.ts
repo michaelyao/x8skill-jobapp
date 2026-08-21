@@ -22,15 +22,7 @@ import {
   postApplicationNote,
   type X8NoteConfig,
 } from "../knowledge/x8note.js";
-import {
-  checkApprovalOnce,
-  reviewTo,
-  sendBlockedEmail,
-  sendReviewEmail,
-  sendSubmittedEmail,
-  waitForApproval,
-  type DuplicateWarning,
-} from "../knowledge/reviewEmail.js";
+import type { DuplicateWarning } from "../types.js";
 import { saveRound } from "../knowledge/rounds.js";
 import { findRequisitionId } from "./requisitionId.js";
 import { withRequisitionId } from "./jobIdentity.js";
@@ -63,7 +55,6 @@ export interface ApplyOptions {
    *  "submit" = Phase B clean approval (replay approved answers → submit, no email). */
   mode: "fill" | "submit";
   interactive: boolean;
-  graceMs: number; // Phase A inline grace wait before queuing
   baseNotes?: string[];
   changeInstruction?: string; // "fill" mode: user's emailed correction to apply
   replayAnswers?: FilledAnswer[]; // "submit" mode: exact approved answers to replay
@@ -364,25 +355,8 @@ export async function applyToJob(
       if (result.blockedRequired.length) {
         console.log(`  ⛔ blocked by ${result.blockedRequired.length} empty required field(s): ${result.blockedRequired.join(" | ")}`);
       }
-      // Email the screenshot so a blocked job is debuggable from the inbox instead of
-      // the run logs. NO_DEBUG_EMAIL=1 silences it on big sweeps.
-      if (process.env.NO_DEBUG_EMAIL !== "1") {
-        const blockedResult = await sendBlockedEmail(
-          {
-            company: job.company,
-            title: job.title,
-            code: job.id,
-            applyUrl: job.applyUrl,
-            blockedRequired: result.blockedRequired,
-            unknown: result.unknown,
-            failedToFill: result.failedToFill,
-            filledCount: result.filled.length,
-            turns: result.turns,
-          },
-          dbg,
-        );
-        console.log(`  Debug email → ${reviewTo()}: ${blockedResult}`);
-      }
+      // The screenshot and the reasons are on /blocked in the website, which is where a
+      // blocked job gets looked at now. It used to be mailed out as well.
       await record("prefilled_pending_submit", {
         filledFields: result.filled,
         unknownQuestions: result.unknown,
@@ -401,24 +375,12 @@ export async function applyToJob(
       ], { blockedRequired: result.blockedRequired });
     }
 
-    // Reached Review. Build the shared review payload.
+    // Reached Review. The screenshot is what the website's review page links to. The rest of
+    // the old "review payload" existed only to be rendered into an email — every field of it
+    // is already on the queue entry written below.
     const shotPath = path.join(runDir, `review-${job.id ?? "job"}.png`);
     await jobPage.screenshot({ path: shotPath, fullPage: true }).catch(() => undefined);
-    const reviewData = {
-      company: job.company,
-      title: job.title,
-      code: job.id,
-      applyUrl: job.applyUrl,
-      location: job.location,
-      region: job.region,
-      resumeName: resume.name,
-      resumeStandard: resume.isStandard,
-      jobDescription: jobDescriptionResolved,
-      filledFields: result.filled,
-      answers: result.answers.map((a) => ({ label: a.label, value: a.value, draft: a.draft })),
-      companyReqId: identity.companyReqId,
-      duplicateWarning,
-    };
+    console.log(`  Review screenshot: ${shotPath}`);
 
     const doSubmit = async () => {
       const root = await driver.resolveRoot(jobPage);
@@ -453,27 +415,21 @@ export async function applyToJob(
       }
       await doSubmit();
     } else {
-      // Phase A: email the review, wait briefly for an immediate reply, else queue.
-      const emailResult = await sendReviewEmail(reviewData, shotPath);
-      console.log(`  Review email → ${reviewTo()}: ${emailResult}`);
-
-      // NO_SUBMIT=1 = hard no-submit: email the review + queue, but NEVER submit
-      // during the fill run (not even on a detected approval). graceMs<=0 also skips
-      // the wait. Otherwise wait briefly for an immediate approval by CODE.
-      if (process.env.NO_SUBMIT === "1" || opts.graceMs <= 0) {
-        console.log("  NO_SUBMIT — review emailed; will NOT submit during fill (queued for the poller).");
+      // A filled application goes straight into the queue for review on the website. There is
+      // no longer a review email and no grace wait: approval arrives as a command from the
+      // website (or ./bin/jobapp), which the worker executes. The fill run never blocks.
+      //
+      // The grace wait existed so an immediate emailed APPROVE could submit inside the same
+      // session. It also meant a fill run could submit without anyone having opened the
+      // website — the queue entry and the review were the same event. Now they are not.
+      if (opts.interactive && process.stdin.isTTY && process.env.NO_SUBMIT !== "1") {
+        // A hand-run fill can still submit on an explicit typed confirmation.
+        if (await confirmSubmit({ company: job.company, title: job.title })) await doSubmit();
       } else {
-        console.log(`  Grace wait up to ${Math.round(opts.graceMs / 1000)}s for an immediate reply (approval can also come later)...`);
-        const emailApproval = waitForApproval(reviewData, { timeoutMs: opts.graceMs, pollMs: 20000 });
-        const approval = opts.interactive && process.stdin.isTTY
-          ? await Promise.race([emailApproval, confirmSubmit({ company: job.company, title: job.title }).then((ok) => (ok ? "approved" : "skip") as "approved" | "skip")])
-          : await emailApproval;
-        console.log(`  Grace result: ${approval}`);
-        if (approval === "approved") await doSubmit();
+        console.log("  Reached review — queued for approval on the website.");
       }
 
-      // Always queue an un-submitted reached-review job so the poller can submit it
-      // later on an emailed APPROVE — regardless of NO_SUBMIT.
+      // Queue every un-submitted reached-review job, so it is waiting on the website.
       if (!submitted) {
         await upsertPending({
           key: job.id || identity.identityKey,
@@ -527,7 +483,8 @@ export async function applyToJob(
         submitted ? "submitted on approval" : queued ? "queued for approval" : "submit not clicked",
       ],
     });
-    if (submitted && opts.mode === "submit") await sendSubmittedEmail(reviewData).catch(() => undefined);
+    // (A "submitted" confirmation email used to go out here. The website's history page is
+    // the record now.)
 
     const outcome: RunSummaryItem["outcome"] = submitted ? "submitted" : "prefilled_reached_review";
     console.log(`  → ${outcome}: ${result.filled.length} filled, ${result.drafts.length} draft(s), ${result.unknown.length} left`);

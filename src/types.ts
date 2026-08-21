@@ -155,6 +155,18 @@ export interface RunSummaryItem {
  * got — "prefilled_pending_submit" means the form is ready for you to review
  * and submit manually.
  */
+/**
+ * A suspected duplicate of an application we already have. Lived in reviewEmail.ts until the
+ * review email was removed; it is shown on the website's review page now.
+ */
+export interface DuplicateWarning {
+  confidence: number; // 0..1
+  basis: string;
+  otherCode?: string;
+  otherUrl?: string;
+  otherStatus?: string;
+}
+
 export interface ApplicationRecord {
   id: string; // stable identity key (from JobIdentity.identityKey)
   code?: string; // short CSV code (e.g. "LKHZ") for cross-referencing the list
