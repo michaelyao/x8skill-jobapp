@@ -432,6 +432,35 @@ export class WorkdayDriver extends GenericDriver {
       .catch(() => undefined);
     await page.waitForTimeout?.(1200);
 
+    /**
+     * Wait for the page to STOP CHANGING before reading it.
+     *
+     * The waitFor above is satisfied by whatever is already on screen, which during a page
+     * transition is the page we just left. Measured on RTX ZJQCPS, the turn field counts went
+     * 17 → 66 → 5 → 66 → 66 → 5 → 5: the loop kept re-reading and re-filling pages it had
+     * already done, because "Application Questions 1 of 2" renders a spinner first and its
+     * fields arrive later. The debug screenshot caught it exactly — an empty page body, a
+     * spinner, and "Save and Continue" still disabled.
+     *
+     * Counting form fields twice and requiring the same answer is deliberately
+     * selector-independent: Workday's spinner markup varies by tenant and version, and a wrong
+     * spinner selector fails silently in precisely the same way this bug did.
+     */
+    const countFields = async (): Promise<number> =>
+      (await root.locator('[data-automation-id^="formField"]').count().catch(() => 0)) as number;
+    let stableAt = -1;
+    for (let wait = 0; wait < 24; wait += 1) {
+      const n = await countFields();
+      if (n > 0 && n === stableAt) break; // two identical reads → the page has settled
+      stableAt = n;
+      await page.waitForTimeout?.(500);
+    }
+    if (stableAt <= 0) {
+      // Nothing rendered at all. Say so: an empty read looks identical to "this page has no
+      // fields", and the turn loop treats the latter as a reason to advance.
+      console.log("    [workday] no form fields rendered after waiting — the page may still be loading");
+    }
+
     const snapshot = await super.read(root);
 
     // Also capture Workday's custom comboboxes: a <button aria-haspopup="listbox"> whose text IS
@@ -632,16 +661,46 @@ export class WorkdayDriver extends GenericDriver {
 
   async next(root: Root): Promise<boolean> {
     await this.clearOverlay(root);
+    const page = root as Page;
     const btn = root.locator(NEXT_BTN).first();
-    if (await btn.count().catch(() => 0)) {
-      // On the Review step the footer button reads "Submit" — never click it here.
-      const text = ((await btn.innerText().catch(() => "")) || "").toLowerCase();
-      if (/submit/.test(text)) return false;
-      if (await btn.isVisible().catch(() => false)) {
-        await btn.click().catch(() => undefined);
-        return true;
-      }
+    if (!(await btn.count().catch(() => 0))) return false;
+    // On the Review step the footer button reads "Submit" — never click it here.
+    const text = ((await btn.innerText().catch(() => "")) || "").toLowerCase();
+    if (/submit/.test(text)) return false;
+    if (!(await btn.isVisible().catch(() => false))) return false;
+
+    // A DISABLED "Save and Continue" means the form is refusing to advance — required fields are
+    // still empty. Clicking it changes nothing, but returning true told the loop it had advanced,
+    // so the loop waited, re-read the SAME page, re-filled it, and went round again. Measured on
+    // RTX ZJQCPS: field counts cycled 66 → 5 → 66 → 66 → 5 → 66 for nine turns.
+    const disabled =
+      (await btn.getAttribute("aria-disabled").catch(() => null)) === "true" ||
+      (await btn.isDisabled().catch(() => false));
+    if (disabled) {
+      console.log("    [workday] Save and Continue is disabled — the form will not advance from here");
+      return false;
     }
+
+    // What page are we on now? Compared after the click, so "advanced" means the page actually
+    // TURNED rather than the click having been dispatched. Without this the loop treats a failed
+    // navigation as progress.
+    const signature = async (): Promise<string> =>
+      (await root
+        .evaluate(`(() => {
+          var h = document.querySelector('h2, [data-automation-id="pageHeader"]');
+          var n = document.querySelectorAll('[data-automation-id^="formField"]').length;
+          return ((h && h.textContent) || "").replace(/[ ]+/g, " ").trim() + "|" + n;
+        })()`)
+        .catch(() => "")) as string;
+
+    const before = await signature();
+    await btn.click().catch(() => undefined);
+    for (let wait = 0; wait < 24; wait += 1) {
+      await page.waitForTimeout?.(500);
+      const now = await signature();
+      if (now && now !== before) return true; // the page turned
+    }
+    console.log(`    [workday] clicked Save and Continue but the page did not change (${before})`);
     return false;
   }
 
