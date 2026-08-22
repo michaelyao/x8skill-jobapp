@@ -22,10 +22,18 @@ export interface TurnLoopOptions {
  * three fields that were never going to accept a value, and General Matter spent 19.5 minutes
  * across thirteen of them. A field that has not taken a value in 30s is not going to at 90.
  *
- * 30s keeps ~7x headroom over the slowest measured success and cuts the cost of a hopeless
- * field to a third. Raise it with FIELD_TIMEOUT_MS if a form ever proves it needs more.
+ * BACK TO 90s, and the reduction to 30s is a mistake worth recording. A form DID prove it needs
+ * more: on RTX's My Information page "Country Phone Code*" — the 250-entry list reached by
+ * bisecting the scroll position — timed out at 30s and was reported as "would not take it", on a
+ * page where it had succeeded at 90s. The 4.2s figure from longListCases is the same trap the
+ * combobox early-out fell into: that case drives ONE field on a freshly opened page. Mid-form,
+ * with a stray menu closing and the page still settling, the same field is far slower.
+ *
+ * So do not shorten this to buy back time on hopeless fields. The cost of a field that will never
+ * accept a value belongs to whatever DETECTS that, not to a deadline short enough to also fail
+ * the slow ones.
  */
-const FIELD_TIMEOUT_MS = Number(process.env.FIELD_TIMEOUT_MS ?? 30_000);
+const FIELD_TIMEOUT_MS = Number(process.env.FIELD_TIMEOUT_MS ?? 90_000);
 
 /**
  * Resolve to false if the work outruns its deadline. The promise is abandoned rather than

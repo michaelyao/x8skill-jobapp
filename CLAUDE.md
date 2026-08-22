@@ -381,6 +381,14 @@ true for an `aria-haspopup="listbox"` control whose selection did not stick — 
 which is the one thing the fill path is not allowed to do ("Nothing reports success without
 verification"). Reading the button back turned out to be exactly right, and it works.
 
+**Do not shorten FIELD_TIMEOUT_MS.** It is 90s. Lowering it to 30s (2026-08-21) broke
+"Country Phone Code*" on RTX — the 250-entry list reached by bisecting the scroll position — which
+had succeeded at 90s. `longListCases` reports 4.2s for that field, but it drives ONE field on a
+freshly opened page; mid-form the same field is far slower. Two separate bugs this session came
+from trusting that isolated timing (see also the reverted combobox early-out). The cost of a field
+that will never accept a value belongs to whatever DETECTS that, not to a deadline short enough to
+fail the slow ones too.
+
 **A form that is rejecting the page gets one turn, not sixteen.** `turnLoop` breaks as soon as a
 blocking `validationErrors()` message repeats with nothing newly filled. DUSKAZ spent ~10 minutes
 re-answering thirteen fields against an error that never changed.

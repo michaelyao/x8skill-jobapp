@@ -270,7 +270,14 @@ export abstract class GenericDriver implements AtsDriver {
           let up2 = c.parentElement;
           for (let lv = 0; lv < 10 && up2 && parts.length < 2; lv += 1) {
             let t2 = "";
-            const lg2 = up2.querySelector("legend, h2, h3, h4");
+            // DIRECT children only. querySelector searches descendants, so once this walk
+            // reaches a container holding BOTH the From and the To fieldset it returns whichever
+            // legend comes first — "From*" — even while we are filling the To field. That is how
+            // RTX Work Experience 2's empty To month arrived labelled
+            // "From* — To* — Work Experience 2 — Month": both ends in one label, so the agent
+            // could not tell which it was being asked for, left it blank, and Workday answered
+            // "The field To is required and must have a value" and bounced the page back.
+            const lg2 = up2.querySelector(":scope > legend, :scope > h2, :scope > h3, :scope > h4");
             if (lg2 && lg2.innerText) t2 = lg2.innerText;
             if (!t2) {
               const aid3 = up2.getAttribute("data-automation-id") || "";
