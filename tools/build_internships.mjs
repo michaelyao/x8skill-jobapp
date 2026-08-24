@@ -3,7 +3,10 @@
 // run:  node tools/build_internships.mjs
 //
 // Supported site types (auto-detected from the URL / content):
-//   - github.com/<org>/<repo>   Simplify-style HTML <table> README  OR  Vansh-style markdown pipe table
+//   - github.com/<org>/<repo>   three shapes, auto-detected from the README's own markup:
+//                                 Simplify-style HTML <table>
+//                                 Vansh-style 5-column markdown pipe table
+//                                 header-mapped pipe table (Company|Role|Category|Location|…)
 //   - interndock.com/...guide   JS-rendered guide (needs Playwright, already a project dep)
 //
 // Filters to undergrad software / AI-ML roles in the US, drops PM/marketing/sales/
@@ -16,7 +19,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const TODAY = new Date("2026-08-08T00:00:00Z");
+// Real "now", floored to midnight UTC so a run is stable within a day. It was hardcoded to
+// 2026-08-08 — the day this tool was written — which silently mis-aged everything posted after
+// that: dateToDays() sees a date later than TODAY, assumes it must be last year's, and reports a
+// three-day-old posting as ~360 days old. That buries the newest roles at the bottom of exactly
+// the ordering (latestFirst) that exists to surface them. LIST_TODAY overrides it for tests.
+const TODAY = new Date(new Date(process.env.LIST_TODAY || Date.now()).toISOString().slice(0, 10) + "T00:00:00Z");
 const SITES = fs.readFileSync(path.join(ROOT, "job_sites.txt"), "utf8")
   .split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("#"));
 
@@ -60,12 +68,24 @@ function stripTags(x) {
     .replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&nbsp;/g, " ")
     .replace(/\s*\/\s*/g, " / ").replace(/\s+/g, " ").trim();
 }
-function clean(x) { return (x || "").replace(/🔥/g, "").replace(/\s+/g, " ").trim(); }
+// Status/visa badges some lists append to a company or role: 🆕 new, 🆁 rolling, ✓ H-1B history,
+// 🛂 sponsorship unclear, 🇺🇸 citizens only. They are metadata, not part of the name — left in
+// they end up in the CSV, in the review email, and in the dedupe key. 🎓 is deliberately NOT here:
+// keepTitle() uses it to reject advanced-degree roles, so it must survive to be tested.
+const BADGES = /[\u{1F193}\u{1F196}\u{1F195}\u{1F6C2}\u{1F1FA}\u{1F1F8}\u{1F525}\u2713\u2705\u23F3]/gu;
+function clean(x) { return (x || "").replace(BADGES, "").replace(/\s+/g, " ").trim(); }
 function firstHref(x) {
   const m = x.match(/href="([^"]+)"/);
   return m ? m[1].replace(/([?&])utm_source=[^&]*/g, "$1").replace(/&ref=Simplify/g, "").replace(/[?&]$/, "") : "";
 }
 function cleanUrl(u) { return (u || "").replace(/([?&])utm_source=[^&]*/g, "$1").replace(/[?&]$/, ""); }
+/** An apply cell may be an <a href> OR a markdown [Apply](url) link. Try both. */
+function anyLink(cell) {
+  const html = firstHref(cell);
+  if (html) return html;
+  const md = (cell || "").match(/\]\(\s*(https?:\/\/[^\s)]+)\s*\)/);
+  return md ? cleanUrl(md[1]) : "";
+}
 function ageToDays(a) {
   a = (a || "").trim();
   let m;
@@ -76,6 +96,12 @@ function ageToDays(a) {
   return 999;
 }
 const MONTHS = { Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11 };
+/** "Aug 24, 2026" — a stated year, so no guessing. Returns null when there is no year to use. */
+function fullDateToDays(d) {
+  const m = (d || "").match(/([A-Za-z]{3})[a-z]*\s+(\d{1,2}),?\s+(\d{4})/);
+  if (!m || !(m[1] in MONTHS)) return null;
+  return Math.round((TODAY - Date.UTC(+m[3], MONTHS[m[1]], +m[2])) / 86400000);
+}
 function dateToDays(d) {
   const m = (d || "").match(/([A-Za-z]{3})\s+(\d{1,2})/);
   if (!m) return 999;
@@ -135,8 +161,94 @@ function parseVansh(md, srcName) {
   }
   return jobs;
 }
+// Header-mapped pipe table (zshah-style). Same markdown as Vansh but SEVEN columns —
+//   | Company | Role | Category | Location | Skills | Posted | Apply |
+// — so parseVansh reads it wrong in the worst way: Category lands in location, Location lands in
+// the link column, and every row comes out with link="" and is then dropped by the "no apply
+// link" guard. The whole source contributes zero jobs and says nothing. Map by HEADER NAME
+// instead of position, so a column added upstream shifts nothing.
+//
+// Sections matter as much as columns here. This README carries four pipe tables and only some
+// are jobs:
+//   ## Summer 2027                          → the target cycle
+//   ## Recently posted — cycle not stated    → recent, cycle unknown. Kept: the list says these
+//                                             are often the earliest drops, and the posting
+//                                             itself settles the cycle at review time.
+//   ## Fall 2026                             → SKIPPED, wrong cycle (this project is Summer 2027)
+//   ## Drop Radar                            → holds TWO tables, neither of them open jobs:
+//                                             a forecast of when companies might post, and a
+//                                             "Recently closed — roles that left the list".
+//                                             Ingesting the first invents jobs that do not exist;
+//                                             ingesting the second resurrects dead ones.
+//
+// A table is only a jobs table if it has an APPLY column. That is the load-bearing check, not the
+// section name: both Drop Radar tables fail it wherever upstream chooses to move them, and it is
+// the same reasoning as the "no apply link, can't apply" guard further down. The section
+// allowlist then handles the one table that IS jobs but the wrong cycle.
+const SECTION_KEEP = /^(summer\s*2027|recently posted)/i;
+
+function parseHeaderTable(md, srcName) {
+  const jobs = [];
+  const skipped = new Map();
+  const drop = (why, n = 1) => skipped.set(why, (skipped.get(why) || 0) + n);
+  let section = "";
+  let cols = null;
+  let lastCompany = "";
+
+  for (const line of md.split("\n")) {
+    if (line.startsWith("## ")) {
+      section = clean(line.slice(3).replace(/\s*\([^)]*\)\s*$/, ""));
+      cols = null; // a heading ends the previous table
+      continue;
+    }
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("|")) { cols = null; continue; }
+
+    const cells = trimmed.split("|").slice(1, -1).map((c) => c.trim());
+    // Header row: remember where each column is, for this table only.
+    const names = cells.map((c) => c.toLowerCase().replace(/[^a-z]/g, ""));
+    if (names.includes("company") && names.includes("role")) {
+      const link = names.indexOf("apply");
+      // No Apply column → not open roles. The "Recently closed" table is exactly this shape
+      // (Company|Role|Cycle|Closed|Why) and would otherwise re-add roles that just left.
+      cols = link < 0
+        ? { reject: `"${section}" (no Apply column — closed or forecast rows, not open roles)` }
+        : { company: names.indexOf("company"), title: names.indexOf("role"),
+            loc: names.indexOf("location"), link, posted: names.indexOf("posted") };
+      continue;
+    }
+    if (!cols || cells.every((c) => /^:?-+:?$/.test(c))) continue;
+    if (cols.reject) { drop(cols.reject); continue; }
+    if (!SECTION_KEEP.test(section)) {
+      drop(`"${section}" (not the Summer 2027 cycle)`);
+      continue;
+    }
+
+    const at = (i) => (i >= 0 ? cells[i] ?? "" : "");
+    let company = clean(stripTags(at(cols.company)));
+    if (company === "↳" || !company) company = lastCompany; else lastCompany = company;
+    const posted = clean(at(cols.posted));
+    const days = fullDateToDays(posted);
+    jobs.push({
+      company,
+      title: clean(stripTags(at(cols.title))),
+      loc: clean(stripTags(at(cols.loc).replace(/<\/?br\s*\/?>/gi, " / "))),
+      link: anyLink(at(cols.link)),
+      days: days == null ? dateToDays(posted) : days,
+      posted: posted || "unknown",
+      src: srcName,
+    });
+  }
+  for (const [why, n] of skipped) console.log(`  skipped ${n} row(s) under ${why}`);
+  return jobs;
+}
+
 function parseGithub(md, srcName) {
-  return md.includes("<table>") ? parseSimplify(md, srcName) : parseVansh(md, srcName);
+  if (md.includes("<table>")) return parseSimplify(md, srcName);
+  // A "Category" column is the tell: Vansh's table has no such column, and reading a header
+  // table positionally is silent data corruption rather than a visible failure.
+  if (/^\|[^\n]*\bcompany\b[^\n]*\brole\b[^\n]*\bcategory\b/im.test(md)) return parseHeaderTable(md, srcName);
+  return parseVansh(md, srcName);
 }
 
 // InternDock: JS-rendered guide. Keep software-ish industry sections.
@@ -184,6 +296,62 @@ async function parseInterndock(url, srcName) {
     }
     return jobs;
   } finally { await browser.close(); }
+}
+
+// ------------------------------------------------------------- selftest (--selftest)
+// The header-table parser's failure mode is SILENCE: read the columns positionally and every row
+// loses its apply link, gets dropped by the "no link" guard, and the source contributes nothing
+// while the run still reports success. That is exactly how the zshah source produced zero jobs
+// before it was handled. A fixture is cheap insurance; run it with:  npm run test:sources
+if (process.argv.includes("--selftest")) {
+  const FIXTURE = [
+    "## Summer 2027  (2 employer-stated)", "",
+    "| Company | Role | Category | Location | Skills | Posted | Apply |",
+    "|---|---|---|---|---|---|---|",
+    "| Acme \u{1F193} | Software Engineer Intern \u{1F195} | Software | New York +2 more | Python | Aug 20, 2026 | [Apply](https://jobs.ashbyhq.com/acme/abc?utm_source=x) |",
+    "| Globex \u2713 | Data Scientist Intern \u{1F6C2} | Data & ML/AI | Plymouth, Minnesota | PyTorch | Aug 12, 2026 | [Apply](https://globex.wd5.myworkdayjobs.com/x/job/y) |",
+    "",
+    "## Fall 2026  (1 employer-stated)", "",
+    "| Company | Role | Category | Location | Skills | Posted | Apply |",
+    "|---|---|---|---|---|---|---|",
+    "| Initech | Software Engineering Intern | Software | Buffalo, NY | SQL | Aug 19, 2026 | [Apply](https://initech.wd5.myworkdayjobs.com/z) |",
+    "",
+    "## \u{1F4C5} Drop Radar", "",
+    "| Company | Typical opening | Expected this cycle | Status |",
+    "|---|---|---|---|",
+    "| Atlassian | ~Aug | ~Aug | waiting |",
+    "",
+    "| Company | Role | Cycle | Closed | Why |",
+    "|---|---|---|---|---|",
+    "| Toshiba | AI Software Engineering Intern | Fall 2026 | 2026-08-22 | gone from feed |",
+  ].join("\n");
+
+  let pass = 0, fail = 0;
+  const check = (name, cond, got) => {
+    if (cond) { pass++; console.log(`  \u2713 ${name}`); }
+    else { fail++; console.log(`  \u2717 ${name}${got === undefined ? "" : ` — got ${JSON.stringify(got)}`}`); }
+  };
+  console.log("\nHeader-mapped pipe table (zshah-style)\n");
+  const jobs = parseHeaderTable(FIXTURE, "fixture");
+
+  check("only the Summer 2027 table is read", jobs.length === 2, jobs.length);
+  check("Fall 2026 is not ingested", !jobs.some(j => j.company === "Initech"));
+  check("the forecast table is not ingested", !jobs.some(j => j.company === "Atlassian"));
+  check("a closed role is not resurrected", !jobs.some(j => j.company === "Toshiba"));
+  check("company badges are stripped", jobs[0]?.company === "Acme", jobs[0]?.company);
+  check("visa/new badges are stripped from the role", jobs[0]?.title === "Software Engineer Intern", jobs[0]?.title);
+  check("H-1B check mark is stripped", jobs[1]?.company === "Globex", jobs[1]?.company);
+  check("Location is read, not Category", jobs[0]?.loc === "New York +2 more", jobs[0]?.loc);
+  check("a markdown [Apply](url) link is found", jobs[0]?.link.startsWith("https://jobs.ashbyhq.com/acme/abc"), jobs[0]?.link);
+  check("utm_source is stripped from the link", !jobs[0]?.link.includes("utm_source"), jobs[0]?.link);
+  check("every row has a link", jobs.every(j => j.link), jobs.map(j => j.link));
+  // Aug 20 2026 against a pinned today of Aug 24 2026 — the stated year is used, not guessed.
+  check("a stated year is honoured", fullDateToDays("Aug 20, 2026") === Math.round((TODAY - Date.UTC(2026, 7, 20)) / 86400000));
+  check("a date with no year returns null", fullDateToDays("Aug 20") === null);
+  check("region maps the Location column", region(jobs[0].loc)?.[0] === 4, region(jobs[0].loc));
+
+  console.log(`\n${fail ? "\u2717" : "\u2713"} ${pass} passed, ${fail} failed\n`);
+  process.exit(fail ? 1 : 0);
 }
 
 // ------------------------------------------------------------------ main

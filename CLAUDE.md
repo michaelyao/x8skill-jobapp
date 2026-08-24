@@ -5,6 +5,10 @@
 Playwright + TypeScript automation that applies to US software engineering internships
 (Summer 2027) from the trackers listed in `job_sites.txt` — Simplify, vanshb03, interndock.
 
+The trackers are whatever is listed in `job_sites.txt` — currently Simplify, vanshb03, interndock
+and zshah101. `tools/build_internships.mjs` auto-detects each README's shape; adding a source is a
+line in that file plus a parser only if its shape is new.
+
 It builds a job list, skips anything already engaged (see the identity rules below), then fills
 Workday / Greenhouse / Ashby / Lever forms from local profile data, the resume, and a learned
 Q&A store. It stops at the Review step and **emails the filled application for approval**.
@@ -231,6 +235,23 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
 - **profile.json must not contain `loginPassword`.** It is stripped in `profile.ts` before writing.
 - **Simplify parsing reads the raw GitHub URL** (`raw.githubusercontent.com`), not the rendered page.
   The raw README uses HTML `<table>/<tr>/<td>` inside markdown, so the HTML regex parsers work.
+- **A pipe-table source is mapped by HEADER NAME, never by column position.** zshah101's README is
+  the same markdown as vanshb03's but with SEVEN columns
+  (`Company|Role|Category|Location|Skills|Posted|Apply`). Read positionally, `Category` lands in
+  location and `Location` lands in the link column, so every row comes out with no apply link and
+  is dropped by the "can't apply" guard — the source contributed **zero** jobs while the run still
+  reported success. `parseGithub` routes on a `Category` column being present; `parseHeaderTable`
+  maps by name. Cases: `npm run test:sources`.
+- **A table is only a jobs table if it has an APPLY column.** That check, not the section name, is
+  what keeps zshah101's Drop Radar out: it holds a forecast of when companies *might* post, and a
+  "Recently closed — roles that left the list". The first invents jobs that never existed, the
+  second resurrects dead ones. `## Fall 2026` is a real jobs table but the wrong cycle, and the
+  section allowlist (`SECTION_KEEP`) is what drops that. Every skip is counted and logged with its
+  reason — a source that silently contributes nothing is the bug this whole area is about.
+- **`TODAY` in the list builder must be the real date.** It was hardcoded to `2026-08-08`, the day
+  the tool was written, so `dateToDays` saw anything newer as "later than today, must be last
+  year" and reported a three-day-old posting as ~360 days old — burying the newest roles at the
+  bottom of the `latestFirst` ordering that exists to surface them. `LIST_TODAY` pins it for tests.
 - **Tracker sheet access is browser-driven.** The code navigates to the sheet URL in the headed
   browser (so the user's Google session applies), then exports CSV from the same authenticated
   context. Do not replace this with OAuth or API key approaches.

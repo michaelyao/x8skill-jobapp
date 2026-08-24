@@ -12,7 +12,8 @@
     "cmd": "tsx src/cli.ts",
     "test:skills": "tsx src/debug/skillPromptCases.ts",
     "test:skill-removal": "tsx src/debug/skillRemovalCases.ts",
-    "test:longlist": "tsx src/debug/longListCases.ts"
+    "test:longlist": "tsx src/debug/longListCases.ts",
+    "test:sources": "node tools/build_internships.mjs --selftest"
   },
   "repository": {
     "type": "git",
