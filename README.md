@@ -1,7 +1,7 @@
 # x8skill-jobapp
 
 Playwright + TypeScript automation that applies to US software-engineering internships
-(Summer 2027) on **Workday, Greenhouse, Ashby and Lever**.
+(Summer 2027) on **Workday, Greenhouse, Ashby, Lever, Workable** and **Oracle HCM** (opt-in).
 
 It builds a job list from the trackers in `job_sites.txt`, skips anything already applied to,
 opens each posting, fills the form from your profile / resume / curated Q&A — and then **stops

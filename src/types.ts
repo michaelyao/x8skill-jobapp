@@ -1,6 +1,6 @@
 import type { BrowserContext, Locator, Page } from "playwright";
 
-export type AtsType = "workday" | "ashby" | "greenhouse" | "lever" | "unknown";
+export type AtsType = "workday" | "ashby" | "greenhouse" | "lever" | "workable" | "oracle" | "smartrecruiters" | "unknown";
 
 export interface JobListing {
   company: string;

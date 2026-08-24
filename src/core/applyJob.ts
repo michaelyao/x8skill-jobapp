@@ -4,6 +4,8 @@ import { AshbyDriver } from "../agent/drivers/ashby.js";
 import { GreenhouseDriver } from "../agent/drivers/greenhouse.js";
 import { WorkdayDriver } from "../agent/drivers/workday.js";
 import { LeverDriver } from "../agent/drivers/lever.js";
+import { WorkableDriver } from "../agent/drivers/workable.js";
+import { OracleDriver } from "../agent/drivers/oracle.js";
 import { runApplication } from "../agent/turnLoop.js";
 import { ReplayAgent } from "../agent/replayAgent.js";
 import { HybridAgent } from "../agent/hybridAgent.js";
@@ -40,7 +42,7 @@ import type {
   RunSummaryItem,
 } from "../types.js";
 
-const drivers: AtsDriver[] = [new WorkdayDriver(), new AshbyDriver(), new GreenhouseDriver(), new LeverDriver()];
+const drivers: AtsDriver[] = [new WorkdayDriver(), new AshbyDriver(), new GreenhouseDriver(), new LeverDriver(), new WorkableDriver(), new OracleDriver()];
 
 export interface ApplyDeps {
   context: BrowserContext;

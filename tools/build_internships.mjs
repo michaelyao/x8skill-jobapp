@@ -70,9 +70,17 @@ function stripTags(x) {
 }
 // Status/visa badges some lists append to a company or role: 🆕 new, 🆁 rolling, ✓ H-1B history,
 // 🛂 sponsorship unclear, 🇺🇸 citizens only. They are metadata, not part of the name — left in
-// they end up in the CSV, in the review email, and in the dedupe key. 🎓 is deliberately NOT here:
-// keepTitle() uses it to reject advanced-degree roles, so it must survive to be tested.
-const BADGES = /[\u{1F193}\u{1F196}\u{1F195}\u{1F6C2}\u{1F1FA}\u{1F1F8}\u{1F525}\u2713\u2705\u23F3]/gu;
+// they end up in the CSV, in the review email, and in the dedupe key.
+//
+// Matched by RANGE, not by listing the ones seen today. Enumerating them is how 🆁 (U+1F181) got
+// missed on the first pass: it was not in the guessed list, and the check written to verify the
+// stripping reused the same guessed list, so it reported zero leaks. U+1F170-1F19A is the whole
+// squared-letter block (🆁 🆕 🆓 🆖 🅰…) and U+1F1E6-1F1FF every regional-indicator flag, so a new
+// badge letter upstream needs no change here.
+//
+// 🎓 is deliberately EXCLUDED from this: keepTitle() uses it to reject advanced-degree roles, so
+// it has to survive long enough to be tested.
+const BADGES = /[\u{1F170}-\u{1F19A}\u{1F1E6}-\u{1F1FF}\u{1F6C2}\u{1F525}\u2713\u2705\u23F3\uFE0F]/gu;
 function clean(x) { return (x || "").replace(BADGES, "").replace(/\s+/g, " ").trim(); }
 function firstHref(x) {
   const m = x.match(/href="([^"]+)"/);
@@ -308,8 +316,8 @@ if (process.argv.includes("--selftest")) {
     "## Summer 2027  (2 employer-stated)", "",
     "| Company | Role | Category | Location | Skills | Posted | Apply |",
     "|---|---|---|---|---|---|---|",
-    "| Acme \u{1F193} | Software Engineer Intern \u{1F195} | Software | New York +2 more | Python | Aug 20, 2026 | [Apply](https://jobs.ashbyhq.com/acme/abc?utm_source=x) |",
-    "| Globex \u2713 | Data Scientist Intern \u{1F6C2} | Data & ML/AI | Plymouth, Minnesota | PyTorch | Aug 12, 2026 | [Apply](https://globex.wd5.myworkdayjobs.com/x/job/y) |",
+    "| Acme \u{1F181} | Software Engineer Intern \u{1F195} | Software | New York +2 more | Python | Aug 20, 2026 | [Apply](https://jobs.ashbyhq.com/acme/abc?utm_source=x) |",
+    "| Globex \u2713 | Data Scientist Intern \u{1F6C2}\u{1F1FA}\u{1F1F8} | Data & ML/AI | Plymouth, Minnesota | PyTorch | Aug 12, 2026 | [Apply](https://globex.wd5.myworkdayjobs.com/x/job/y) |",
     "",
     "## Fall 2026  (1 employer-stated)", "",
     "| Company | Role | Category | Location | Skills | Posted | Apply |",
@@ -338,7 +346,7 @@ if (process.argv.includes("--selftest")) {
   check("Fall 2026 is not ingested", !jobs.some(j => j.company === "Initech"));
   check("the forecast table is not ingested", !jobs.some(j => j.company === "Atlassian"));
   check("a closed role is not resurrected", !jobs.some(j => j.company === "Toshiba"));
-  check("company badges are stripped", jobs[0]?.company === "Acme", jobs[0]?.company);
+  check("the rolling badge (U+1F181, missed on the first pass) is stripped", jobs[0]?.company === "Acme", jobs[0]?.company);
   check("visa/new badges are stripped from the role", jobs[0]?.title === "Software Engineer Intern", jobs[0]?.title);
   check("H-1B check mark is stripped", jobs[1]?.company === "Globex", jobs[1]?.company);
   check("Location is read, not Category", jobs[0]?.loc === "New York +2 more", jobs[0]?.loc);

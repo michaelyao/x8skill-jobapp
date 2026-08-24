@@ -18,7 +18,22 @@ import type { FilteredJob } from "../types.js";
 /** How many jobs one sweep will start. Chosen deliberately low — see SweepPlan. */
 export const DEFAULT_SWEEP_CAP = 10;
 
-const SUPPORTED_ATS = /myworkdayjobs\.com|\.wd[0-9]\.|ashbyhq\.com|greenhouse\.io|lever\.co/i;
+/**
+ * The ATS families a driver can actually fill. A listing that fails this is kept in the list and
+ * counted, never applied to — there is no adapter to drive it.
+ *
+ * Workable is in: single-page form, verified live. Oracle HCM is opt-in behind ORACLE_ATS=1 — the
+ * driver works up to an authentication gate that would create a candidate profile at the employer
+ * (see oracle.ts), so it stops there rather than deciding that on its own.
+ *
+ * SmartRecruiters is deliberately ABSENT and should not be added without a plan. Its apply flow
+ * sits behind DataDome: on the first automated attempt it served a CAPTCHA and returned "Access is
+ * temporarily restricted — we detected unusual activity from your device or network", naming the
+ * IP. CLAUDE.md's rule is to never try to defeat an explicit CAPTCHA, and retrying only worsens
+ * the reputation of an IP the rest of the run depends on. 9 roles are not worth that.
+ */
+const SUPPORTED_ATS = /myworkdayjobs\.com|\.wd[0-9]\.|ashbyhq\.com|greenhouse\.io|lever\.co|workable\.com/i;
+const ORACLE_ATS = /oraclecloud\.com.*candidateexperience/i;
 
 export interface SelectOptions {
   /** Only these CSV codes, if given. */
@@ -79,7 +94,11 @@ export async function planSweep(opts: SelectOptions = {}): Promise<SweepPlan> {
     candidates = candidates.filter((job) => job.id && wanted.includes(job.id.toUpperCase()));
   }
   if (opts.supportedOnly) {
-    candidates = candidates.filter((job) => SUPPORTED_ATS.test(job.applyUrl));
+    candidates = candidates.filter(
+      (job) =>
+        SUPPORTED_ATS.test(job.applyUrl) ||
+        (process.env.ORACLE_ATS === "1" && ORACLE_ATS.test(job.applyUrl)),
+    );
   }
   if (opts.latestFirst) {
     candidates = [...candidates].sort((x, y) => freshOrder(x.age) - freshOrder(y.age));

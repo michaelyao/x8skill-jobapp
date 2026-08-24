@@ -80,7 +80,7 @@ export type Root = Page | Frame;
  * with the Agent.
  */
 export interface AtsDriver {
-  readonly type: "workday" | "ashby" | "greenhouse" | "lever";
+  readonly type: "workday" | "ashby" | "greenhouse" | "lever" | "workable" | "oracle";
   detect(page: Page): Promise<boolean>;
   /** Resolve the root to operate on (the page, or an embedded application iframe). */
   resolveRoot(page: Page): Promise<Root>;

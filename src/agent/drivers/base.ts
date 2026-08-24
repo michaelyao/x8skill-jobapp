@@ -51,7 +51,7 @@ export const NEXT = /^(next|continue|save and continue|review|save|proceed)\b/i;
  * detect / openApplication / resolveRoot / next as needed.
  */
 export abstract class GenericDriver implements AtsDriver {
-  abstract readonly type: "workday" | "ashby" | "greenhouse" | "lever";
+  abstract readonly type: "workday" | "ashby" | "greenhouse" | "lever" | "workable" | "oracle";
   abstract detect(page: Page): Promise<boolean>;
 
   async openApplication(_page: Page): Promise<void> {
@@ -144,7 +144,25 @@ export abstract class GenericDriver implements AtsDriver {
         if (!label) label = c.getAttribute("placeholder") || c.getAttribute("name") || c.getAttribute("value") || "";
         return (label || "").replace(/\\s+/g, " ").trim();
       };
-      const controls = [...document.querySelectorAll("input:not([type=hidden]):not([type=file]), textarea, select")].filter(isVisible);
+      /**
+       * A honeypot is a real, focusable input that no human ever sees — filling it is a
+       * self-report that we are a bot. Oracle HCM ships one on its apply screen
+       * (name="honey-pot", aria-hidden="true"), and it PASSES the isVisible test above, so
+       * without this it is read as an ordinary field and answered on every application.
+       *
+       * The test is deliberately narrow: aria-hidden ("not for humans") or a name that says so.
+       * Size and clipping are NOT used — that is exactly how a custom-styled checkbox hides its
+       * real input, and Oracle's own REQUIRED "I agree with the terms and conditions" box is 0x0
+       * and clipped. Skipping that would leave a required field unfillable and stall the run
+       * against the required-field gate, which is a worse failure than the trap.
+       */
+      const isBotTrap = (el) => {
+        if (el.getAttribute("aria-hidden") === "true") return true;
+        return /honey|hpot|_bot\b|\bbot_|trap|nospam/i.test((el.getAttribute("name") || "") + " " + (el.id || ""));
+      };
+      const controls = [...document.querySelectorAll("input:not([type=hidden]):not([type=file]), textarea, select")]
+        .filter(isVisible)
+        .filter((el) => !isBotTrap(el));
       const out = [];
       let i = 0;
       let gi = 0;

@@ -16,6 +16,19 @@ export function detectAtsType(url: string): AtsType {
   if (lower.includes("lever.co")) {
     return "lever";
   }
+  if (lower.includes("workable.com")) {
+    return "workable";
+  }
+  // Tenant-hosted, so the host varies (egug.fa.us2…, jpmc.fa…, fa-evmr-saasfaprod1.fa.ocs…).
+  // The /hcmUI/CandidateExperience/ path is the stable part.
+  if (lower.includes("oraclecloud.com") && lower.includes("candidateexperience")) {
+    return "oracle";
+  }
+  // Classified even though there is no driver: an identity is worth having for dedupe and for
+  // reporting WHY a listing was never opened. See selectJobs.ts SUPPORTED_ATS.
+  if (lower.includes("smartrecruiters.com")) {
+    return "smartrecruiters";
+  }
   return "unknown";
 }
 
@@ -35,6 +48,21 @@ export function extractExternalJobId(url: string, atsType: AtsType): string {
       if (uuidMatch?.[0]) {
         return uuidMatch[0].toLowerCase();
       }
+    }
+    if (atsType === "workable") {
+      // /{company}/j/{ID}/ — the hex id is the posting.
+      const m = pathname.match(/\/j\/([0-9A-F]{6,})/i);
+      if (m?.[1]) return m[1].toUpperCase();
+    }
+    if (atsType === "oracle") {
+      // …/job/{numeric id}[/apply/…] — keep only the id, so the apply and the JD URL agree.
+      const m = pathname.match(/\/job\/([0-9]+)/i);
+      if (m?.[1]) return m[1];
+    }
+    if (atsType === "smartrecruiters") {
+      // jobs.smartrecruiters.com/{Company}/{numeric id}
+      const m = pathname.match(/\/([0-9]{6,})(?:\/|$)/);
+      if (m?.[1]) return m[1];
     }
     if (atsType === "greenhouse") {
       const numMatch = pathname.match(/\/jobs\/([0-9]+)/i);

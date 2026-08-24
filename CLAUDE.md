@@ -3,7 +3,8 @@
 ## What this project does
 
 Playwright + TypeScript automation that applies to US software engineering internships
-(Summer 2027) from the trackers listed in `job_sites.txt` — Simplify, vanshb03, interndock.
+(Summer 2027) from the trackers listed in `job_sites.txt` — Simplify, vanshb03, interndock,
+zshah101.
 
 The trackers are whatever is listed in `job_sites.txt` — currently Simplify, vanshb03, interndock
 and zshah101. `tools/build_internships.mjs` auto-detects each README's shape; adding a source is a
@@ -380,6 +381,51 @@ change here; do not duplicate its narrative back into this file. The rules that 
   A non-invoked arrow silently returns `undefined`.
 - **Keep the two outcome lists separate**: `unknown` (never attempted) vs `failedToFill`
   (attempted, refused). Both are logged; neither is silent.
+
+## ATS coverage
+
+Six drivers: Workday, Greenhouse, Ashby, Lever, **Workable** and **Oracle HCM** (opt-in). On the
+current 318-listing sweep that is 207 fillable, or 226 with `ORACLE_ATS=1`. `detectAtsType` also
+classifies SmartRecruiters so an unopened listing can say WHY. Cases: `npm run test:ats`.
+
+- **A honeypot is read as an ordinary field unless something stops it.** Oracle HCM ships
+  `<input name="honey-pot" aria-hidden="true">` on its apply screen and it PASSES the
+  offsetParent/getClientRects test `read()` uses, so it was fillable — and filling a honeypot
+  announces us as a bot on every application. `isBotTrap` in `GenericDriver.read()` drops it, for
+  every ATS, not just Oracle.
+  **The test is narrow on purpose: `aria-hidden="true"` or a honeypot-ish name. NOT size or
+  clipping.** That is exactly how a custom-styled checkbox hides its real input, and Oracle's own
+  REQUIRED "I agree with the terms and conditions" box is 0x0 and clipped — skipping it would
+  leave a required field unfillable and stall the run on the required-field gate, a worse failure
+  than the trap. Verified live: the apply screen reads 2 fields, the consent box and not the trap.
+- **A consent overlay eats the Apply click, and it looks like "Apply did nothing".** The banner is
+  fixed-position and animates out; a click issued in the same tick lands on the banner, the URL
+  never changes, and nothing says why. Cost a debugging pass on BOTH Workable and Oracle. Dismiss
+  consent, WAIT for it to go, then click.
+- **Oracle HCM is an SPA and cannot be deep-linked.** Going straight to `…/job/{id}/apply/email`
+  renders ZERO fields; the same URL reached by clicking Apply Now renders the form. It also
+  redirects on first load, which destroys the execution context mid-`evaluate` — a read issued too
+  early fails with *"Execution context was destroyed"* and looks like an empty page. Wait for the
+  control, never sleep and hope: a fixed settle clicked nothing and reported `0 field(s)`.
+- **Oracle stops at the authentication gate, and that is a decision not a bug.** The tenant wants
+  an email before the form — "your profile will be created automatically" — so continuing CREATES
+  A CANDIDATE PROFILE at that employer, usually via an emailed verification code. `atAuthGate()`
+  recognises it and `next()` refuses with a sentence saying so, rather than stalling namelessly.
+  This is why Oracle is behind `ORACLE_ATS=1`.
+- **SmartRecruiters is behind DataDome — do not add a driver without a plan.** The first automated
+  apply click returned *"Access is temporarily restricted — we detected unusual activity from your
+  device or network"*, naming the IP, and served a CAPTCHA. "Never try to defeat explicit
+  CAPTCHAs" applies, and retrying degrades the reputation of an IP every other ATS in the run
+  shares. 9 roles are not worth that. It is detected and counted, never opened.
+- **Workable is single-page** (`apply.workable.com/{co}/j/{ID}/` → `/apply/`), no login, clean
+  `name` attributes. A withdrawn posting 302s to `/{co}/?not_found=true` — the company's job
+  SEARCH page — and building the apply URL from the post-redirect location produced
+  `/{co}/apply/`, whose search filters (Workplace type, Location, Work type) then read as
+  application fields. Derive it from the URL we arrived with, and bail on `not_found=true`.
+- **Verify a new driver with the real driver.** `npx tsx src/debug/probeDriver.ts <url>` runs
+  detect → openApplication → resolveRoot → read and prints the snapshot, filling nothing. It also
+  runs `applyJob`'s expiry check first — without that it reported a withdrawn posting as a 5-field
+  form. `src/debug/inspectAts.ts <url>` is the rawer DOM dump, and flags bot traps.
 
 ## Workday-specific implementation notes
 
