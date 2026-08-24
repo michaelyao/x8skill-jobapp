@@ -43,9 +43,10 @@ RUN mkdir -p /build-root/data \
  && cd web \
  && JOBAPP_ROOT=/build-root NEXT_TELEMETRY_DISABLED=1 npx next build
 
-# Compile src/ to plain JS as well. The CLI and the scheduler run in this image, and shipping
-# tsx to run TypeScript at runtime would mean carrying a transpiler into production for two
-# entry points that never change after the build.
+# Compile src/ to plain JS as well. The `jobapp` CLI runs in this image, and shipping tsx to run
+# TypeScript at runtime would mean carrying a transpiler into production for one entry point that
+# never changes after the build. (The 8-hour tick does NOT need this — it runs inside the Next
+# server, so webpack has already bundled it.)
 RUN npx tsc -p tsconfig.json
 
 
@@ -74,8 +75,8 @@ RUN printf '#!/bin/sh\nexec node /app/dist/cli.js "$@"\n' > /usr/local/bin/jobap
  && chmod +x /usr/local/bin/jobapp
 
 # No EXPOSE. It is documentation only — compose publishes the port explicitly — and it was
-# actively wrong: it still said 8088 after the website moved to 8090, and since the scheduler
-# shares this image, `docker ps` showed the scheduler advertising a port it never listens on.
+# actively wrong: it still said 8088 after the website moved to 8090, and back when a second
+# service shared this image, `docker ps` showed it advertising a port it never listened on.
 WORKDIR /app/web
 
 # Deliberately NOT `npm start`: that script derives JOBAPP_ROOT as $(cd .. && pwd), which

@@ -10,6 +10,9 @@ at the Review step and emails you the filled application**.
 **Nothing is submitted without your approval.** You reply `APPROVE` (or `SKIP`, or describe a
 change) and a background poller submits the exact answers you approved.
 
+**New here? [QUICKSTART.md](QUICKSTART.md)** walks a fresh clone through to a filled application
+waiting for your approval. This page is the reference: flags, layout, and what runs where.
+
 ## Run
 
 ```bash
@@ -18,32 +21,32 @@ npm start                 # queue the next 10 jobs for the worker to apply to
 npm run worker            # the daemon that owns Chrome and executes your decisions
 npm run check             # type-check
 
-./web-start.sh            # start the website natively (0.0.0.0:8088)
-./web-stop.sh             # stop it
+./jobapp_website.sh up    # the website, in Docker (0.0.0.0:8088)
+./jobapp_website.sh down  # stop it
 
 ./worker-start.sh         # start the worker (owns Chrome, carries out your decisions)
 ./worker-stop.sh          # stop it gracefully (--force to kill mid-task)
 ```
 
 Both services are needed: the website queues your decisions, the worker carries them out.
-A website with no worker looks healthy but silently never submits anything — `web-start.sh`
-warns when that is the case, and `/api/health` reports the worker's state.
+A website with no worker looks healthy but silently never submits anything, so
+`/api/health` reports the worker's state and the website warns when it is absent.
 
 ### Run them permanently
 
 **The website runs in Docker on 8088. The worker runs natively as a LaunchAgent.** One website,
-one worker — an earlier setup ran a second native website alongside it against the same data, which
-was pure duplication.
+one worker. Earlier setups could also run a second native website against the same data; that was
+pure duplication and is gone.
 
 ```bash
-./jobapp_website.sh up             # the website (8088)
-./install-services.sh              # the worker as a LaunchAgent, + offers auto-login
-./install-services.sh --autologin  # only (re)set auto-login
-./install-services.sh --uninstall
+./jobapp_website.sh up           # the website (8088)
+./install-worker.sh              # the worker as a LaunchAgent
+./install-worker.sh --autologin  # only (re)set auto-login
+./install-worker.sh --uninstall
 ```
 
 Run the installer as yourself, not with `sudo` — it needs your `$HOME` and uid to place the
-LaunchAgent, and calls `sudo` itself only where root is required.
+LaunchAgent. Only `--autologin` needs root.
 
 The worker cannot be containerized and cannot be a daemon: it drives a real headed Chrome with
 the persistent profile, which needs a GUI (Aqua) session. That is what auto-login is for.
@@ -57,7 +60,9 @@ launchctl list | grep jobapp        # worker
 tail -f logs/worker.log
 ```
 
-`web-start.sh` / `worker-start.sh` still start either one by hand — useful over SSH.
+`./worker-start.sh` starts the worker by hand — useful over SSH, where launchd has no GUI
+domain to load the agent into. Headed Chrome does launch that way; Playwright spawns the binary
+directly.
 
 ### Applying to jobs
 
@@ -84,18 +89,6 @@ already-applied jobs does not eat the cap. Dedupe is `data/applications.json` al
 Google tracker sheet is retired, because reading it needed a browser *and* a human to press
 Enter, which no scheduled run could ever do.
 
-<details>
-<summary>Optional: a native website daemon on 8089</summary>
-
-The container cannot start until someone logs in, because Docker Desktop is a GUI login item.
-If you want a website that is up at boot regardless, `./install-services.sh
---with-website-daemon` installs the native website as a **LaunchDaemon** on 8089 — no login, no
-Docker, no VM in the chain. It coexists with the container (different port, and sharing `data/`
-is safe: the website never writes application state, and the derived files it rewrites on read
-are written atomically with identical content).
-
-</details>
-
 ### Running the website in Docker
 
 The website runs as a container. The **worker cannot**, and the
@@ -118,36 +111,35 @@ The image holds only the built Next server. All state is bind-mounted at `/jobap
 `playwright/` is deliberately not mounted: the website never drives a browser, so the
 container has no reason to hold live session cookies.
 
-Two things to know before relying on it:
+One thing to know before relying on it:
 
-- **`web-stop.sh` does not apply.** It kills whatever holds port 8088, which for a container
-  is `docker-proxy`. Use `./jobapp_website.sh down`. `jobapp_website.sh up` refuses to start
-  if a *native* website already holds the port and points you at `./web-stop.sh`.
-- **Docker does not make it reboot-safe on macOS.** Both bind port 8088; whichever loses crash-loops against the
-  winner. `restart: unless-stopped` only acts once the Docker daemon is up, and on macOS that
-  daemon *is* Docker Desktop — a GUI-login app. So the container cannot start before someone
-  signs in, which is the exact problem the LaunchDaemon exists to solve. `install-services.sh`
-  refuses to install while the container is running; run `./jobapp_website.sh down` first, or
-  stay on Docker and skip the daemon.
+- **Docker does not make it reboot-safe on macOS.** `restart: unless-stopped` only acts once the
+  Docker daemon is up, and on macOS that daemon *is* Docker Desktop — a GUI-login app. So the
+  container cannot start before someone signs in. That is accepted: recovery waits for a login
+  (see below), and the boot-time website daemon that used to work around it was removed as a
+  fallback for a decision already made.
 
 ### The 8-hour tick
 
-`jobapp_scheduler` — its own container, same image — rebuilds the job list and queues the next
-batch every 8 hours. It never touches a browser; it writes one command file and the worker does
+The website rebuilds the job list and queues the next batch every 8 hours. The tick runs inside
+the website process (`web/instrumentation.ts` → `src/scheduler.ts`), so there is no second
+container to babysit. It never touches a browser; it writes one command file and the worker does
 the work, one application at a time.
 
 ```bash
-docker logs -f jobapp_scheduler
-docker exec jobapp_website jobapp status      # jobapp works inside the container too
-docker exec jobapp_website jobapp sweep --max 5
+docker logs -f jobapp_website | grep scheduler:   # every tick, kept or skipped
+docker exec jobapp_website jobapp status          # jobapp works inside the container too
+docker exec jobapp_website jobapp sweep --max 5   # or just queue one by hand
 ```
 
 It skips a tick if the previous batch is still queued, or if the worker is not running — a sweep
 can mean ten applications at several minutes each, so stacking them would only bury the queue.
-Tune with `SCHEDULE_EVERY_MS` and `SCHEDULE_MAX_JOBS` in `docker-compose.yml`.
+Tune with `SCHEDULE_EVERY_MS` and `SCHEDULE_MAX_JOBS` in `docker-compose.yml`;
+`SCHEDULE_EVERY_MS=0` turns it off. In `next dev` the tick stays off unless you set
+`SCHEDULE_IN_DEV=1`, so a dev server cannot hand real applications to the worker.
 
-The website image ships compiled JS (`dist/`), so both the scheduler and the in-container
-`jobapp` run on plain node with no transpiler in production.
+The website image ships compiled JS (`dist/`), so the in-container `jobapp` CLI runs on plain
+node with no transpiler in production.
 
 ### Surviving a reboot
 
@@ -173,7 +165,7 @@ reboot -> auto-login creates a GUI session
 ```
 
 Every link is automatic once that session exists. The only property given up is coming back
-*before* anyone signs in — if you ever want that, `./install-services.sh --autologin` sets it
+*before* anyone signs in — if you ever want that, `./install-worker.sh --autologin` sets it
 (FileVault must stay off, and anyone with physical access then gets a logged-in desktop).
 
 Note the `gui/$(id -u)` domain *is* reachable over SSH once somebody is logged in — the failure

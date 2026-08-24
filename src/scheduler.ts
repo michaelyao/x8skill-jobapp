@@ -6,31 +6,35 @@ import { isStale, readWorkerStatus } from "./knowledge/workerStatus.js";
 /**
  * The recurring tick: rebuild the job list, then queue the next batch of applications.
  *
- * Runs in the WEBSITE CONTAINER, and touches no browser — it only writes a command file, which
- * is why it can live somewhere with no Chrome in it. The worker picks the work up and drains it
- * one application at a time.
+ * Runs INSIDE the website process, started once from web/instrumentation.ts. It touches no
+ * browser — it only writes a command file, which is why it can live somewhere with no Chrome in
+ * it. The worker on the host picks the work up and drains it one application at a time.
  *
- * A separate process rather than cron inside the web container: the image has no cron, and
- * adding one would mean a supervisor running two things in a container built to run one. As its
- * own compose service with `restart: unless-stopped` it is supervised by Docker, restarts
- * cleanly, and its logs are its own.
+ * It used to be its own compose service (`jobapp_scheduler`), justified by "the image has no
+ * cron". That reason never applied to this file: it was always a setInterval, never a cron job,
+ * and the website already enqueues commands in-process (web/app/api/command/route.ts). The split
+ * bought a second dist/ entrypoint and a hand-maintained copy of the website's volume block, and
+ * nothing else. One image, one process, one set of mounts.
  *
  * Deliberately an interval and not a wall-clock schedule. "Every 8 hours" is about noticing new
  * postings, not about happening at 08:00; drift does not matter, and an interval also means a
  * restart checks immediately instead of waiting for the next slot.
  */
 
-loadEnv();
-
-const EVERY_MS = Number(process.env.SCHEDULE_EVERY_MS ?? 8 * 60 * 60 * 1000);
-const MAX_JOBS = Number(process.env.SCHEDULE_MAX_JOBS ?? DEFAULT_SWEEP_CAP);
-/** Give the worker a moment after a co-ordinated restart before handing it work. */
-const STARTUP_DELAY_MS = Number(process.env.SCHEDULE_STARTUP_DELAY_MS ?? 30_000);
-
 const stamp = (): string => new Date().toISOString().replace("T", " ").slice(0, 19);
 const log = (message: string): void => console.log(`scheduler: ${stamp()} ${message}`);
 
-async function tick(): Promise<void> {
+/** Read per-start, not at module load: the .env is loaded by the caller just before we start. */
+function settings(): { everyMs: number; maxJobs: number; startupDelayMs: number } {
+  return {
+    everyMs: Number(process.env.SCHEDULE_EVERY_MS ?? 8 * 60 * 60 * 1000),
+    maxJobs: Number(process.env.SCHEDULE_MAX_JOBS ?? DEFAULT_SWEEP_CAP),
+    /** Give the worker a moment after a co-ordinated restart before handing it work. */
+    startupDelayMs: Number(process.env.SCHEDULE_STARTUP_DELAY_MS ?? 30_000),
+  };
+}
+
+export async function tick(maxJobs: number): Promise<void> {
   const worker = await readWorkerStatus();
   if (!worker || isStale(worker)) {
     // Queueing anyway would look like progress while nothing ran, and by the next tick there
@@ -54,25 +58,46 @@ async function tick(): Promise<void> {
   // does not sit inside the sweep.
   const cmd = await enqueueCommand({
     name: "sweep",
-    maxJobs: MAX_JOBS,
+    maxJobs,
     refreshList: true,
     supportedOnly: true,
     latestFirst: true,
     source: "schedule",
   });
-  log(`queued a sweep (${cmd.id}): refresh the list, then up to ${MAX_JOBS} application(s)`);
+  log(`queued a sweep (${cmd.id}): refresh the list, then up to ${maxJobs} application(s)`);
 }
 
-async function main(): Promise<void> {
-  log(`started — every ${Math.round(EVERY_MS / 60000)} min, up to ${MAX_JOBS} job(s) per sweep`);
-  if (STARTUP_DELAY_MS > 0) {
-    log(`waiting ${Math.round(STARTUP_DELAY_MS / 1000)}s before the first tick`);
-    await new Promise((resolve) => setTimeout(resolve, STARTUP_DELAY_MS));
+/**
+ * One timer per process. `next dev` re-runs instrumentation on every recompile, and two live
+ * timers would mean two ticks racing to enqueue against the same queue.
+ */
+let timer: ReturnType<typeof setInterval> | undefined;
+
+export function startScheduler(): void {
+  if (timer) {
+    log("already started in this process — not starting a second timer");
+    return;
   }
-  await tick().catch((error) => log(`tick failed: ${(error as Error).message}`));
-  setInterval(() => {
-    void tick().catch((error) => log(`tick failed: ${(error as Error).message}`));
-  }, EVERY_MS);
-}
 
-void main();
+  loadEnv();
+  const { everyMs, maxJobs, startupDelayMs } = settings();
+  if (everyMs <= 0) {
+    log("SCHEDULE_EVERY_MS is 0 — the tick is disabled, nothing will be queued automatically");
+    return;
+  }
+
+  const run = (): void => {
+    void tick(maxJobs).catch((error) => log(`tick failed: ${(error as Error).message}`));
+  };
+
+  log(`started — every ${Math.round(everyMs / 60000)} min, up to ${maxJobs} job(s) per sweep`);
+  // A bare setInterval so the first check happens after the startup delay, not a full period
+  // later: a restart should notice new postings straight away.
+  timer = setInterval(run, everyMs);
+  if (startupDelayMs > 0) {
+    log(`waiting ${Math.round(startupDelayMs / 1000)}s before the first tick`);
+    setTimeout(run, startupDelayMs).unref?.();
+  } else {
+    run();
+  }
+}

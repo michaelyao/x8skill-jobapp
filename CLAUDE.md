@@ -104,35 +104,40 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   `docker-compose.yml` run it with state bind-mounted at `/jobapp` (`JOBAPP_ROOT`) and
   `data/commands/` read-write as the channel to the native worker. `playwright/` is not
   mounted. Docker is NOT a reboot-safety fix — see the next point.
-- **One website, in Docker on 8088; the worker native as a LaunchAgent.** Decided 2026-08-21.
-  A second native website on 8088 ran the same app against the same `data/` for no benefit —
-  don't reintroduce it. `install-services.sh` installs the WORKER only; the native website
-  daemon is opt-in behind `--with-website-daemon` (port 8088, so it cannot clash with the
-  container). Two websites sharing `data/` is *safe* if you ever want the fallback — the
-  website never writes application state (the worker is the single writer) and the derived
-  files it rewrites on read are written atomically with identical content — but safe is not the
-  same as useful.
+- **ONE website, in Docker on 8088; the worker native as a LaunchAgent. There is no second
+  website and no fallback.** Decided 2026-08-21, finished 2026-08-24. `install-worker.sh`
+  (formerly `install-services.sh`) installs the WORKER and nothing else — the
+  `--with-website-daemon` flag that installed the same Next app as a boot-time LaunchDaemon on
+  8089 is DELETED, and so are `web-start.sh` / `web-stop.sh`, the hand-run native website.
+  `./jobapp_website.sh` is the ONLY way to run it. The daemon's only advantage was starting
+  before anyone signs in, which is exactly the property the next bullet says we are choosing to
+  give up, so it was a second copy of the website hedging a decision already made. Do not add
+  any of it back. Two reasons beyond the duplication: the tick now runs INSIDE the website
+  process, so two websites means two tickers both enqueueing sweeps; and a second server on
+  `data/` is one more writer to reason about. `web-stop.sh` was also a live footgun — it killed
+  whatever held port 8088, which for the container is `docker-proxy`. The installer still
+  REMOVES a legacy website agent/daemon if it finds one, so a machine that had it installed does
+  not end up with an orphan nothing maintains.
 - **Recovery waits for a login, and that is the chosen design.** Decided 2026-08-21: auto-login
   is NOT wanted — someone always signs in after a reboot. Do not re-propose it, and do not add a
-  boot-time workaround for it. The chain is: login → Docker Desktop (a login item) → website +
-  scheduler (`restart: unless-stopped`) → worker LaunchAgent (`RunAtLoad`). Every link is
-  automatic ONCE that session exists, so there is nothing to run by hand after a reboot; the only
-  property being given up is starting before anyone signs in. `install-services.sh` therefore
-  does not prompt for auto-login (`--autologin` still sets it if that ever changes).
-- **LaunchAgents load at GUI login, not at boot — which is why a website daemon is the only
-  thing that can start without one.** A reboot with nobody signed in leaves an agent absent and the logs
-  silent; from SSH, `launchctl managername` is `Background` and
+  boot-time workaround for it. The chain is: login → Docker Desktop (a login item) → website
+  (`restart: unless-stopped`, and the 8-hour tick starts with it) → worker LaunchAgent
+  (`RunAtLoad`). Every link is automatic ONCE that session exists, so there is nothing to run by
+  hand after a reboot; the only property being given up is starting before anyone signs in.
+  `install-worker.sh` therefore does not prompt for auto-login (`--autologin` still sets it if
+  that ever changes).
+- **LaunchAgents load at GUI login, not at boot.** A reboot with nobody signed in leaves an
+  agent absent and the logs silent; from SSH, `launchctl managername` is `Background` and
   `launchctl bootstrap gui/$(id -u) …` fails with `125: Domain does not support specified
   action` (`open -a Docker` fails identically). IMPORTANT correction to an earlier claim: the
   `gui/$(id -u)` domain IS reachable over SSH once somebody is logged in — `bootout` and
   `bootstrap` both work then. The 125 happens only when NO GUI session exists. So "it failed
   from SSH" is not evidence about the mechanism; re-check `launchctl list` after a login before
   concluding a service is missing. (Two workers ran at once on 2026-08-21 because a GUI login
-  had quietly loaded the agent while a hand-started one was already going.) `--with-website-daemon`
-  runs as the USER not root — root-owned files in `data/` would be unwritable by the worker —
-  and invokes `web/node_modules/.bin/next` directly, never `npx`, which wants a writable npm
-  cache under `$HOME`. Headed Chrome *does* launch over SSH (Playwright spawns the binary
-  directly), so `./worker-start.sh` is the stopgap.
+  had quietly loaded the agent while a hand-started one was already going.) Headed Chrome *does*
+  launch over SSH (Playwright spawns the binary directly), so `./worker-start.sh` is the stopgap
+  when there is no GUI domain to bootstrap into — which is what the installer falls back to
+  rather than leaving the worker down.
 - **Autofilled skills are PRUNED, and only by exact match.** Uploading the resume makes the ATS
   populate Skills from its own parse of the PDF, and it guesses badly. `skill.txt` only says
   what to ADD, and an autofilled value is already committed — so the field reads as filled and
@@ -177,19 +182,37 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   Enter, so it could never run on a schedule. `applications.json` is the only dedupe source now —
   it matches on requisition id, `identityKey`, `externalJobId` and normalized apply URL, none of
   which need a session. `decideDedupe`/`SheetRow` are gone with it.
-- **The 8-hour tick lives in the container, the work happens in the worker.** `src/scheduler.ts`
-  runs as its own compose service (`jobapp_scheduler`, same image) and only ever writes a command
-  file — no browser, which is why it can live where there is no Chrome. It enqueues ONE `sweep`
-  with `refreshList`, and the worker does the rest. It is an interval, not a wall-clock cron:
-  "every 8 hours" is about noticing new postings, so drift is irrelevant and a restart checks
-  immediately instead of waiting for a slot. It SKIPS a tick when a sweep/refresh/apply is still
-  queued, or when the worker is stale — otherwise a slow batch would have two more stacked behind
-  it. Its own service rather than cron in the web container: that image has no cron, and adding
-  one means supervising two processes in a container built to run one.
+- **The 8-hour tick runs INSIDE the website process; the work happens in the worker.**
+  `src/scheduler.ts` is a library — `startScheduler()` — started once from
+  `web/instrumentation.ts`. It only ever writes a command file, no browser, which is why it can
+  live where there is no Chrome. It enqueues ONE `sweep` with `refreshList`, and the worker does
+  the rest. It is an interval, not a wall-clock cron: "every 8 hours" is about noticing new
+  postings, so drift is irrelevant and a restart checks immediately instead of waiting for a
+  slot. It SKIPS a tick when a sweep/refresh/apply is still queued, or when the worker is
+  stale — otherwise a slow batch would have two more stacked behind it. Tuned via
+  `SCHEDULE_EVERY_MS` / `SCHEDULE_MAX_JOBS` on the `website` service; `SCHEDULE_EVERY_MS=0`
+  disables it.
+- **Do not split the tick back into its own container.** It was `jobapp_scheduler`, a second
+  compose service on the website's image, and the justification on record ("the image has no
+  cron, and adding one means supervising two processes") was wrong on its own terms: this code
+  was always a `setInterval`, never a cron job, so there was never a second process to
+  supervise, and the website already enqueues commands in-process
+  (`web/app/api/command/route.ts`). What the split actually cost was a second `dist/`
+  entrypoint and a hand-maintained duplicate of the website's whole volume block. A JS cron
+  library would be a step backwards for a different reason — those give wall-clock semantics,
+  which is exactly what the interval was chosen over.
+- **`register()` needs the edge escape hatch.** `web/instrumentation.ts` is bundled for the EDGE
+  runtime as well, because `middleware.ts` puts the edge compiler in play, and the tick reaches
+  `node:fs`/`node:path` through `@core/*`. A `NEXT_RUNTIME === "nodejs"` guard and a lazy
+  `import()` are NOT enough — webpack follows the import while bundling and the edge build dies
+  with *"Reading from node:fs is not handled by plugins"*. The node-only half lives in
+  `web/instrumentation.node.ts` and `next.config.mjs` drops it from the edge bundle with
+  `IgnorePlugin`. All three pieces are load-bearing; removing any one breaks `next build`.
+  (`resolve.alias` does not work here — the `@core/*` path mapping resolves first.)
 - **The image ships compiled JS, not tsx.** `Dockerfile.jobapp_website` runs `tsc -p tsconfig.json` in the
-  builder and copies `dist/`, so the scheduler and the in-container `jobapp` run on plain node.
+  builder and copies `dist/`, so the in-container `jobapp` CLI runs on plain node.
   Anything running `dist/*.js` needs an ABSOLUTE path and `working_dir: /app` — the image's
-  WORKDIR is `/app/web` for `next start`, so a relative `dist/scheduler.js` resolves to
+  WORKDIR is `/app/web` for `next start`, so a relative `dist/cli.js` resolves to
   `/app/web/dist/` and dies with MODULE_NOT_FOUND.
 - **Credentials stay in `.env`.** `profile.ts` must read them from `process.env`, never hardcode.
 - **profile.json must not contain `loginPassword`.** It is stripped in `profile.ts` before writing.
@@ -417,4 +440,6 @@ job posting page
 
 - **[DESIGN.md](DESIGN.md)** — how the system works and why each guard exists (read this
   before changing form reading, identity, approval or storage).
-- **[README.md](README.md)** — quick start and flags.
+- **[QUICKSTART.md](QUICKSTART.md)** — fresh clone → first filled application. Keep the required
+  local files, the `.env` keys and the start commands here in step with it.
+- **[README.md](README.md)** — flags, layout, and what runs where.
