@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { PROFILE_JSON_PATH, PROFILE_TEXT_PATH, RESUME_MD_PATH, RESUME_PATH, RESUME_TXT_PATH } from "../config.js";
+import { PROFILE_JSON_PATH, RESUME_MD_PATH, RESUME_PATH, RESUME_TXT_PATH } from "../config.js";
 import { writeJson } from "../utils/log.js";
 import type { ProfileData } from "../types.js";
 
@@ -38,11 +38,11 @@ function cleanInstitution(line: string): string {
 }
 
 export async function loadProfile(): Promise<ProfileData> {
-  // Prefer the markdown resume (easiest to parse), then txt, then the legacy file.
+  // Prefer the markdown resume (easiest to parse), then the txt. Both come from
+  // resumes.config, so switching resumes never means touching code.
   const { text: rawText, path: usedPath } = await readFirstAvailable([
     RESUME_MD_PATH,
     RESUME_TXT_PATH,
-    PROFILE_TEXT_PATH,
   ]);
   console.log(`Profile parsed from ${path.basename(usedPath)}.`);
 

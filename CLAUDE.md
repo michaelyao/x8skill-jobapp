@@ -31,11 +31,24 @@ npx tsx src/debug/inspectMyInfo.ts      # full flow → dump DOM of My Informati
 
 | File | Purpose |
 |------|---------|
-| `text version.txt` | Plain-text resume / profile |
+| `.env` | Credentials and keys (see below) |
+| `resumes.config` | Names the resume in three formats — `pdf` / `md` / `txt` |
+| the resume files it names | The `pdf` is uploaded to ATS forms; the `md`/`txt` are parsed for the profile |
 | `Q&A.txt` | Seed Q&A pairs (`Q: …` / `A: …` format) |
-| `2026 Nathan Yao's Resume - CS.pdf` | Resume uploaded to ATS forms |
 | `unofficial_academic_record.pdf` | Transcript uploaded when requested |
-| `.env` | Workday login credentials + Gemini API key (see below) |
+| `.x8note.config` | x8note token, for archiving job descriptions |
+
+**Resume filenames live in `resumes.config`, never in code or docs.** Currently
+`2026 Nathan Yao's Resume - IS.pdf` + `nathan resume 2026.{md,txt}`; the earlier
+`text version.txt` and `… - CS.pdf` are superseded and gone. `loadProfile` reads the md then the
+txt from that config — the third fallback to a hardcoded `text version.txt` was removed
+2026-08-24 along with `PROFILE_TEXT_PATH`, because a stale path that silently wins over the
+configured one is worse than a missing-file error.
+
+`skill.txt` is NOT in this table: it is committed. **Its name is lower-case in the code
+(`SKILL_PLAN_PATH`) and must be lower-case on disk.** It was `Skill.txt` for a while and worked
+only because macOS is case-insensitive by default — the same tree would fail to find it on a
+case-sensitive volume or in a Linux container. Do not reintroduce the mismatch.
 
 ## .env format
 

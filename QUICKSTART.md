@@ -21,25 +21,31 @@ You do not need to build the website — its image builds itself on first `up`.
 
 ## 2. Files that are not in the repo
 
-All of these are git-ignored, so a fresh clone has none of them. Nothing runs without them.
+These are git-ignored — they hold your personal data and credentials — so a fresh clone has none
+of them. Nothing runs until they exist.
 
 | File | What it is |
 |------|-----------|
 | `.env` | Credentials and keys — see below |
-| `resumes.config` | Points at your resume in three formats (`pdf` / `md` / `txt`) |
-| the resume itself | The `pdf` is uploaded to ATS forms; the `txt`/`md` are parsed for your profile |
+| `resumes.config` | Names your resume in three formats (`pdf` / `md` / `txt`) |
+| the resume files it names | The `pdf` is uploaded to ATS forms; the `md`/`txt` are parsed for your profile |
 | `unofficial_academic_record.pdf` | Transcript, uploaded when a form asks for one |
 | `Q&A.txt` | Seed answers, `Q: …` / `A: …` per pair. Corrections you make later live in `data/learned-answers.json` and override this |
-| `skill.txt` | Skills to ADD, and a `REMOVE:` section for the ones the ATS wrongly guesses off your resume |
 | `.x8note.config` | x8note token, for archiving job descriptions |
 
-`resumes.config` is the indirection that keeps a person's filename out of the code:
+`resumes.config` is the indirection that keeps a filename out of the code — switch resumes by
+editing these three lines, never a source file:
 
 ```
 pdf = My Resume.pdf
 md  = my resume.md
 txt = my resume.txt
 ```
+
+`skill.txt` is **not** in that list: it is committed, so you already have it. It says which skills
+to ADD, and its `REMOVE:` section names the ones an ATS wrongly guesses from parsing your resume
+PDF. Edit it for your own skills. The name is lower-case, and must stay that way — the code looks
+for `skill.txt`.
 
 ## 3. `.env`
 
