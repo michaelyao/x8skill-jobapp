@@ -64,7 +64,53 @@ export class WorkableDriver extends GenericDriver {
     await page.waitForTimeout(2000);
   }
 
+  /**
+   * Expand the collapsed Education and Experience sections.
+   *
+   * Workable renders these as repeatable sections with NO fields until "+ Add" is clicked, and
+   * labels them "(Optional)". So the reader saw eight fields — name, email, phone, address,
+   * summary, cover letter — found nothing missing, and the run reported `reached review` with the
+   * education and work history of the application completely empty. Optional to Workable; not
+   * optional on an internship application. Caught on Pony.ai ZNSIQU.
+   *
+   * Scoped by aria-label ("Add Education" / "Add Experience"), which the buttons carry — their
+   * visible text is just "+ Add" on both, so anything positional would be a coin flip.
+   *
+   * Idempotent: it probes for the section's fields first, so a re-fill of a form that already has
+   * an entry does not stack empty ones. Verified by counting controls before and after, because a
+   * click that expanded nothing must not be reported as an expansion.
+   */
+  private async expandSections(page: Page): Promise<void> {
+    const sections: Array<[string, RegExp]> = [
+      ["education", /^add education$/i],
+      ["experience", /^add experience$/i],
+    ];
+    for (const [name, label] of sections) {
+      const existing = await page
+        .locator(`[id*="${name}" i], [name*="${name}" i], [data-testid*="${name}" i]`)
+        .locator("input, select, textarea")
+        .count()
+        .catch(() => 0);
+      if (existing > 0) continue; // already expanded (or pre-filled by the resume parser)
+
+      const button = page.getByRole("button", { name: label }).first();
+      if (!(await button.isVisible().catch(() => false))) continue;
+
+      const before = await page.locator("input:not([type=hidden]), select, textarea").count().catch(() => 0);
+      await button.scrollIntoViewIfNeeded().catch(() => undefined);
+      await button.click().catch(() => undefined);
+      await page.waitForTimeout(900);
+      const after = await page.locator("input:not([type=hidden]), select, textarea").count().catch(() => 0);
+      if (after > before) console.log(`    [workable] expanded ${name} (+${after - before} field(s))`);
+      else console.log(`    [workable] "+ Add" for ${name} revealed no fields — leaving it collapsed.`);
+    }
+  }
+
   async resolveRoot(page: Page): Promise<Root> {
+    // Expanding here rather than in openApplication: turnLoop re-reads every turn, and a section
+    // that collapses (or a form re-rendered after an upload) has to be re-expanded before the read
+    // that decides whether anything is still missing.
+    await this.expandSections(page).catch(() => undefined);
     return page;
   }
 

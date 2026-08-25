@@ -60,8 +60,18 @@ const DUMP = `(() => {
   for (var j = 0; j < bn.length && buttons.length < 40; j++) {
     var b = bn[j];
     if (!vis(b)) continue;
+    // A generic button ("+ Add") means nothing on its own — what it adds is in the section around
+    // it. Carry the nearest heading/label above it so it can be scoped by intent, not by index.
+    var sect = "";
+    var up = b.parentElement;
+    for (var d = 0; d < 5 && up && !sect; d++) {
+      var h = up.querySelector("h1,h2,h3,h4,h5,legend,label,[class*=label i]");
+      if (h && h.innerText) sect = h.innerText.replace(/\s+/g, " ").trim().slice(0, 40);
+      up = up.parentElement;
+    }
     buttons.push({ text: txt(b) || b.getAttribute("aria-label") || "", type: b.getAttribute("type") || "",
-                   id: b.id || "", testid: b.getAttribute("data-testid") || "" });
+                   id: b.id || "", testid: b.getAttribute("data-testid") || "",
+                   aria: b.getAttribute("aria-label") || "", section: sect });
   }
   // Checkboxes and radios that a plain .check() will not move: dump enough structure to see WHAT
   // the human actually clicks. Guessing this twice is worse than looking once.
@@ -95,7 +105,7 @@ const DUMP = `(() => {
     iframes: Array.prototype.map.call(document.querySelectorAll("iframe"), function (f) { return f.src; }).slice(0, 8),
     fileInputs: document.querySelectorAll('input[type=file]').length,
     fields: fields, buttons: buttons,
-    bodyStart: (document.body.innerText || "").replace(/\\s+/g, " ").trim().slice(0, 400),
+    bodyStart: (document.body.innerText || "").replace(/\\s+/g, " ").trim().slice(0, ${Number(process.env.BODY_CHARS ?? 400)}),
   };
 })()`;
 
@@ -179,7 +189,7 @@ try {
       console.log(`   buttons:`);
       for (const b of d.buttons ?? []) {
         const tags = [APPLY.test(b.text) && "APPLY", NEXT.test(b.text) && "NEXT", SUBMIT.test(b.text) && "SUBMIT"].filter(Boolean);
-        console.log(`       "${b.text}"${b.type ? ` type=${b.type}` : ""}${b.testid ? ` testid=${b.testid}` : ""}${tags.length ? `   <-- ${tags.join("/")}` : ""}`);
+        console.log(`       "${b.text}"${b.type ? ` type=${b.type}` : ""}${b.testid ? ` testid=${b.testid}` : ""}${b.aria ? ` aria="${b.aria}"` : ""}${b.section ? `  [section: ${b.section}]` : ""}${tags.length ? `   <-- ${tags.join("/")}` : ""}`);
       }
     }
   };
