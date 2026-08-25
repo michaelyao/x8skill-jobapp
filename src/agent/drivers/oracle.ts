@@ -1,5 +1,6 @@
 import type { Page } from "playwright";
 import { GenericDriver } from "./base.js";
+import { fetchOracleVerificationCode } from "../../knowledge/oracleVerify.js";
 import type { Root } from "../types.js";
 
 /**
@@ -89,13 +90,10 @@ export class OracleDriver extends GenericDriver {
 
   /**
    * The authentication gate. Oracle puts an email screen in front of the application — "You don't
-   * need to have an account… your profile will be created automatically" — which means reaching
-   * the real form CREATES A CANDIDATE PROFILE at that employer, and on most tenants sends a
-   * verification code to the address first.
+   * need to have an account… your profile will be created automatically" — so passing it CREATES
+   * A CANDIDATE PROFILE at that employer, and the tenant emails a one-time code to the address.
    *
-   * That is a decision, not an implementation detail, so this reports the gate instead of walking
-   * through it. Recognising it is what turns "stopped, 1 field, no next control" into a sentence
-   * that says why.
+   * Recognising it is what turns "stopped, 1 field, no next control" into a sentence that says why.
    */
   async atAuthGate(root: Root): Promise<boolean> {
     if (!/\/apply\/email\b/.test(root.url())) return false;
@@ -103,13 +101,105 @@ export class OracleDriver extends GenericDriver {
     return text.includes("authentication screen") || text.includes("you don't need to have an account");
   }
 
+  /** The code screen that follows the email screen on tenants that verify. */
+  private codeInput(page: Page) {
+    return page
+      .locator(
+        'input[name*="code" i]:not([name*="country" i]), input[id*="verification" i], ' +
+          'input[id*="otp" i], input[autocomplete="one-time-code"], input[maxlength="6"]',
+      )
+      .first();
+  }
+
+  /**
+   * Walk the authentication gate: email → terms → one-time code from the inbox.
+   *
+   * This CREATES A CANDIDATE PROFILE at the employer, which is why applyJob only calls it with
+   * ORACLE_ATS=1. It fills nothing of the application itself.
+   *
+   * Two details are not cosmetic. The terms checkbox is 0x0 and clipped (a custom-styled control
+   * whose real input is hidden), so it is ticked through its LABEL — .check() on the input alone
+   * does not update the styled widget the form reads. And the email is typed with
+   * pressSequentially rather than fill(), for the same reason the rest of this codebase does:
+   * an instant value-set is a bot tell on a form that already ships a honeypot.
+   */
+  async passAuthGate(page: Page, email: string): Promise<boolean> {
+    if (!(await this.atAuthGate(page))) return true; // nothing to pass
+
+    const emailInput = page.locator('input[name="primary-email"], input[type="email"]').first();
+    if (!(await emailInput.count().catch(() => 0))) {
+      console.log("    [oracle] auth gate has no email input — not proceeding.");
+      return false;
+    }
+    await emailInput.click().catch(() => undefined);
+    await emailInput.pressSequentially(email, { delay: 60 }).catch(() => undefined);
+    console.log(`    [oracle] auth gate — using ${email}`);
+
+    // Tick the terms box via its label; the real input is visually hidden.
+    const terms = page.locator('input[type="checkbox"]#legal-disclaimer-checkbox, input[type="checkbox"]').first();
+    if (await terms.count().catch(() => 0)) {
+      if (!(await terms.isChecked().catch(() => false))) {
+        await terms.click({ force: true }).catch(() => undefined);
+      }
+      if (!(await terms.isChecked().catch(() => false))) {
+        await page.locator('label[for="legal-disclaimer-checkbox"]').first().click().catch(() => undefined);
+      }
+      if (!(await terms.isChecked().catch(() => false))) {
+        console.log("    [oracle] could not tick the terms checkbox — not proceeding.");
+        return false;
+      }
+    }
+
+    // Everything after this point is what makes the profile. Stamp the time FIRST: it is what
+    // stops a still-recent code from a DIFFERENT tenant being accepted as this one's.
+    const requestedAt = new Date();
+    await this.clickNext(page);
+    await this.settle(page);
+
+    // Some tenants go straight through to the form; only wait for a code if a code is asked for.
+    const wantsCode =
+      (await this.codeInput(page).count().catch(() => 0)) > 0 ||
+      /code (has been )?sent|enter the code|verification code|check your email/i.test(
+        await page.locator("body").innerText().catch(() => ""),
+      );
+    if (!wantsCode) {
+      console.log("    [oracle] no code requested — through the gate.");
+      return !(await this.atAuthGate(page));
+    }
+
+    const timeoutMs = Number(process.env.ORACLE_CODE_TIMEOUT_MS ?? 180_000);
+    console.log(`    [oracle] waiting up to ${Math.round(timeoutMs / 1000)}s for the verification code…`);
+    const code = await fetchOracleVerificationCode({ timeoutMs, pollMs: 10_000, notBefore: requestedAt });
+    if (!code) {
+      // The profile now exists either way, so say so: a silent failure here looks like nothing
+      // happened when in fact an account was created at the employer.
+      console.log(
+        "    [oracle] no verification code arrived in time. The candidate profile HAS been created; " +
+          "the code may still turn up in the inbox.",
+      );
+      return false;
+    }
+
+    const input = this.codeInput(page);
+    if (!(await input.count().catch(() => 0))) {
+      console.log(`    [oracle] got code ${code} but found no field to type it into.`);
+      return false;
+    }
+    await input.click().catch(() => undefined);
+    await input.pressSequentially(code, { delay: 80 }).catch(() => undefined);
+    console.log(`    [oracle] entered the verification code.`);
+    await this.clickNext(page);
+    await this.settle(page);
+
+    const stillGated = await this.atAuthGate(page);
+    if (stillGated) console.log("    [oracle] still on the authentication screen after the code — it was not accepted.");
+    return !stillGated;
+  }
+
   async next(root: Root): Promise<boolean> {
     if (await this.atAuthGate(root)) {
-      console.log(
-        "    [oracle] authentication gate — this tenant wants an email before the form, and " +
-          "continuing would create a candidate profile (usually with an emailed verification " +
-          "code). Not proceeding; see src/agent/drivers/oracle.ts.",
-      );
+      // Only applyJob knows the profile email, and only it should decide to create an account.
+      console.log("    [oracle] at the authentication gate — passAuthGate() has to run before the form.");
       return false;
     }
     return this.clickNext(root);

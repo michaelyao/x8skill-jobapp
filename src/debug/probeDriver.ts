@@ -80,7 +80,24 @@ try {
   if (driver instanceof OracleDriver) {
     const gate = await driver.atAuthGate(root).catch(() => false);
     console.log(`\nat auth gate: ${gate}`);
-    if (gate) console.log(`next() says:`), await driver.next(root);
+    if (gate && process.argv.includes("--pass-auth")) {
+      // OPT-IN ONLY. This CREATES A CANDIDATE PROFILE at the employer and consumes a real
+      // verification email. Never the default, even in a debug tool.
+      const { loadProfile } = await import("../knowledge/profile.js");
+      const profile = await loadProfile();
+      console.log(`\n>>> passing the auth gate (creates a profile at this employer)`);
+      const through = await driver.passAuthGate(page, profile.email ?? "");
+      console.log(`through gate: ${through}`);
+      if (through) {
+        const after = await driver.read(await driver.resolveRoot(page));
+        console.log(`\nafter the gate: submitReady=${after.submitReady} nextAvailable=${after.nextAvailable} fields=${after.fields.length}\n`);
+        for (const f of after.fields) console.log(`  ${f.required ? "*" : " "} [${f.type}] ${f.label}${f.filled ? "   (already filled)" : ""}`);
+      }
+    } else if (gate) {
+      console.log(`next() says:`);
+      await driver.next(root);
+      console.log(`(pass --pass-auth to walk the gate — that creates a profile at this employer)`);
+    }
   }
   const errors = (await driver.validationErrors?.(root).catch(() => [])) ?? [];
   if (errors.length) console.log(`\nform is showing: ${errors.join(" · ")}`);
