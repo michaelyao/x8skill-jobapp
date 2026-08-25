@@ -71,10 +71,28 @@ export class WorkdayDriver extends GenericDriver {
       }
       return false;
     };
-    const credError = async () => {
-      const t = (await page.locator('[data-automation-id*="error"], [data-automation-id*="Error"], [role="alert"]').allInnerTexts().catch(() => [])).join(" ").toLowerCase();
-      return /wrong email|incorrect|does not match|locked|couldn.?t find|invalid|not recognized/.test(t);
-    };
+    const authErrorText = async () =>
+      (await page.locator('[data-automation-id*="error"], [data-automation-id*="Error"], [role="alert"]').allInnerTexts().catch(() => []))
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+    const credError = async () => /wrong email|incorrect|does not match|locked|couldn.?t find|invalid|not recognized/i.test(await authErrorText());
+
+    /**
+     * "No account with that email" vs "wrong password" — Workday reports both through the same
+     * error region, and conflating them is what made 16 of 82 failures unfixable.
+     *
+     * credError() matches "couldn't find", which is Workday's wording for an email it has never
+     * seen. The old code read any credError as "the account exists but the password is stale",
+     * requested a password reset, and waited out the window for a mail that cannot arrive —
+     * Workday does not send a reset for an account that does not exist. Measured: 16 failures
+     * across ELEVEN different tenants, and zero Workday reset emails in the inbox over three
+     * days. Workday accounts are per-tenant, so a first application at a new employer has no
+     * account by definition; "wrong password" was never the common case.
+     */
+    const noSuchAccount = async () =>
+      /couldn.?t find|could not find|no account|not recognized|isn.?t associated|no user/i.test(await authErrorText());
 
     const accountExists = async () => {
       const t = (await page.locator('[data-automation-id*="error"], [data-automation-id*="Error"], [role="alert"]').allInnerTexts().catch(() => [])).join(" ").toLowerCase();
@@ -133,6 +151,19 @@ export class WorkdayDriver extends GenericDriver {
       const el = page.getByRole("link", { name: /^sign in$/i }).or(page.getByRole("button", { name: /^sign in$/i })).first();
       if (await el.count().catch(() => 0)) await el.click().catch(() => undefined);
       await chooseEmailSignIn();
+    };
+
+    /** The reverse trip: sign-in page → Create Account, for a tenant we have no account at. */
+    const goToCreateAccount = async () => {
+      if (await count('[data-automation-id="createAccountLink"]')) {
+        await page.locator('[data-automation-id="createAccountLink"]').first().click().catch(() => undefined);
+        return;
+      }
+      const el = page
+        .getByRole("link", { name: /create account|sign up|new account/i })
+        .or(page.getByRole("button", { name: /create account|sign up|new account/i }))
+        .first();
+      if (await el.count().catch(() => 0)) await el.click().catch(() => undefined);
     };
 
     await page.getByRole("button", { name: /accept cookies|accept all/i }).first().click({ timeout: 1500 }).catch(() => undefined);
@@ -231,7 +262,15 @@ export class WorkdayDriver extends GenericDriver {
           await page.waitForTimeout(1500);
           continue;
         }
-        console.log("[workday] create-account did not advance (likely anti-bot). Stopping.");
+        // "Likely anti-bot" was a guess, and it sent the diagnosis down the wrong path for 16
+        // runs. The page usually says exactly what is wrong — a password policy, a missing
+        // consent box, an email already in use — so print it instead of speculating.
+        const said = await authErrorText();
+        console.log(
+          said
+            ? `[workday] create-account did not advance — the form says: "${said.slice(0, 200)}". Stopping.`
+            : "[workday] create-account did not advance and the page shows no error (anti-bot, or a control we did not click). Stopping.",
+        );
         return;
       }
 
@@ -249,7 +288,26 @@ export class WorkdayDriver extends GenericDriver {
         triedSignIn = true;
         await page.waitForTimeout(3500);
         if (await credError()) {
-          console.log("[workday] sign-in failed (wrong password for the existing account).");
+          const said = await authErrorText();
+          // Do NOT reset a password for an account that does not exist. Workday sends nothing,
+          // so the wait window is burned for certain — 16 failures across 11 tenants did exactly
+          // this. Say which case it is, using the tenant's own words.
+          if (await noSuchAccount()) {
+            console.log(`[workday] no account at this tenant for ${email} — the form says: "${said.slice(0, 160)}"`);
+            if (!triedCreate) {
+              console.log("[workday] going to Create Account instead of resetting a password.");
+              await goToCreateAccount();
+              await page.waitForTimeout(1500);
+              triedSignIn = false;
+              continue;
+            }
+            console.log(
+              "[workday] create-account was already attempted and sign-in says the account does not exist — " +
+                "stopping. A password reset would wait out its window for an email Workday will never send.",
+            );
+            return;
+          }
+          console.log(`[workday] sign-in failed — the form says: "${said.slice(0, 160)}"`);
           // The account exists but its stored password (from a prior season) differs
           // from JOB_APP_PASSWORD. Reset it via email, then restart auth so sign-in
           // uses the now-matching password. Only attempt this once.

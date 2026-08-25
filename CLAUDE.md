@@ -262,11 +262,20 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   field is still empty. `read()` reports `filled` per field; `turnLoop` re-reads after each fill
   pass, retries the stragglers, and if a required field stays empty it STOPS and reports
   `blockedRequired` rather than clicking Next. Do not remove this gate.
+- **REVIEW HAPPENS ON THE WEBSITE. There is no review email and no email poller — do not
+  describe one.** Retired along with the 15-minute cron (`src/worker.ts`: "the web website only
+  enqueues commands… replaces the 15-minute approvals cron so an action taken in the website
+  happens within seconds"). `gog` survives for exactly two things, neither of them review: Workday
+  reset/activation links (`workdayReset.ts`) and Oracle verification codes (`oracleVerify.ts`).
+  There is no `sendReviewEmail`, no `--body-html`, no `npm run approvals`, no `approvals-cron.sh`
+  entry in crontab. This section described the email flow for long enough to mislead someone
+  reading it in Aug 2026 — if you are about to write "it emails you for approval", check `gog`
+  usage first.
 - **Approval is decoupled — the fill run NEVER blocks for a long approval.** Approval can take days.
-  Phase A (`npm start` → `applyToJob` mode `"fill"`): fill → reach Review → email → short grace
-  wait (`APPROVE_TIMEOUT_MS`, default 2 min) → **enqueue to `data/pending-approvals.json`** → move on.
-  Phase B (`npm run approvals`, run by cron every 15 min via `approvals-cron.sh`): scan the inbox and
-  classify each reply three ways — **APPROVE / SKIP / CHANGE**.
+  The fill (`applyToJob` mode `"fill"`) reaches Review and **enqueues to
+  `data/pending-approvals.json`**, then moves on. You then act on `/queue` in the website, which
+  writes a command the worker picks up within a tick. The three outcomes are the same three as
+  before — **APPROVE / SKIP / CHANGE** — they just arrive as commands rather than as replies.
   - **APPROVE** → `applyToJob` mode `"submit"` with a `HybridAgent`: re-open and **re-fill** the live
     form, using an approved answer wherever the question still exists (matched positionally, so repeated
     blocks keep their own values) and the LLM only for what the approved set does not cover. Before the
@@ -310,24 +319,15 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
      one operation — a stat-then-write race would let two pollers submit the same job.
   6. `processedReplyIds` stops one reply from ever acting twice, and the driver's
      `isAlreadyApplied` page check is the last line of defence.
-- **An APPROVE sent from the monitored account counts.** The review email goes to both
-  `nyao2@` and `myao@studiox8.com`, so a reply written from `myao@` is labelled `SENT` by
-  Gmail. Skipping every `SENT` message — the old behaviour — silently ignored those
-  approvals. The message to skip is OUR OWN outgoing review copy, and the subject is what
-  separates them: our copy is not a reply (`Review & Approve: …`), a reply is (`Re: …`).
-  Never widen this back to "skip all SENT", and never drop the check entirely — our own
-  review body contains the word APPROVE in its instructions, so reading it as a reply
-  would auto-act on every job.
 - **Approval matches the UNIQUE CODE ONLY — never company name.** `checkApprovalOnce` requires the
   job's 6-letter code to appear in the reply. Matching by company cross-contaminates roles at the
   same employer: an approval for one (e.g. Cybernetic Labs WVJGTG) would submit another (KDUGRO).
   A job with no code is never auto-acted. Do not reintroduce company/title matching.
 - **"Do not submit" means `NO_SUBMIT=1`, not a short grace.** A grace-wait can still submit on a
-  detected approval. When the user says don't submit, run with `NO_SUBMIT=1` — it emails the review
-  and QUEUES the job (so the poller can submit later on approval) but never submits during the fill.
-- **Review email is HTML** (`gog --body-html`, plain-text fallback): bold questions, a distinct green
-  `A:`, a "draft" badge on LLM free-text, a meta table with the posting link, and the JD in a framed
-  box. Structured answers come from `TurnLoopResult.answers` (also what the replay/queue use).
+  detected approval. When the user says don't submit, run with `NO_SUBMIT=1` — it QUEUES the job
+  for review in the website but never submits during the fill.
+- **Structured answers come from `TurnLoopResult.answers`** — that is what the website's review
+  page, the replay and the queue all read. (It also fed the old HTML review email, which is gone.)
 - **Corrections live in `data/learned-answers.json` and OVERRIDE the seed.** `loadAnswers()` rebuilds
   every entry from `Q&A.txt` on each read, so an answer recorded anywhere else was erased by the next
   read — which is why "remember what I edited" quietly failed for a day. Learned entries are merged on
@@ -355,8 +355,8 @@ change here; do not duplicate its narrative back into this file. The rules that 
 - **`findCrossAtsDuplicate` hard-blocks** a different listing, already submitted, sharing the
   employer's requisition id.
 - **Never hard-block on company + title.** RTX posts two distinct "Software Engineer Intern"
-  requisitions. `classifyJobMatch` returns confidence + `needsHumanConfirmation`, and the
-  review email asks the user.
+  requisitions. `classifyJobMatch` returns confidence + `needsHumanConfirmation`, and the review
+  page in the website asks the user.
 - **Unlabelled digits are not requisition ids** — bare matches need an `R`/`JR`/`REQ` prefix;
   labelled ones may be all digits. Cases: `src/debug/reqIdCases.ts`.
 - **`data/applications.json` is operational state; x8note holds the content.** One store per

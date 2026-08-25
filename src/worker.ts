@@ -431,6 +431,13 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
         return { ok: true, message: `[${command.code}] re-filled and queued — review it in the website` };
       }
       if (outcome.reachedReview) return { ok: true, message: `[${command.code}] reached review but was not queued` };
+      // A closed posting is a correct outcome, not a failure. applyJob already detects it, records
+      // `expired` in the ledger and skips — but this reported it as "did not reach review", so 19
+      // of the 82 entries in the failure list were listings that simply no longer exist. That
+      // buries the real failures and invites debugging a filling bug that is not there.
+      if (outcome.summaryItem?.outcome === "expired") {
+        return { ok: true, message: `[${command.code}] posting is closed — recorded as expired, will not be re-opened` };
+      }
       const why = outcome.blockedRequired?.length
         ? `still blocked on: ${outcome.blockedRequired.join("; ")}`
         : "did not reach review";
