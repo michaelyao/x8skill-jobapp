@@ -63,7 +63,34 @@ const DUMP = `(() => {
     buttons.push({ text: txt(b) || b.getAttribute("aria-label") || "", type: b.getAttribute("type") || "",
                    id: b.id || "", testid: b.getAttribute("data-testid") || "" });
   }
+  // Checkboxes and radios that a plain .check() will not move: dump enough structure to see WHAT
+  // the human actually clicks. Guessing this twice is worse than looking once.
+  var toggles = [];
+  var tg = document.querySelectorAll('input[type=checkbox],input[type=radio],[role=checkbox],[role=switch]');
+  for (var k = 0; k < tg.length && toggles.length < 8; k++) {
+    var t = tg[k];
+    var chain = [];
+    var up = t.parentElement;
+    for (var d = 0; d < 3 && up; d++) {
+      chain.push("<" + up.tagName.toLowerCase() +
+        (up.id ? ' id="' + up.id + '"' : "") +
+        (up.className && typeof up.className === "string" ? ' class="' + up.className.slice(0, 70) + '"' : "") +
+        (up.getAttribute("role") ? ' role="' + up.getAttribute("role") + '"' : "") + ">");
+      up = up.parentElement;
+    }
+    var lbl = t.id ? document.querySelector('label[for="' + CSS.escape(t.id) + '"]') : null;
+    toggles.push({
+      html: t.outerHTML.slice(0, 220),
+      id: t.id || "", name: t.getAttribute("name") || "", checked: t.checked === true,
+      labelFor: lbl ? lbl.outerHTML.slice(0, 200) : "(no label[for])",
+      ancestors: chain,
+      siblings: Array.prototype.map.call(t.parentElement ? t.parentElement.children : [], function (c) {
+        return "<" + c.tagName.toLowerCase() + (c.className && typeof c.className === "string" ? "." + c.className.split(" ")[0] : "") + ">";
+      }).join(" "),
+    });
+  }
   return {
+    toggles: toggles,
     title: document.title, forms: document.querySelectorAll("form").length,
     iframes: Array.prototype.map.call(document.querySelectorAll("iframe"), function (f) { return f.src; }).slice(0, 8),
     fileInputs: document.querySelectorAll('input[type=file]').length,
@@ -138,6 +165,16 @@ try {
           `     ${f.required ? "*" : " "} [${f.tag}/${f.type}]${f.name ? ` name=${f.name}` : ""}${f.id ? ` id=${f.id}` : ""}${f.testid ? ` testid=${f.testid}` : ""}  «${f.label}»` +
             (trap.length ? `\n         \u26A0 BOT TRAP — ${trap.join(", ")}; read() would treat this as fillable` : styled),
         );
+      }
+      if ((d.toggles ?? []).length) {
+        console.log(`   toggles (what a .check() has to move):`);
+        for (const t of d.toggles) {
+          console.log(`     id=${t.id || "-"} name=${t.name || "-"} checked=${t.checked}`);
+          console.log(`       input:     ${t.html}`);
+          console.log(`       label[for]: ${t.labelFor}`);
+          console.log(`       ancestors: ${t.ancestors.join(" < ")}`);
+          console.log(`       siblings:  ${t.siblings}`);
+        }
       }
       console.log(`   buttons:`);
       for (const b of d.buttons ?? []) {

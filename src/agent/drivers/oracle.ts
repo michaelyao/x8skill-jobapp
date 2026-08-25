@@ -101,6 +101,64 @@ export class OracleDriver extends GenericDriver {
     return text.includes("authentication screen") || text.includes("you don't need to have an account");
   }
 
+  /**
+   * Tick "I agree with the terms and conditions".
+   *
+   * The real input is `class="input-row__hidden-control"` — deliberately hidden — inside a
+   * wrapping <label for>, with the control a human actually clicks being its SIBLING
+   * <span class="apply-flow-input-checkbox">. It is a Knockout binding
+   * (data-bind="checked: legalDisclaimer.isAccepted"), so what matters is that a real click
+   * reaches the visible span and fires change on the input.
+   *
+   * A ladder rather than one attempt, and every rung is VERIFIED by re-reading isChecked — the
+   * first version tried check({force}) then the label, reported neither had worked, and could not
+   * say which rung was even close. Same shape as the custom-radio ladder in base.ts.
+   *
+   * MEASURED on American Express (Aug 2026): the first three rungs all fail — the visible span,
+   * the wrapping label, and check({force}) on the hidden input — and only the DISPATCHED click
+   * lands. Real clicks are still tried first and kept first on purpose: a dispatched event is
+   * untrusted, so it is the last resort rather than the default, and if a tenant ever accepts an
+   * ordinary click the ladder will use that instead. Do not "simplify" this to the rung that
+   * happens to work today.
+   */
+  async tickTerms(page: Page): Promise<boolean> {
+    // Scope to the id first. A bare input[type=checkbox] + .first() would silently pick some
+    // other checkbox that happens to come earlier in the DOM.
+    const input = page.locator("#legal-disclaimer-checkbox").first();
+    if (!(await input.count().catch(() => 0))) {
+      const any = page.locator('input[type="checkbox"]').first();
+      if (!(await any.count().catch(() => 0))) return true; // no terms box on this tenant
+      return this.tickVia(any, [() => any.check({ force: true })]);
+    }
+    const isSet = () => input.isChecked().catch(() => false);
+    if (await isSet()) return true;
+
+    const visible = page.locator("#legal-disclaimer-checkbox ~ span, label[for='legal-disclaimer-checkbox'] span").first();
+    const label = page.locator("label[for='legal-disclaimer-checkbox']").first();
+    const rungs: Array<[string, () => Promise<unknown>]> = [
+      ["the visible span", () => visible.click({ timeout: 5000 })],
+      ["the wrapping label", () => label.click({ timeout: 5000, position: { x: 10, y: 10 } })],
+      ["check(force) on the hidden input", () => input.check({ force: true })],
+      ["a dispatched click on the input", () => input.dispatchEvent("click")],
+    ];
+    for (const [name, act] of rungs) {
+      await act().catch(() => undefined);
+      if (await isSet()) {
+        console.log(`    [oracle] terms accepted via ${name}.`);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private async tickVia(input: ReturnType<Page["locator"]>, rungs: Array<() => Promise<unknown>>): Promise<boolean> {
+    for (const act of rungs) {
+      await act().catch(() => undefined);
+      if (await input.isChecked().catch(() => false)) return true;
+    }
+    return false;
+  }
+
   /** The code screen that follows the email screen on tenants that verify. */
   private codeInput(page: Page) {
     return page
@@ -135,19 +193,9 @@ export class OracleDriver extends GenericDriver {
     await emailInput.pressSequentially(email, { delay: 60 }).catch(() => undefined);
     console.log(`    [oracle] auth gate — using ${email}`);
 
-    // Tick the terms box via its label; the real input is visually hidden.
-    const terms = page.locator('input[type="checkbox"]#legal-disclaimer-checkbox, input[type="checkbox"]').first();
-    if (await terms.count().catch(() => 0)) {
-      if (!(await terms.isChecked().catch(() => false))) {
-        await terms.click({ force: true }).catch(() => undefined);
-      }
-      if (!(await terms.isChecked().catch(() => false))) {
-        await page.locator('label[for="legal-disclaimer-checkbox"]').first().click().catch(() => undefined);
-      }
-      if (!(await terms.isChecked().catch(() => false))) {
-        console.log("    [oracle] could not tick the terms checkbox — not proceeding.");
-        return false;
-      }
+    if (!(await this.tickTerms(page))) {
+      console.log("    [oracle] could not tick the terms checkbox — not proceeding.");
+      return false;
     }
 
     // Everything after this point is what makes the profile. Stamp the time FIRST: it is what

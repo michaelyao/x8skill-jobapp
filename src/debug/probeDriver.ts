@@ -80,7 +80,13 @@ try {
   if (driver instanceof OracleDriver) {
     const gate = await driver.atAuthGate(root).catch(() => false);
     console.log(`\nat auth gate: ${gate}`);
-    if (gate && process.argv.includes("--pass-auth")) {
+    // Ticking the terms box commits NOTHING — the profile is only created by the Next click that
+    // follows — so this is safe to verify on its own, and it is the rung that failed live.
+    if (gate && process.argv.includes("--terms-only")) {
+      console.log(`\n>>> ticking the terms checkbox only (creates nothing)`);
+      const ok = await driver.tickTerms(page);
+      console.log(`terms ticked: ${ok}`);
+    } else if (gate && process.argv.includes("--pass-auth")) {
       // OPT-IN ONLY. This CREATES A CANDIDATE PROFILE at the employer and consumes a real
       // verification email. Never the default, even in a debug tool.
       const { loadProfile } = await import("../knowledge/profile.js");
