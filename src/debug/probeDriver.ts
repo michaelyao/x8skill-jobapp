@@ -80,9 +80,33 @@ try {
   if (driver instanceof OracleDriver) {
     const gate = await driver.atAuthGate(root).catch(() => false);
     console.log(`\nat auth gate: ${gate}`);
-    // Ticking the terms box commits NOTHING — the profile is only created by the Next click that
-    // follows — so this is safe to verify on its own, and it is the rung that failed live.
-    if (gate && process.argv.includes("--terms-only")) {
+    // Fill the gate and STOP before Next. Ticking the terms commits nothing — the profile is
+    // created by the Next click that follows — so this is how the whole terms mechanism was
+    // worked out without spending an account on finding out.
+    if (gate && process.argv.includes("--gate-dry")) {
+      const { loadProfile } = await import("../knowledge/profile.js");
+      const profile = await loadProfile();
+      const emailInput = page.locator('input[name="primary-email"], input[type="email"]').first();
+      const nextBtn = page.getByRole("button", { name: /^next$/i }).first();
+      const box = page.locator("#legal-disclaimer-checkbox").first();
+      const state = async (when: string) =>
+        console.log(
+          `  ${when.padEnd(26)} email=${JSON.stringify(await emailInput.inputValue().catch(() => ""))}` +
+            ` termsChecked=${await box.isChecked().catch(() => false)}` +
+            ` nextEnabled=${await nextBtn.isEnabled().catch(() => false)}`,
+        );
+
+      console.log(`\n>>> dry gate fill — email + terms, never clicks Next\n`);
+      await state("before anything");
+      await emailInput.click().catch(() => undefined);
+      await emailInput.pressSequentially(profile.email ?? "", { delay: 60 }).catch(() => undefined);
+      await emailInput.blur().catch(() => undefined);
+      await state("after the email");
+      const ticked = await driver.tickTerms(page);
+      await state("after the terms");
+      console.log(`\n  tickTerms: ${ticked}`);
+      console.log(`  NEXT WAS NOT CLICKED — nothing was created.`);
+    } else if (gate && process.argv.includes("--terms-only")) {
       console.log(`\n>>> ticking the terms checkbox only (creates nothing)`);
       const ok = await driver.tickTerms(page);
       console.log(`terms ticked: ${ok}`);
