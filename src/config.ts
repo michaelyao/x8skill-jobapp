@@ -24,7 +24,6 @@ export const JOB_SITES_PATH = path.join(ROOT_DIR, "job_sites.txt");
 export const INTERNSHIPS_CSV_PATH = path.join(ROOT_DIR, "internships_summer2027.csv");
 export const BUILD_INTERNSHIPS_SCRIPT = path.join(ROOT_DIR, "tools", "build_internships.mjs");
 
-export const PROFILE_TEXT_PATH = path.join(ROOT_DIR, "text version.txt");
 export const QA_TEXT_PATH = path.join(ROOT_DIR, "Q&A.txt");
 export const QA_MARKDOWN_PATH = path.join(ROOT_DIR, "Q&A.md");
 export const PROFILE_JSON_PATH = path.join(DATA_DIR, "profile.json");

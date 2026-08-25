@@ -8,8 +8,8 @@
 #   ./jobapp_website.sh status
 #   ./jobapp_website.sh logs      # follow
 #
-# The preflight repeats the checks web-start.sh makes, because they fail the same confusing
-# way in a container: a login page with no accounts behind it, or a missing session secret.
+# The preflight catches the things that fail in confusing ways inside a container: a login page
+# with no accounts behind it, or a missing session secret.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -39,7 +39,6 @@ require_daemon() {
   echo "  open -a Docker  ->  error 125, Domain does not support specified action" >&2
   echo >&2
   echo "Log in at the machine once (or enable automatic login), then re-run this." >&2
-  echo "Meanwhile the native website still works:  ./web-start.sh" >&2
   exit 1
 }
 
@@ -65,15 +64,16 @@ preflight() {
   done
   mkdir -p "$DIR/data" "$DIR/logs"
 
-  # A native website from web-start.sh holds the same port. Two servers on one data/ is not
-  # itself unsafe (the worker serializes the real work), but the second one cannot bind.
+  # Something native is already on the port — a stray `next start`, or another app. Two servers
+  # on one data/ is not itself unsafe (the worker serializes the real work), but the second one
+  # cannot bind, so say who has it rather than crash-looping against them.
   local holder
   holder="$(lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | head -1 || true)"
   if [ -n "$holder" ] && ! docker ps --filter "name=$CONTAINER" --format '{{.Names}}' 2>/dev/null | grep -q .; then
     echo "Port $PORT is held by a NATIVE process (pid $holder):"
     ps -p "$holder" -o pid,etime,command | tail -n +2 | cut -c1-100
     echo
-    die "stop it first:  ./web-stop.sh"
+    die "stop that process first, or run this on another port:  WEB_PORT=… ./jobapp_website.sh up"
   fi
 }
 
