@@ -91,10 +91,22 @@ export class WorkableDriver extends GenericDriver {
         .locator("input, select, textarea")
         .count()
         .catch(() => 0);
-      if (existing > 0) continue; // already expanded (or pre-filled by the resume parser)
+      // Both skip paths LOG. The first version returned silently from either, and when the fix
+      // did not fire in production there was no way to tell which branch had swallowed it — the
+      // log contained no "[workable]" line at all, which is the least useful possible outcome.
+      if (existing > 0) {
+        console.log(`    [workable] ${name} already has ${existing} field(s) — not adding another.`);
+        continue;
+      }
 
       const button = page.getByRole("button", { name: label }).first();
-      if (!(await button.isVisible().catch(() => false))) continue;
+      if (!(await button.isVisible().catch(() => false))) {
+        const anyAdd = await page.getByRole("button", { name: /^\+?\s*add$/i }).count().catch(() => 0);
+        console.log(
+          `    [workable] no "${String(label)}" control found (${anyAdd} bare "+ Add" button(s) on the page) — ${name} left empty.`,
+        );
+        continue;
+      }
 
       const before = await page.locator("input:not([type=hidden]), select, textarea").count().catch(() => 0);
       await button.scrollIntoViewIfNeeded().catch(() => undefined);
