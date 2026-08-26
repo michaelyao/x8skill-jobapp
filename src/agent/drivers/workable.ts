@@ -81,16 +81,20 @@ export class WorkableDriver extends GenericDriver {
    * click that expanded nothing must not be reported as an expansion.
    */
   private async expandSections(page: Page): Promise<void> {
-    const sections: Array<[string, RegExp]> = [
-      ["education", /^add education$/i],
-      ["experience", /^add experience$/i],
+    /**
+     * `already` is the section's OWN field labels, not the word "education". The first version
+     * probed for ids/names containing the section name — but the revealed inputs are called
+     * School, Degree, Field of study, Company, Industry, so it never matched and the
+     * already-expanded guard did nothing: turn 2 clicked "+ Add" a second time. Only the
+     * before/after count stopped that becoming a second blank entry, and on a form where "+ Add"
+     * genuinely appends one, it would have stacked empties — the very thing this guard is for.
+     */
+    const sections: Array<[string, RegExp, RegExp]> = [
+      ["education", /^add education$/i, /school|degree|field of study|institution/i],
+      ["experience", /^add experience$/i, /company|industry|employer/i],
     ];
-    for (const [name, label] of sections) {
-      const existing = await page
-        .locator(`[id*="${name}" i], [name*="${name}" i], [data-testid*="${name}" i]`)
-        .locator("input, select, textarea")
-        .count()
-        .catch(() => 0);
+    for (const [name, label, already] of sections) {
+      const existing = await page.getByLabel(already).count().catch(() => 0);
       // Both skip paths LOG. The first version returned silently from either, and when the fix
       // did not fire in production there was no way to tell which branch had swallowed it — the
       // log contained no "[workable]" line at all, which is the least useful possible outcome.

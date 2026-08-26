@@ -69,6 +69,21 @@ try {
   console.log(`root:     ${root === page ? "main page" : `frame ${root.url()}`}`);
   console.log(`applied?  ${await driver.isAlreadyApplied(root).catch(() => "?")}`);
 
+  // resolveRoot can have side effects (Workable expands collapsed sections there), and turnLoop
+  // calls it EVERY turn — so it has to be idempotent. Re-resolve and re-read: the field count must
+  // not move. Without this check the second call clicked "+ Add" again unnoticed.
+  if (process.argv.includes("--twice")) {
+    const first = (await driver.read(root)).fields.length;
+    console.log(`\n>>> resolveRoot again (turnLoop does this every turn)`);
+    const root2 = await driver.resolveRoot(page);
+    const second = (await driver.read(root2)).fields.length;
+    console.log(
+      second === first
+        ? `idempotent: ${first} field(s) both times`
+        : `NOT IDEMPOTENT: ${first} field(s) then ${second} — the second call changed the form`,
+    );
+  }
+
   const snap = await driver.read(root);
   console.log(`\nsubmitReady=${snap.submitReady}  nextAvailable=${snap.nextAvailable}  fields=${snap.fields.length}\n`);
   for (const f of snap.fields) {
