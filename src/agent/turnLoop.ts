@@ -67,6 +67,9 @@ export interface TurnLoopResult {
   reachedReview: boolean; // the Submit control was reached (we never click it)
   alreadyApplied: boolean;
   blockedRequired: string[]; // required fields still empty that blocked advancing
+  /** Was the resume actually attached this run? Feeds the whole-application sanity check —
+   *  an application with no resume is not an application. */
+  resumeAttached: boolean;
 }
 
 /** Required fields we're CONFIDENT are still empty (filled === false). */
@@ -141,7 +144,7 @@ export async function runApplication(
   await driver.openApplication(page);
   let root = await driver.resolveRoot(page);
   if (await driver.isAlreadyApplied(root)) {
-    return { turns: 0, filled, answers: answers(), drafts, unknown, failedToFill, observedFields: [], reachedReview: false, alreadyApplied: true, blockedRequired };
+    return { turns: 0, filled, answers: answers(), drafts, unknown, failedToFill, observedFields: [], reachedReview: false, alreadyApplied: true, blockedRequired, resumeAttached: false };
   }
 
   // Fill one set of fields, recording results. Returns nothing — the caller
@@ -338,5 +341,6 @@ export async function runApplication(
     reachedReview,
     alreadyApplied: false,
     blockedRequired,
+    resumeAttached: resumeUploaded,
   };
 }

@@ -10,6 +10,7 @@ import { runApplication } from "../agent/turnLoop.js";
 import { ReplayAgent } from "../agent/replayAgent.js";
 import { HybridAgent } from "../agent/hybridAgent.js";
 import { compareToApproved, describeDrift, type DriftReport } from "./approvalDrift.js";
+import { describeProblems, reviewApplication } from "./applicationSanity.js";
 import { addLearnedAnswer } from "../knowledge/answerStore.js";
 import {
   classifyJobMatch,
@@ -390,7 +391,27 @@ export async function applyToJob(
     await jobPage.screenshot({ path: shotPath, fullPage: true }).catch(() => undefined);
     console.log(`  Review screenshot: ${shotPath}`);
 
+    /**
+     * The whole-application guardrail, in the ONE place every submit passes through — the
+     * emailed/website approval path, the terminal confirmation, and any future caller. Putting it
+     * in each caller is how the submit guards drifted apart once before.
+     *
+     * An approval is permission to send THIS application, not permission to send anything. If the
+     * form asked for education or work history and every one of those fields is blank, no approval
+     * makes that sensible, so this refuses regardless. See applicationSanity.ts.
+     */
     const doSubmit = async () => {
+      const problems = reviewApplication({
+        answers: result.answers,
+        observedFields: result.observedFields,
+        resumeAttached: result.resumeAttached,
+      });
+      if (problems.length) {
+        console.log(`  ⛔ NOT submitting — this application does not make sense to send:`);
+        for (const p of problems) console.log(`     • ${p.message}`);
+        console.log(`     Re-fill it (./bin/jobapp retry ${job.id}) rather than approving it again.`);
+        return;
+      }
       const root = await driver.resolveRoot(jobPage);
       submitted = await driver.submit(root).catch(() => false);
       console.log(submitted ? "  ✅ Submitted." : "  ⚠️ Submit control not found.");
@@ -430,6 +451,33 @@ export async function applyToJob(
       // The grace wait existed so an immediate emailed APPROVE could submit inside the same
       // session. It also meant a fill run could submit without anyone having opened the
       // website — the queue entry and the review were the same event. Now they are not.
+      // Reaching the Submit control is not the same as being READY to submit. Check the
+      // application as a whole before asking a human to bless it: an application whose education
+      // and work history are blank is not something to put in a review queue and wait on, it is
+      // something to re-fill. Caught on four Workable jobs that all reached review empty.
+      const gaps = reviewApplication({
+        answers: result.answers,
+        observedFields: result.observedFields,
+        resumeAttached: result.resumeAttached,
+      });
+      if (gaps.length) {
+        console.log(`  ⛔ reached review, but the application is not worth sending:`);
+        for (const g of gaps) console.log(`     • ${g.message}`);
+        await record("prefilled_pending_submit", {
+          filledFields: result.filled,
+          unknownQuestions: result.unknown,
+          answers: result.answers,
+          resume,
+          notes: [`turns: ${result.turns}`, `incomplete: ${describeProblems(gaps)}`],
+        });
+        await jobPage.close().catch(() => undefined);
+        // NOT queued for approval — it goes to /blocked with the reason, so nobody is asked to
+        // approve an application with no education on it.
+        return finish("prefilled_pending_submit", [`incomplete: ${describeProblems(gaps)}`], {
+          blockedRequired: gaps.map((g) => g.message),
+        });
+      }
+
       if (opts.interactive && process.stdin.isTTY && process.env.NO_SUBMIT !== "1") {
         // A hand-run fill can still submit on an explicit typed confirmation.
         if (await confirmSubmit({ company: job.company, title: job.title })) await doSubmit();
