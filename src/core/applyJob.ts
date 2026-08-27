@@ -19,7 +19,7 @@ import {
   findCrossAtsDuplicate,
   recordApplication,
 } from "../knowledge/applications.js";
-import { upsertPending, updatePendingStatus } from "../knowledge/approvalQueue.js";
+import { loadPendingQueue, upsertPending, updatePendingStatus } from "../knowledge/approvalQueue.js";
 import { resolveResumeForJob } from "../knowledge/resume.js";
 import {
   fetchStoredJobDescription,
@@ -44,6 +44,11 @@ import type {
   ProfileData,
   RunSummaryItem,
 } from "../types.js";
+
+/** The queue entry for this job, if a previous fill left one. */
+async function findPendingEntry(key: string) {
+  return (await loadPendingQueue()).find((e) => e.key === key || e.code === key);
+}
 
 /**
  * The handful of resume facts the guardrail checks stated answers against. Parsed from the resume
@@ -488,6 +493,22 @@ export async function applyToJob(
           notes: [`turns: ${result.turns}`, `incomplete: ${describeProblems(gaps)}`],
         });
         await jobPage.close().catch(() => undefined);
+
+        // A PREVIOUS fill of this job may already be sitting in the queue as awaiting_approval —
+        // that is exactly the case on a re-fill, which is when this fires. Blocking the new attempt
+        // while leaving the old entry approvable is the worst of both: the run says the application
+        // is not worth sending, and the website still offers an Approve button for the older,
+        // equally incomplete copy of it. Seen on NMVTAA (1 of 7 roles). Mark it `error` — it is
+        // excluded from listAwaiting(), so approve and retry both refuse it until a good re-fill
+        // replaces it.
+        const stale = await findPendingEntry(job.id || identity.identityKey);
+        if (stale && stale.status === "awaiting_approval") {
+          await updatePendingStatus(stale.key, "error", {
+            lastError: `incomplete: ${describeProblems(gaps)}`,
+          });
+          console.log(`     the queued copy of ${job.id} was still awaiting approval — marked error so it cannot be approved.`);
+        }
+
         // NOT queued for approval — it goes to /blocked with the reason, so nobody is asked to
         // approve an application with no education on it.
         return finish("prefilled_pending_submit", [`incomplete: ${describeProblems(gaps)}`], {
