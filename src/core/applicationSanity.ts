@@ -64,8 +64,29 @@ const EDUCATION = /\b(school|university|college|institution|degree|field of stud
 const EXPERIENCE = /\b(employer|company|job title|work experience|position held|current title|experience)\b/i;
 const IDENTITY = /\b(first name|last name|full name|email)\b/i;
 
-/** Labels that merely MENTION a section but are not the section's own content. */
-const NOT_CONTENT = /\b(cover letter|summary|headline|why|describe|tell us|how did you hear|referral|source)\b/i;
+/**
+ * Labels that merely MENTION a section but are not the section's own content.
+ *
+ * Measured against the 50 applications already queued: this check produced more false alarms than
+ * real findings, and every one came from a label that contains a section word without being a
+ * section field. All of these are real questions from real forms:
+ *
+ *   "How much experience in C++ programming language do you have? *"   a SKILL level, not a job
+ *   "Are you prohibited or limited … by any restrictive covenants …"   legal text, matched "company"
+ *   "Do you have, or are you currently pursuing, a college degree?"    a yes/no
+ *   "Please include your intended graduation year for the degree"      a year
+ *
+ * A rule that fires on a correct answer is worse than the bug it guards, because it blocks
+ * applications that were ready to send. Anything that looks like a question ABOUT experience
+ * rather than a record OF it belongs here.
+ */
+const NOT_CONTENT =
+  /\b(cover letter|summary|headline|why|describe|tell us|how did you hear|referral|source)\b/i;
+const NOT_A_RECORD =
+  /\bhow (much|many years)\b|\byears of\b|\blevel of (experience|proficiency)\b|\brate your\b|\bproficien/i;
+/** Legal/consent prose that happens to contain "company" or "employer". */
+const LEGAL_PROSE =
+  /\b(prohibited|restrictive covenant|non[- ]?compete|confidentiality agreement|consent|acknowledge|certify|agree that|authoris|authoriz)\b/i;
 
 const isBlank = (value: string | undefined | null): boolean => !value || !String(value).trim();
 
@@ -74,7 +95,15 @@ const isBlank = (value: string | undefined | null): boolean => !value || !String
  * mention the word ("Tell us about your education" is not an education record).
  */
 function sectionFields(fields: FieldSpec[], pattern: RegExp): FieldSpec[] {
-  return fields.filter((f) => pattern.test(f.label ?? "") && !NOT_CONTENT.test(f.label ?? ""));
+  return fields.filter((f) => {
+    const label = f.label ?? "";
+    if (!pattern.test(label)) return false;
+    // A very long label is prose, not a field name. "Are you prohibited or limited in your
+    // performance of any job duties for a company by any restrictive covenants…" matched
+    // "company" and was reported as an unfilled work-history field.
+    if (label.length > 120) return false;
+    return !NOT_CONTENT.test(label) && !NOT_A_RECORD.test(label) && !LEGAL_PROSE.test(label);
+  });
 }
 
 /** The answers given for those fields, matched by label. */

@@ -82,6 +82,30 @@ export interface ResumeFacts {
 const DEGREE_QUESTION = /\b(degree|education level|level of education|highest (level of )?education|degree (level|type|program))\b/i;
 /** …excluding the ones that ask for the subject, where "Information Systems" is the right answer. */
 const SUBJECT_QUESTION = /\b(field of study|discipline|major|subject|concentration|area of study|specialisation|specialization)\b/i;
+
+/**
+ * Questions that MENTION a degree but do not ask for its level. Measured against the 50
+ * applications already in the queue, where this check produced more false alarms than findings —
+ * and a rule that fires on correct answers is worse than the bug it guards, because it blocks
+ * applications that were ready.
+ *
+ * Every pattern here is a real question from a real form, with the answer it was given:
+ *   "Do you have, or are you currently pursuing, a college degree?"        -> "Yes"    yes/no
+ *   "Degree Type — Undergraduate/Bachelors" (a checkbox group)             -> "Yes"    group option
+ *   "Please include your intended graduation year for the degree"          -> "2028"   a year
+ *   "For your most recent degree, what is/was your GPA (normalized…)"      -> a GPA, not a level
+ * A yes/no or a group option is answered by Yes/No BY DESIGN, so "that is not a degree" is wrong
+ * about all of them.
+ */
+const NOT_A_LEVEL_QUESTION =
+  /\b(do you (have|hold)|are you (currently )?(pursuing|enrolled|working)|will you|have you|did you)\b|\b(year|gpa|grade point|when|date)\b|—\s*(undergraduate|bachelor|master|phd|mba)/i;
+
+/**
+ * Answers that are a legitimate education LEVEL without naming a degree: US undergraduate class
+ * standing. "Junior" is the right answer to "What is your current education level?" and flagging
+ * it as "names no degree level" was simply wrong.
+ */
+const CLASS_STANDING = /^(freshman|sophomore|junior|senior|first|second|third|fourth)[\s-]*(year)?$/i;
 const GPA_QUESTION = /\bgpa\b|grade point average|overall result/i;
 
 /**
@@ -101,7 +125,8 @@ export function checkFacts(
     const text = (value ?? "").trim();
     if (!text) continue;
 
-    if (DEGREE_QUESTION.test(label) && !SUBJECT_QUESTION.test(label)) {
+    if (DEGREE_QUESTION.test(label) && !SUBJECT_QUESTION.test(label) && !NOT_A_LEVEL_QUESTION.test(label)) {
+      if (CLASS_STANDING.test(text)) continue; // "Junior" is a real education level
       if (NON_ANSWER.test(text)) {
         problems.push({
           code: "degree-not-a-degree",

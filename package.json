@@ -19,7 +19,8 @@
     "test:sanity": "tsx src/debug/applicationSanityCases.ts",
     "test:history": "tsx src/debug/resumeHistoryCases.ts",
     "test:facts": "tsx src/debug/factCheckCases.ts",
-    "test:visual": "tsx src/debug/visualCheckCases.ts"
+    "test:visual": "tsx src/debug/visualCheckCases.ts",
+    "audit:queue": "tsx src/debug/auditQueue.ts"
   },
   "repository": {
     "type": "git",

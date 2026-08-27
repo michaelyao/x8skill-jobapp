@@ -46,6 +46,31 @@ check(`"Yes" given as the degree program`, codes([["What is your Current Degree 
 check(`a GPA band that excludes the real GPA`, codes([["What is your cumulative GPA?*", "3.0-3.5"]]).includes("gpa-wrong"));
 check(`a master's when the resume says bachelor's`, codes([["Highest level of education", "Master of Science"]]).includes("degree-wrong"));
 
+console.log("\nmust stay QUIET — real questions from the 50 queued applications");
+// Every case below was a FALSE POSITIVE this check produced when first run over the live queue.
+// It reported 15 problems of which 8 were wrong, which is the failure mode that makes a guardrail
+// worthless: it blocks applications that were ready to send.
+check(`a yes/no question about holding a degree`,
+  codes([["Do you have, or are you currently pursuing, a college degree?", "Yes"]]).length === 0,
+  codes([["Do you have, or are you currently pursuing, a college degree?", "Yes"]]));
+check(`a checkbox-group option answered Yes`,
+  codes([["Degree Type — Undergraduate/Bachelors", "Yes"]]).length === 0,
+  codes([["Degree Type — Undergraduate/Bachelors", "Yes"]]));
+check(`a group option answered No`, codes([["Degree Type — PhD", "No"]]).length === 0);
+check(`a graduation YEAR question`,
+  codes([["Please include your intended graduation year for the degree", "2028"]]).length === 0,
+  codes([["Please include your intended graduation year for the degree", "2028"]]));
+check(`US class standing is a real education level`,
+  codes([["What is your current education level?*", "Junior"]]).length === 0,
+  codes([["What is your current education level?*", "Junior"]]));
+check(`a GPA question whose label mentions "degree" is not a degree question`,
+  codes([["For your most recent degree, what is/was your GPA (normalized to 4.0)", "3.53"]]).length === 0,
+  codes([["For your most recent degree, what is/was your GPA (normalized to 4.0)", "3.53"]]));
+// …but the SAME label with a wrong band must still be caught as a GPA problem.
+check(`that same label with a band excluding 3.53 IS still caught`,
+  codes([["For your most recent degree, what is/was your GPA (normalized to 4.0)", "3.0 -3.5"]]).includes("gpa-wrong"),
+  codes([["For your most recent degree, what is/was your GPA (normalized to 4.0)", "3.0 -3.5"]]));
+
 console.log("\nmust stay QUIET — correct answers");
 check(`"Bachelor of Science"`, codes([["Degree (Optional)", "Bachelor of Science"]]).length === 0, codes([["Degree (Optional)", "Bachelor of Science"]]));
 check(`"Bachelors"`, codes([["Degree*", "Bachelors"]]).length === 0);
