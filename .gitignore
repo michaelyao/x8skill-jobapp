@@ -49,3 +49,6 @@ web/.env*
 web/tsconfig.tsbuildinfo
 data/rounds/
 data/learned-answers.json
+
+# Screenshots of live application forms — they show a real name, employer and education.
+screenshots/

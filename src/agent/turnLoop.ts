@@ -1,5 +1,5 @@
 import type { Page } from "playwright";
-import type { Agent, AgentContext, AtsDriver, FieldSpec, FilledAnswer } from "./types.js";
+import type { HistoryOutcome, Agent, AgentContext, AtsDriver, FieldSpec, FilledAnswer } from "./types.js";
 
 export interface TurnLoopOptions {
   resumePath: string;
@@ -70,6 +70,9 @@ export interface TurnLoopResult {
   /** Was the resume actually attached this run? Feeds the whole-application sanity check —
    *  an application with no resume is not an application. */
   resumeAttached: boolean;
+  /** Repeatable Education / Experience outcome, when the driver has such sections. Undefined
+   *  means the form has none — which is normal for Greenhouse and Lever. */
+  history?: HistoryOutcome;
 }
 
 /** Required fields we're CONFIDENT are still empty (filled === false). */
@@ -212,6 +215,8 @@ export async function runApplication(
 
   let turns = 0;
   let resumeUploaded = false;
+  let historyDone = false;
+  let history: HistoryOutcome | undefined;
   let reachedReview = false;
   let noProgress = 0; // consecutive turns that showed the same page and filled nothing new
   const everFilled = new Set<string>(); // labels filled at any point, for progress detection
@@ -225,6 +230,18 @@ export async function runApplication(
     if (!resumeUploaded) {
       resumeUploaded = await driver.uploadDocuments(root, opts.resumePath).catch(() => false);
       if (resumeUploaded) console.log("    ✓ resume attached");
+    }
+
+    // Repeatable Education / Experience sections, ONCE per run and before the read. They are not
+    // ordinary fields: each entry must be committed with its own Update before the next can be
+    // added, and a committed entry's inputs leave the DOM — so filling them after the read would
+    // both miss the other entries and confuse the required-field gate.
+    if (!historyDone && driver.fillHistorySections) {
+      historyDone = true;
+      history = await driver.fillHistorySections(root, ctx).catch((error) => {
+        console.log(`    history sections failed: ${(error as Error).message.split("\n")[0]}`);
+        return undefined;
+      });
     }
 
     // Prune BEFORE reading. The resume autofill commits skills the ATS guessed from the PDF,
@@ -342,5 +359,6 @@ export async function runApplication(
     alreadyApplied: false,
     blockedRequired,
     resumeAttached: resumeUploaded,
+    history,
   };
 }

@@ -66,6 +66,22 @@ export interface AgentContext {
   changeInstruction?: string; // user's emailed correction, applied on a re-fill
 }
 
+/**
+ * What a repeatable-history fill actually achieved. `expected` comes from the resume and
+ * `committed` from the form, so the two can be compared — an application carrying one of seven
+ * roles is a failure even though every field on screen looks filled.
+ */
+export interface HistoryOutcome {
+  educationExpected: number;
+  educationCommitted: number;
+  experienceExpected: number;
+  experienceCommitted: number;
+  /** Anything that did not go in, in the form's own terms. */
+  problems: string[];
+  /** Dates and the like that were inferred rather than stated, for the reviewer to see. */
+  derived: string[];
+}
+
 /** The LLM driver: turns a page snapshot + context into per-field answers. */
 export interface Agent {
   decide(snapshot: PageSnapshot, ctx: AgentContext): Promise<FieldAnswer[]>;
@@ -99,6 +115,19 @@ export interface AtsDriver {
    * anything to prune.
    */
   pruneSkills?(root: Root): Promise<string[]>;
+  /**
+   * Fill repeatable Education / Experience sections, which are not ordinary fields: each entry is
+   * an editing panel that must be COMMITTED with its own Update button before the next can be
+   * added, and the fields vanish from the DOM once committed. The generic reader cannot see that
+   * shape at all — it saw one blank entry, filled it, never committed it, and never added the
+   * other six roles.
+   *
+   * Content comes from the resume rather than the LLM: education and work history are facts, and
+   * a per-role Summary wants THAT role's bullet points, not a general candidate blurb.
+   *
+   * Optional: only forms with repeatable history sections have anything to do here.
+   */
+  fillHistorySections?(root: Root, ctx: AgentContext): Promise<HistoryOutcome>;
   /** Advance to the next page/turn. Returns false if there is no next control. */
   next(root: Root): Promise<boolean>;
   /**

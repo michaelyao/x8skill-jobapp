@@ -1,4 +1,4 @@
-import type { FieldSpec, FilledAnswer } from "../agent/types.js";
+import type { FieldSpec, FilledAnswer, HistoryOutcome } from "../agent/types.js";
 
 /**
  * Is this application, AS A WHOLE, worth putting in front of a human — and worth submitting?
@@ -32,11 +32,19 @@ export interface SanityInput {
   observedFields: FieldSpec[];
   /** Did a resume actually get attached this run? */
   resumeAttached: boolean;
+  /** Repeatable-history outcome, when the form has such sections. */
+  history?: HistoryOutcome;
 }
 
 export interface SanityProblem {
   /** Stable id, so a caller can whitelist one without parsing prose. */
-  code: "education-blank" | "experience-blank" | "no-resume" | "identity-blank";
+  code:
+    | "education-blank"
+    | "experience-blank"
+    | "no-resume"
+    | "identity-blank"
+    | "education-incomplete"
+    | "experience-incomplete";
   message: string;
 }
 
@@ -69,7 +77,37 @@ function answersFor(answers: FilledAnswer[], fields: FieldSpec[]): FilledAnswer[
 
 export function reviewApplication(input: SanityInput): SanityProblem[] {
   const problems: SanityProblem[] = [];
-  const { answers, observedFields, resumeAttached } = input;
+  const { answers, observedFields, resumeAttached, history } = input;
+
+  /**
+   * THE STRONGEST RULE, and the reason this file exists: when a form has repeatable history
+   * sections, the application must carry the WHOLE history — every degree and every role in the
+   * resume — not just the first one.
+   *
+   * Almost every ATS asks for full education and all work experience, so anything short of that is
+   * a defect to investigate, never something to wave through. It is checked against the RESUME
+   * rather than against the form, because the form is the thing that was getting it wrong: one
+   * uncommitted entry out of seven roles left every on-screen field looking filled, and a
+   * field-level check had nothing to complain about. A committed entry's inputs even leave the
+   * DOM, so counting fields would have made the emptiest application look like the cleanest one.
+   */
+  if (history) {
+    if (history.educationCommitted < history.educationExpected) {
+      problems.push({
+        code: "education-incomplete",
+        message: `only ${history.educationCommitted} of ${history.educationExpected} education entr${history.educationExpected === 1 ? "y" : "ies"} from the resume went in`,
+      });
+    }
+    if (history.experienceCommitted < history.experienceExpected) {
+      problems.push({
+        code: "experience-incomplete",
+        message: `only ${history.experienceCommitted} of ${history.experienceExpected} work-experience entries from the resume went in`,
+      });
+    }
+    for (const p of history.problems) {
+      problems.push({ code: "experience-incomplete", message: p });
+    }
+  }
 
   // An application with no resume is not an application. This one is unconditional: every ATS in
   // scope takes one, and it is the document the whole thing is built around.

@@ -405,6 +405,7 @@ export async function applyToJob(
         answers: result.answers,
         observedFields: result.observedFields,
         resumeAttached: result.resumeAttached,
+        history: result.history,
       });
       if (problems.length) {
         console.log(`  ⛔ NOT submitting — this application does not make sense to send:`);
@@ -459,6 +460,7 @@ export async function applyToJob(
         answers: result.answers,
         observedFields: result.observedFields,
         resumeAttached: result.resumeAttached,
+        history: result.history,
       });
       if (gaps.length) {
         console.log(`  ⛔ reached review, but the application is not worth sending:`);
