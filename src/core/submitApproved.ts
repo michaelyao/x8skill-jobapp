@@ -4,6 +4,8 @@ import { hasSubmittedBefore } from "../knowledge/applications.js";
 import { setVisualCheck, updatePendingStatus, type PendingEntry } from "../knowledge/approvalQueue.js";
 import { ReplayAgent } from "../agent/replayAgent.js";
 import { describeDiff, diffRounds, listRounds } from "../knowledge/rounds.js";
+import { describeProblems, reviewApplication } from "./applicationSanity.js";
+import { parseResumeHistory } from "../knowledge/resumeHistory.js";
 import type { FilledAnswer } from "../agent/types.js";
 import type { AnswerEntry, ApplicationRecord, FilteredJob } from "../types.js";
 
@@ -80,6 +82,57 @@ export async function submitApprovedEntry(
     return {
       result: "already_submitted",
       message: `[${label}] the ledger already records this as submitted — not submitting again`,
+      answers,
+      applications,
+    };
+  }
+
+  /**
+   * Re-check the QUEUED CONTENT before sending it, whenever it was filled.
+   *
+   * The whole-application guardrail runs during a fill, so it protects applications filled after it
+   * existed and says nothing about the fifty already sitting in the queue. `npm run audit:queue`
+   * found nine of those that would now be refused — a GPA band of "3.0 -3.5" against a real 3.53, an
+   * application with no email address, several with School and Degree blank.
+   *
+   * Re-filling them was not enough, and that is the point of checking here. A re-fill that FAILS
+   * ("did not reach review", "still blocked on <required field>") leaves the old entry untouched
+   * and still `awaiting_approval` — seven of the nine ended exactly that way, approvable, holding
+   * the same incomplete content the audit had just condemned. Marking the entry on every failure
+   * path would be both fiddly and wrong (a network failure says nothing about the queued copy).
+   *
+   * So the question is asked where it actually matters: not "did the last fill go well?" but "is
+   * the thing we are about to send acceptable?". This is the one place every send passes through,
+   * it needs no new status, and it covers entries filled long before any of these checks existed.
+   *
+   * Facts only — no `history` or `documents`, which were never recorded for older entries and
+   * whose absence must not be read as a fault.
+   */
+  // The queue entry holds the answers; the field list lives on the last recorded round, which is
+  // what makes "the form asked for education and it is blank" answerable here at all.
+  const rounds = await listRounds(entry.code ?? entry.key).catch(() => []);
+  const lastRound = rounds[rounds.length - 1];
+  const edu = parseResumeHistory(ctx.deps.profile.resumeText || ctx.deps.profile.rawText || "").education[0];
+  const stale = reviewApplication({
+    answers: (entry.answers ?? []).map((a) => ({ label: a.label, value: a.value, type: "text" as const })),
+    observedFields: (lastRound?.fields ?? []).map((f) => ({
+      key: f.label,
+      label: f.label,
+      type: "text" as const,
+      required: f.required,
+      options: f.options,
+    })),
+    resumeAttached: true,
+    facts: { degree: edu?.degree, fieldOfStudy: edu?.fieldOfStudy, gpa: ctx.deps.profile.gpa ?? edu?.gpa },
+  });
+  if (stale.length) {
+    await updatePendingStatus(entry.key, "error", { lastError: `incomplete: ${describeProblems(stale)}` });
+    return {
+      result: "gave_up",
+      message:
+        `[${label}] NOT submitting — the queued application is incomplete:\n` +
+        `${stale.map((p) => `     • ${p.message}`).join("\n")}\n` +
+        `     Re-fill it (./bin/jobapp retry ${label}); approving it again will not change this.`,
       answers,
       applications,
     };

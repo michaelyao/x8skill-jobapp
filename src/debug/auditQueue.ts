@@ -81,7 +81,21 @@ async function main(): Promise<void> {
     }
     audited += 1;
     const problems = reviewApplication({
-      answers: (round.data.answers ?? entry.answers ?? []) as FilledAnswer[],
+      /**
+       * The ENTRY's answers, not the round's — this must judge what would actually be submitted.
+       *
+       * The first version read `round.answers`, and after a failed re-fill that is the FAILED
+       * attempt's answers, not the queued ones. It condemned nine applications; DVDFRR turned out
+       * to hold School "Carnegie Mellon University", Degree "Bachelor's Degree" and GPA 3.53 all
+       * along — complete, and reported as broken because the newest round was a re-fill that had
+       * stopped early with 8 of 19 answers.
+       *
+       * An audit that cries wolf is worse than no audit: it sent nine unnecessary re-fills at a
+       * live employer's form. Same source as the submit gate now, so the two always agree.
+       */
+      answers: (entry.answers ?? []) as FilledAnswer[],
+      // Fields still come from the round — the queue entry does not record them, and they are what
+      // makes "the form asked for education" answerable at all.
       observedFields: round.data.fields ?? [],
       // Not knowable retrospectively — assume the resume went on, so this cannot raise a
       // false "no resume" on every historical entry.
