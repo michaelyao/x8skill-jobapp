@@ -1,4 +1,5 @@
-import type { FieldSpec, FilledAnswer, HistoryOutcome } from "../agent/types.js";
+import type { DocumentUploads, FieldSpec, FilledAnswer, HistoryOutcome } from "../agent/types.js";
+import { checkFacts, type FactProblem, type ResumeFacts } from "./factChecks.js";
 
 /**
  * Is this application, AS A WHOLE, worth putting in front of a human — and worth submitting?
@@ -34,6 +35,10 @@ export interface SanityInput {
   resumeAttached: boolean;
   /** Repeatable-history outcome, when the form has such sections. */
   history?: HistoryOutcome;
+  /** Which documents went in, and which the form asked for and did not get. */
+  documents?: DocumentUploads;
+  /** Facts from the resume, so stated answers can be checked against them. */
+  facts?: ResumeFacts;
 }
 
 export interface SanityProblem {
@@ -44,7 +49,9 @@ export interface SanityProblem {
     | "no-resume"
     | "identity-blank"
     | "education-incomplete"
-    | "experience-incomplete";
+    | "experience-incomplete"
+    | "document-missing"
+    | FactProblem["code"];
   message: string;
 }
 
@@ -77,7 +84,29 @@ function answersFor(answers: FilledAnswer[], fields: FieldSpec[]): FilledAnswer[
 
 export function reviewApplication(input: SanityInput): SanityProblem[] {
   const problems: SanityProblem[] = [];
-  const { answers, observedFields, resumeAttached, history } = input;
+  const { answers, observedFields, resumeAttached, history, documents, facts } = input;
+
+  /**
+   * Are the values TRUE? Every other rule here asks whether fields are filled. A wrong answer is
+   * worse than a blank one, because it looks complete and gets believed: live applications went
+   * out saying the degree was "Associate's Degree", "Information Systems" and even
+   * "Python (Programming Language)", and a GPA of 3.53 reported as the band "3.0-3.5". See
+   * factChecks.ts — the checks are anchored on the resume, so they cannot invent a disagreement.
+   */
+  if (facts) {
+    for (const p of checkFacts(answers.map((a) => ({ label: a.label ?? "", value: a.value ?? "" })), facts)) {
+      problems.push(p);
+    }
+  }
+
+  /**
+   * A document the form ASKED FOR and did not get. read() excludes file inputs, so this is
+   * invisible to every field-level check — a required transcript was simply never uploaded, and
+   * nothing anywhere complained.
+   */
+  for (const m of documents?.missing ?? []) {
+    problems.push({ code: "document-missing", message: `the form asks for a document it did not get: ${m}` });
+  }
 
   /**
    * THE STRONGEST RULE, and the reason this file exists: when a form has repeatable history

@@ -67,6 +67,18 @@ export interface AgentContext {
 }
 
 /**
+ * Which documents went in, and which the form asked for but did not get. read() excludes file
+ * inputs, so a missing REQUIRED upload is invisible to every field-level check — this is the only
+ * place it can be reported from.
+ */
+export interface DocumentUploads {
+  /** "resume" | "transcript" */
+  attached: string[];
+  /** Human-readable reasons, one per document the form wanted and did not get. */
+  missing: string[];
+}
+
+/**
  * What a repeatable-history fill actually achieved. `expected` comes from the resume and
  * `committed` from the form, so the two can be compared — an application carrying one of seven
  * roles is a failure even though every field on screen looks filled.
@@ -108,7 +120,8 @@ export interface AtsDriver {
   /** Validation messages the form itself is showing (why it refuses to advance). */
   validationErrors?(root: Root): Promise<string[]>;
   /** Attach the resume; true only if a file was actually set this call. */
-  uploadDocuments(root: Root, resumePath: string): Promise<boolean>;
+  /** Attach every document the form asks for. See DocumentUploads. */
+  uploadDocuments(root: Root, resumePath: string): Promise<DocumentUploads>;
   /**
    * Delete skills the resume autofill added that the curated plan says do not belong.
    * Returns the labels confirmed gone. Optional: only forms with a skills taxonomy have

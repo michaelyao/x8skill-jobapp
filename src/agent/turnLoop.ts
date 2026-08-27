@@ -1,5 +1,5 @@
 import type { Page } from "playwright";
-import type { HistoryOutcome, Agent, AgentContext, AtsDriver, FieldSpec, FilledAnswer } from "./types.js";
+import type { DocumentUploads, HistoryOutcome, Agent, AgentContext, AtsDriver, FieldSpec, FilledAnswer } from "./types.js";
 
 export interface TurnLoopOptions {
   resumePath: string;
@@ -73,6 +73,8 @@ export interface TurnLoopResult {
   /** Repeatable Education / Experience outcome, when the driver has such sections. Undefined
    *  means the form has none — which is normal for Greenhouse and Lever. */
   history?: HistoryOutcome;
+  /** Which documents went in, and which the form wanted and did not get. */
+  documents: DocumentUploads;
 }
 
 /** Required fields we're CONFIDENT are still empty (filled === false). */
@@ -147,7 +149,7 @@ export async function runApplication(
   await driver.openApplication(page);
   let root = await driver.resolveRoot(page);
   if (await driver.isAlreadyApplied(root)) {
-    return { turns: 0, filled, answers: answers(), drafts, unknown, failedToFill, observedFields: [], reachedReview: false, alreadyApplied: true, blockedRequired, resumeAttached: false };
+    return { turns: 0, filled, answers: answers(), drafts, unknown, failedToFill, observedFields: [], reachedReview: false, alreadyApplied: true, blockedRequired, resumeAttached: false, documents: { attached: [], missing: [] } };
   }
 
   // Fill one set of fields, recording results. Returns nothing — the caller
@@ -215,6 +217,8 @@ export async function runApplication(
 
   let turns = 0;
   let resumeUploaded = false;
+  let documentsDone = false;
+  let documents: DocumentUploads = { attached: [], missing: [] };
   let historyDone = false;
   let history: HistoryOutcome | undefined;
   let reachedReview = false;
@@ -227,9 +231,15 @@ export async function runApplication(
     // ONCE per run. Calling this every turn attached the resume repeatedly — five copies on
     // one Workday application — and each attachment triggered another resume autofill, which
     // is where the duplicated work-experience blocks came from.
-    if (!resumeUploaded) {
-      resumeUploaded = await driver.uploadDocuments(root, opts.resumePath).catch(() => false);
-      if (resumeUploaded) console.log("    ✓ resume attached");
+    if (!documentsDone) {
+      documentsDone = true;
+      documents = await driver
+        .uploadDocuments(root, opts.resumePath)
+        .catch(() => ({ attached: [] as string[], missing: [] as string[] }));
+      resumeUploaded = documents.attached.includes("resume");
+      // A document the form ASKED FOR and did not get is invisible to every field-level check,
+      // because read() excludes file inputs. Say it here or it is never said.
+      for (const m of documents.missing) console.log(`    ⚠ missing document: ${m}`);
     }
 
     // Repeatable Education / Experience sections, ONCE per run and before the read. They are not
@@ -360,5 +370,6 @@ export async function runApplication(
     blockedRequired,
     resumeAttached: resumeUploaded,
     history,
+    documents,
   };
 }

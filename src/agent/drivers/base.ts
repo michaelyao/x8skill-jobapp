@@ -1,7 +1,10 @@
+import fs from "node:fs";
+import path from "node:path";
+import { TRANSCRIPT_PATH } from "../../config.js";
 import type { Locator, Page } from "playwright";
 import { loadSkillPicks, loadSkillRemovals, pillsToRemove, type SkillPill } from "../../knowledge/skillPlan.js";
 import { isSensitive } from "../llmAgent.js";
-import type { AtsDriver, FieldAnswer, FieldSpec, PageSnapshot, Root } from "../types.js";
+import type { AtsDriver, DocumentUploads, FieldAnswer, FieldSpec, PageSnapshot, Root } from "../types.js";
 
 /** Parse a human/ISO date string into y/m/day, or null. */
 function parseDate(value: string): { y: number; m: number; day: number } | null {
@@ -1466,24 +1469,77 @@ export abstract class GenericDriver implements AtsDriver {
    * Also skips when the page already shows an attachment, so a resumed or re-entered flow
    * does not add a second copy.
    */
-  async uploadDocuments(root: Root, resumePath: string): Promise<boolean> {
-    const fileInput = root.locator('input[type="file"]').first();
-    if (!(await fileInput.count().catch(() => 0))) return false;
+  /**
+   * Attach EVERY document the form asks for, matched to the right upload.
+   *
+   * This used to set `input[type="file"]`.first() to the resume and stop. On a form with two
+   * uploads — resume and transcript — that put the resume into whichever came first and left the
+   * transcript blank, and since read() excludes file inputs, nothing downstream could see the gap:
+   * the application reached review with a required transcript missing and no complaint anywhere.
+   * (Transcript support did exist, but only in src/adapters/, a tree nothing in the production
+   * path imports.)
+   *
+   * Each input is matched by what the form CALLS it, not by position.
+   */
+  async uploadDocuments(root: Root, resumePath: string): Promise<DocumentUploads> {
+    const out: DocumentUploads = { attached: [], missing: [] };
+    const inputs = root.locator('input[type="file"]');
+    const count = await inputs.count().catch(() => 0);
+    if (count === 0) return out;
 
-    const already = await root
-      .locator('[data-automation-id="file-upload-item"], [data-automation-id="attachment"], [class*="uploaded" i]')
-      .count()
-      .catch(() => 0);
-    if (already > 0) return false;
+    for (let i = 0; i < count; i += 1) {
+      const input = inputs.nth(i);
+      // Already holds a file, or the form is showing an uploaded item for it — leave it alone.
+      const hasFile = await input.evaluate((el) => (el as HTMLInputElement).files?.length ?? 0).catch(() => 0);
+      if (hasFile > 0) continue;
 
-    // A file input that already holds a file (same page, second pass).
-    const hasFile = await fileInput
-      .evaluate((el) => (el as HTMLInputElement).files?.length ?? 0)
-      .catch(() => 0);
-    if (hasFile > 0) return false;
+      // What does this upload want? Read the label, the accessible name and the surrounding text.
+      const described = (
+        await input
+          .evaluate((el) => {
+            const bits = [
+              el.getAttribute("aria-label") ?? "",
+              el.getAttribute("name") ?? "",
+              el.getAttribute("data-testid") ?? "",
+              el.id ?? "",
+            ];
+            if (el.id) {
+              const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+              if (lab) bits.push((lab as HTMLElement).innerText ?? "");
+            }
+            const box = el.closest('[class*="field" i], fieldset, div, section');
+            if (box) bits.push(((box as HTMLElement).innerText ?? "").slice(0, 200));
+            return bits.join(" ");
+          })
+          .catch(() => "")
+      ).toLowerCase();
 
-    await fileInput.setInputFiles(resumePath).catch(() => undefined);
-    return true;
+      const wantsTranscript = /transcript|academic record|grade report|marksheet|mark sheet/.test(described);
+      const wantsResume = /resume|cv\b|curriculum/.test(described);
+      const target = wantsTranscript ? TRANSCRIPT_PATH : resumePath;
+      const kind = wantsTranscript ? "transcript" : "resume";
+
+      // Only fill an UNLABELLED input with the resume, and only if the resume is not in already —
+      // otherwise a second anonymous upload gets a duplicate copy of the CV.
+      if (!wantsTranscript && !wantsResume && out.attached.includes("resume")) continue;
+
+      if (wantsTranscript && !fs.existsSync(TRANSCRIPT_PATH)) {
+        out.missing.push(`transcript (the form asks for one and ${path.basename(TRANSCRIPT_PATH)} is not present)`);
+        continue;
+      }
+
+      await input.setInputFiles(target).catch(() => undefined);
+      await root.locator("body").waitFor({ timeout: 500 }).catch(() => undefined);
+      const landed = await input.evaluate((el) => (el as HTMLInputElement).files?.length ?? 0).catch(() => 0);
+      if (landed > 0) {
+        out.attached.push(kind);
+        console.log(`    ✓ ${kind} attached`);
+      } else {
+        out.missing.push(`${kind} (setInputFiles did not take)`);
+        console.log(`    ✗ ${kind} would not attach`);
+      }
+    }
+    return out;
   }
 
   protected async hasSubmit(root: Root): Promise<boolean> {

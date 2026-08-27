@@ -1,4 +1,6 @@
 import { normalizeQuestion } from "../utils/normalize.js";
+import { parseResumeHistory } from "../knowledge/resumeHistory.js";
+import { bandContains, degreeLevel, parseGpaBand } from "../core/factChecks.js";
 import type { Agent, AgentContext, FieldAnswer, FieldSpec, PageSnapshot } from "./types.js";
 
 // Legal / demographic / compensation fields we must never free-guess. The agent
@@ -481,6 +483,80 @@ export class LlmAgent implements Agent {
           answer.confidence = 1;
           answer.needsHuman = false;
           answer.blank = wanted === "";
+        }
+      }
+    }
+
+    /**
+     * DEGREE LEVEL and GPA are facts, so they are decided from the resume rather than left to the
+     * model. Both were being got wrong on live applications in ways that look filled and get
+     * believed:
+     *   Degree*                            -> "Associate's Degree"          the wrong level
+     *   Degree                             -> "Information Systems"         a field of study
+     *   Degree                             -> "Python (Programming Language)"  a skill
+     *   What is your cumulative GPA?*      -> "3.0-3.5"                     excludes a real 3.53
+     *
+     * applicationSanity/factChecks BLOCKS all of these, but blocking alone would just park every
+     * such job on /blocked forever — the model would keep choosing the same wrong option. This
+     * picks the right one instead, and the guardrail stays as the backstop.
+     */
+    const eduFacts = parseResumeHistory(ctx.resumeText || ctx.profile?.rawText || "").education[0];
+    const wantLevel = eduFacts?.degree ? degreeLevel(eduFacts.degree) : undefined;
+    const realGpa = Number(ctx.profile?.gpa ?? eduFacts?.gpa ?? "");
+
+    for (const field of snapshot.fields) {
+      const label = field.label ?? "";
+      const answer = answers.find((a) => a.key === field.key);
+      if (!answer) continue;
+
+      // A degree-LEVEL question, not a subject one ("Field of study" wants Information Systems).
+      const isDegreeLevel =
+        /\b(degree|education level|level of education|highest (level of )?education)\b/i.test(label) &&
+        !/\b(field of study|discipline|major|subject|concentration|area of study)\b/i.test(label);
+      if (isDegreeLevel && wantLevel) {
+        if (field.options?.length) {
+          const match = field.options.find((o) => degreeLevel(o) === wantLevel);
+          if (match && answer.value !== match) {
+            console.log(`  [agent] degree → ${JSON.stringify(match)} (the resume says ${JSON.stringify(eduFacts?.degree)}, not ${JSON.stringify(answer.value)})`);
+            answer.value = match;
+            answer.source = "profile";
+            answer.confidence = 1;
+            answer.needsHuman = false;
+          }
+        } else if (degreeLevel(answer.value) !== wantLevel && eduFacts?.degree) {
+          console.log(`  [agent] degree → ${JSON.stringify(eduFacts.degree)} (was ${JSON.stringify(answer.value)}, which is not a ${wantLevel} degree)`);
+          answer.value = eduFacts.degree;
+          answer.source = "profile";
+          answer.confidence = 1;
+          answer.needsHuman = false;
+        }
+      }
+
+      // GPA: the exact figure in a text box, and the band that CONTAINS it in a dropdown.
+      if (/\bgpa\b|grade point average|overall result/i.test(label) && !Number.isNaN(realGpa) && realGpa > 0) {
+        if (field.options?.length) {
+          const band = field.options.find((o) => {
+            const parsed = parseGpaBand(o);
+            return parsed && bandContains(parsed, realGpa);
+          });
+          if (band && answer.value !== band) {
+            console.log(`  [agent] GPA band → ${JSON.stringify(band)} (contains the real ${realGpa}; was ${JSON.stringify(answer.value)})`);
+            answer.value = band;
+            answer.source = "profile";
+            answer.confidence = 1;
+            answer.needsHuman = false;
+          }
+        } else if (answer.value.trim() !== String(realGpa)) {
+          const parsed = parseGpaBand(answer.value);
+          // Only correct a value that is a NUMBER or a band and disagrees. Free-text answers like
+          // "see transcript" are left alone.
+          if (parsed && !bandContains(parsed, realGpa)) {
+            console.log(`  [agent] GPA → ${realGpa} (was ${JSON.stringify(answer.value)})`);
+            answer.value = String(realGpa);
+            answer.source = "profile";
+            answer.confidence = 1;
+            answer.needsHuman = false;
+          }
         }
       }
     }

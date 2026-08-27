@@ -11,6 +11,8 @@ import { ReplayAgent } from "../agent/replayAgent.js";
 import { HybridAgent } from "../agent/hybridAgent.js";
 import { compareToApproved, describeDrift, type DriftReport } from "./approvalDrift.js";
 import { describeProblems, reviewApplication } from "./applicationSanity.js";
+import { parseResumeHistory } from "../knowledge/resumeHistory.js";
+import type { ResumeFacts } from "./factChecks.js";
 import { addLearnedAnswer } from "../knowledge/answerStore.js";
 import {
   classifyJobMatch,
@@ -42,6 +44,15 @@ import type {
   ProfileData,
   RunSummaryItem,
 } from "../types.js";
+
+/**
+ * The handful of resume facts the guardrail checks stated answers against. Parsed from the resume
+ * rather than taken from the LLM, for the same reason the history sections are: these are facts.
+ */
+function resumeFacts(profile: ProfileData): ResumeFacts {
+  const edu = parseResumeHistory(profile.resumeText || profile.rawText || "").education[0];
+  return { degree: edu?.degree, fieldOfStudy: edu?.fieldOfStudy, gpa: profile.gpa ?? edu?.gpa };
+}
 
 const drivers: AtsDriver[] = [new WorkdayDriver(), new AshbyDriver(), new GreenhouseDriver(), new LeverDriver(), new WorkableDriver(), new OracleDriver()];
 
@@ -406,6 +417,8 @@ export async function applyToJob(
         observedFields: result.observedFields,
         resumeAttached: result.resumeAttached,
         history: result.history,
+        documents: result.documents,
+        facts: resumeFacts(profile),
       });
       if (problems.length) {
         console.log(`  ⛔ NOT submitting — this application does not make sense to send:`);
@@ -461,6 +474,8 @@ export async function applyToJob(
         observedFields: result.observedFields,
         resumeAttached: result.resumeAttached,
         history: result.history,
+        documents: result.documents,
+        facts: resumeFacts(profile),
       });
       if (gaps.length) {
         console.log(`  ⛔ reached review, but the application is not worth sending:`);
