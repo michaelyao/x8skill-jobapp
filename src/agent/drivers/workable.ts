@@ -90,11 +90,11 @@ export class WorkableDriver extends GenericDriver {
      * before/after count stopped that becoming a second blank entry, and on a form where "+ Add"
      * genuinely appends one, it would have stacked empties — the very thing this guard is for.
      */
-    const sections: Array<[string, RegExp, RegExp]> = [
-      ["education", /^add education$/i, /school|degree|field of study|institution/i],
-      ["experience", /^add experience$/i, /company|industry|employer/i],
+    const sections: Array<[string, RegExp, RegExp, string]> = [
+      ["education", /^add education$/i, /school|degree|field of study|institution/i, "school"],
+      ["experience", /^add experience$/i, /company|industry|employer/i, "title"],
     ];
-    for (const [name, label, already] of sections) {
+    for (const [name, label, already, probeName] of sections) {
       const existing = await page.getByLabel(already).count().catch(() => 0);
       // Both skip paths LOG. The first version returned silently from either, and when the fix
       // did not fire in production there was no way to tell which branch had swallowed it — the
@@ -116,10 +116,18 @@ export class WorkableDriver extends GenericDriver {
       const before = await page.locator("input:not([type=hidden]), select, textarea").count().catch(() => 0);
       await button.scrollIntoViewIfNeeded().catch(() => undefined);
       await button.click().catch(() => undefined);
-      await page.waitForTimeout(900);
+      // Wait for the section's OWN field, not a fixed interval. This one did verify its result, so
+      // a short wait never reported a false success — but it reported a false FAILURE ("revealed no
+      // fields"), and the history fill then found no panel to fill. Same intermittent short
+      // application as the openNewEntry race, one step earlier.
+      await page
+        .locator(`input[name="${probeName}"]`)
+        .first()
+        .waitFor({ state: "visible", timeout: 15_000 })
+        .catch(() => undefined);
       const after = await page.locator("input:not([type=hidden]), select, textarea").count().catch(() => 0);
       if (after > before) console.log(`    [workable] expanded ${name} (+${after - before} field(s))`);
-      else console.log(`    [workable] "+ Add" for ${name} revealed no fields — leaving it collapsed.`);
+      else console.log(`    [workable] "+ Add" for ${name} revealed no fields in 15s — leaving it collapsed.`);
     }
   }
 
@@ -177,8 +185,21 @@ export class WorkableDriver extends GenericDriver {
     return true;
   }
 
-  /** Open a fresh entry panel via the section's "+ Add", which is only enabled once the last one committed. */
-  private async openNewEntry(page: Page, label: RegExp, what: string): Promise<boolean> {
+  /**
+   * Open a fresh entry panel via the section's "+ Add", which is only enabled once the last entry
+   * committed. Returns true only when the panel's own field is actually on the page.
+   *
+   * WAIT FOR THE PANEL, DO NOT SLEEP AND HOPE. The first version clicked Add, slept 800ms and
+   * returned true without looking — so under load the panel had not rendered yet, the caller's
+   * check found no field, and the loop stopped at ONE of seven roles. It failed that way on
+   * NMVTAA in production and then filled 7/7 on the same URL from a quiet machine, which is the
+   * signature of a race rather than a form difference; an intermittent short application is worse
+   * than a consistent one, because it looks fine most of the time.
+   *
+   * This is the same fixed-sleep-plus-unverified-success mistake as Oracle's Apply button, written
+   * a second time in a different file. Anything that waits on a render here waits on the element.
+   */
+  private async openNewEntry(page: Page, label: RegExp, what: string, probeName: string): Promise<boolean> {
     const add = page.getByRole("button", { name: label }).first();
     if (!(await add.isVisible().catch(() => false))) return false;
     if (!(await add.isEnabled().catch(() => false))) {
@@ -187,8 +208,13 @@ export class WorkableDriver extends GenericDriver {
     }
     await add.scrollIntoViewIfNeeded().catch(() => undefined);
     await add.click().catch(() => undefined);
-    await page.waitForTimeout(800);
-    return true;
+    try {
+      await page.locator(`input[name="${probeName}"]`).first().waitFor({ state: "visible", timeout: 15_000 });
+      return true;
+    } catch {
+      console.log(`      ✗ "+ Add" for ${what} was clicked but no entry panel appeared within 15s`);
+      return false;
+    }
   }
 
   /**
@@ -213,7 +239,7 @@ export class WorkableDriver extends GenericDriver {
 
     for (const [index, edu] of history.education.entries()) {
       const panelOpen = async () => (await page.locator('input[name="school"]').count().catch(() => 0)) > 0;
-      if (!(await panelOpen()) && !(await this.openNewEntry(page, /^add education$/i, "education"))) {
+      if (!(await panelOpen()) && !(await this.openNewEntry(page, /^add education$/i, "education", "school"))) {
         out.problems.push(`could not open an entry for education ${index + 1} (${edu.school})`);
         break;
       }
@@ -241,7 +267,7 @@ export class WorkableDriver extends GenericDriver {
       // that point — asking for a new entry there reported a failure that was not one. Only reach
       // for "+ Add" when no panel is open.
       const panelOpen = async () => (await page.locator('input[name="title"]').count().catch(() => 0)) > 0;
-      if (!(await panelOpen()) && !(await this.openNewEntry(page, /^add experience$/i, "experience"))) {
+      if (!(await panelOpen()) && !(await this.openNewEntry(page, /^add experience$/i, "experience", "title"))) {
         out.problems.push(`could not open an entry for ${job.company} (${index + 1} of ${history.experience.length})`);
         break;
       }
