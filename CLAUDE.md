@@ -70,6 +70,38 @@ without it every send under the daemon fails with *"no TTY available for keyring
 password prompt"* while the same code works by hand. An app password would not help; gog uses
 the Gmail API over OAuth, not SMTP.
 
+### x8ocr (the visual cross-check)
+
+```
+X8OCR_API_ENDPOINT=http://localhost:8799
+X8OCR_API_KEY=<the key x8ocr issued to this app>
+X8OCR_CALLBACK_URL=http://host.docker.internal:8088/api/ocr-result
+X8OCR_CALLBACK_TOKEN=<shared secret, any random string>
+```
+
+x8ocr now **requires** an API key: without `X8OCR_API_KEY` every extract/job call answers 401
+and the visual cross-check silently records itself as unavailable.
+
+The cross-check is **asynchronous**. The fill run submits the review screenshot as an x8ocr job
+and returns; x8ocr POSTs the result to `X8OCR_CALLBACK_URL`, which is the website's receiver, and
+the website enqueues a `visual_check` command that the WORKER applies — the worker is still the
+only writer of `pending-approvals.json`. `X8OCR_CALLBACK_TOKEN` is the shared secret the receiver
+checks; it must be identical on both sides, and the receiver rejects everything when it is unset.
+
+The callback URL is the **website's** address, not the worker's, because the worker is a native
+process that exits between sweeps while the website container is always up and shares `./data`.
+From x8ocr's container on this host that means `host.docker.internal:8088`.
+
+Until the verdict arrives the entry carries `visualCheck.state === "pending"`, and
+`submitApprovedEntry()` refuses to send. `VISUAL_CHECK_GRACE_MS` (default 10 min) is how long it
+waits before ageing a stuck check out to "unavailable" and proceeding — x8ocr holds jobs in
+memory, so a restart loses them and nothing may be blocked forever. `OCR_VERIFY=0` still skips
+the check entirely.
+
+**Deploying this needs a worker restart.** A running worker built before the `visual_check`
+command existed rejects it as *"unrecognised command"*, so no verdict is ever applied and every
+check ages out to unavailable — safe, but no verification happens.
+
 ## Architecture
 
 ```

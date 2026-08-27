@@ -8,7 +8,21 @@ import { publicUrl } from "./lib/publicUrl";
  * signature (middleware runs on the edge runtime, where node:crypto is unavailable, so the
  * cryptographic check happens in the route/page — this is the coarse gate, not the only one).
  */
-const PUBLIC = ["/login", "/api/login", "/api/health"];
+/**
+ * Exempt from the SESSION gate — not unauthenticated.
+ *
+ * `/api/ocr-result` is x8ocr's callback: the caller is a service on this host, not a browser, so
+ * it has no session cookie and can never get one. It authenticates itself with the shared
+ * `X8OCR_CALLBACK_TOKEN` (constant-time digest compare, and it rejects everything when the token
+ * is unset), so the check moves into the route rather than disappearing.
+ *
+ * Leaving it out of this list is not a safe default here, it is a silent one: the middleware
+ * answers 401 before the handler runs, x8ocr does not retry a 4xx, and every visual verdict is
+ * lost while each check ages out to "unavailable" — verification quietly stops happening and
+ * nothing reports that it has. Measured exactly that: `callback 401`, `{"error":"unauthorized"}`
+ * from this file rather than from the route.
+ */
+const PUBLIC = ["/login", "/api/login", "/api/health", "/api/ocr-result"];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;

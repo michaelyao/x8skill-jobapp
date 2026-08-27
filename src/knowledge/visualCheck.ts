@@ -15,8 +15,10 @@ import path from "node:path";
  *     still need input[name="end_date"] to type into; OCR only tells you what is showing.
  *   - It cannot separate two identically-labelled fields (this form has two "Summary (Optional)")
  *     any better than the DOM could.
- *   - 25-33 SECONDS per full-page screenshot. Per page per turn that is 3-4 minutes an
- *     application; once per application at review it is noise.
+ *   - SLOW AND UNPREDICTABLE: 1.6-10.7s for a small region, ~56s for a full-page screenshot,
+ *     with a 4x spread on repeat submissions of identical bytes. No timeout is both safe and
+ *     tight, which is why this is submitted as an x8ocr JOB and the verdict arrives later via
+ *     callback (see submitOcrJob) rather than being awaited inside the fill run.
  *   - Overlays confuse it: with the date picker open it rendered the Title field as a table of
  *     "Title | Oct | Nov | Dec". It is least reliable exactly where reading is hardest.
  *
@@ -25,6 +27,12 @@ import path from "node:path";
  */
 
 const endpoint = (): string => process.env.X8OCR_API_ENDPOINT || "http://localhost:8799";
+
+/** x8ocr requires an API key on every extract/job call; without one it answers 401. */
+const apiKeyHeader = (): Record<string, string> => {
+  const key = (process.env.X8OCR_API_KEY || "").trim();
+  return key ? { authorization: `Bearer ${key}` } : {};
+};
 
 /** OCR one image. Returns null on any failure — this must never block an application. */
 export async function ocrImage(imagePath: string, timeoutMs = 90_000): Promise<string | null> {
@@ -37,6 +45,7 @@ export async function ocrImage(imagePath: string, timeoutMs = 90_000): Promise<s
     body.append("file", new Blob([bytes], { type: "image/png" }), path.basename(imagePath));
     const res = await fetch(`${endpoint().replace(/\/$/, "")}/v1/extract`, {
       method: "POST",
+      headers: apiKeyHeader(),
       body,
       signal: controller.signal,
     });
@@ -122,4 +131,68 @@ export function placeholdersShowing(screenText: string): string[] {
   const count = (screenText.match(/MM\s*\/\s*YYYY/gi) ?? []).length;
   if (count > 0) out.push(`${count} date field(s) still showing the MM/YYYY placeholder`);
   return out;
+}
+
+/**
+ * Hand the screenshot to x8ocr as a JOB and return its id immediately.
+ *
+ * The fill run does not wait: x8ocr POSTs the result to `callbackUrl` when it is done, the
+ * website turns that into a `visual_check` command, and the worker applies the verdict to the
+ * queue entry. Until then the entry carries visualCheck.state === "pending", which the submit
+ * guard refuses — so nothing can be approved-and-sent on an unverified screen.
+ *
+ * Returns null on any failure, and a null must never block an application: the caller records
+ * the check as "unavailable", which behaves exactly as a null OCR result always did.
+ */
+export async function submitOcrJob(
+  imagePath: string,
+  opts: { code: string; timeoutMs?: number },
+): Promise<string | null> {
+  if (!fs.existsSync(imagePath)) return null;
+  const callbackUrl = process.env.X8OCR_CALLBACK_URL;
+  const callbackToken = process.env.X8OCR_CALLBACK_TOKEN;
+  if (!callbackUrl || !callbackToken) return null; // not configured — stay synchronous-free, say nothing
+
+  const controller = new AbortController();
+  // Only the SUBMIT is bounded here; the extraction itself has no deadline on this side.
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 15_000);
+  try {
+    const body = new FormData();
+    const bytes = await fs.promises.readFile(imagePath);
+    body.append("file", new Blob([bytes], { type: "image/png" }), path.basename(imagePath));
+    // `code` rides along so the callback can name the entry the verdict belongs to.
+    body.append("callbackUrl", `${callbackUrl}${callbackUrl.includes("?") ? "&" : "?"}code=${encodeURIComponent(opts.code)}`);
+    body.append("callbackToken", callbackToken);
+
+    const res = await fetch(`${endpoint().replace(/\/$/, "")}/v1/jobs`, {
+      method: "POST",
+      headers: apiKeyHeader(),
+      body,
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const json = (await res.json()) as { jobId?: string };
+    return json.jobId ?? null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * The whole verdict, from page text plus what we believe we filled. One implementation so the
+ * fill run and the async callback path can never disagree about what counts as a gap.
+ */
+export function evaluateScreen(
+  screenText: string,
+  answers: Array<{ label: string; value: string }>,
+): string[] {
+  if (!screenText.trim()) return []; // no OCR result — say nothing rather than blame the application
+  return [
+    ...missingFromScreen(answers, screenText).map(
+      (g) => `"${g.label}" was recorded as ${JSON.stringify(g.value)} but is not on the screen`,
+    ),
+    ...placeholdersShowing(screenText),
+  ];
 }

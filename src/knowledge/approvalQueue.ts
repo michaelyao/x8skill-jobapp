@@ -68,6 +68,25 @@ export interface PendingEntry {
   editedInConsoleAt?: string;
   editedBy?: string; // website account that edited the answers
   approvedBy?: string; // website account that approved it ("email" when approved by reply)
+  /**
+   * What the SCREEN said, checked asynchronously after the fill.
+   *
+   * The fill run no longer waits for OCR (it took 6-56s of a run that is already slow), so an
+   * entry is queued before the visual check has a verdict. `state` is therefore part of the
+   * submit guard, not a display field: submitApprovedEntry() refuses while it is "pending" or
+   * "gaps", which is what stops an approval landing in the window before the result arrives.
+   * "unavailable" means the check could not run and is treated exactly as it always was —
+   * it says nothing and never blocks an application.
+   */
+  visualCheck?: {
+    state: "pending" | "clean" | "gaps" | "unavailable";
+    /** Human-readable findings, when state is "gaps". */
+    gaps?: string[];
+    /** x8ocr job id, for tracing. */
+    jobId?: string;
+    /** ISO — when this state was set. Used to age out a "pending" that never resolved. */
+    at: string;
+  };
   /** Set when an approved job was re-filled and the live form no longer matched what was
    *  approved. The submit was refused; these are the exact differences, awaiting a decision. */
   reapproval?: {
@@ -123,6 +142,22 @@ export async function upsertPending(
   else entries.push(merged);
   await writeQueue(entries);
   return merged;
+}
+
+/**
+ * Record the visual-check verdict for an entry. Worker-only, like every other writer here.
+ * Returns false when the entry is gone (a re-fill can replace it while OCR is in flight).
+ */
+export async function setVisualCheck(
+  key: string,
+  visualCheck: NonNullable<PendingEntry["visualCheck"]>,
+): Promise<boolean> {
+  const entries = await readQueue();
+  const idx = entries.findIndex((e) => e.key === key);
+  if (idx < 0) return false;
+  entries[idx] = { ...entries[idx], visualCheck, updatedAt: new Date().toISOString() };
+  await writeQueue(entries);
+  return true;
 }
 
 /** Update the status (and optionally attempts/error) of a pending entry by key. */

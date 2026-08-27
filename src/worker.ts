@@ -19,7 +19,8 @@ import {
   releaseCommand,
   type Command,
 } from "./knowledge/commands.js";
-import { isSubmittedStatus, loadPendingQueue, updatePendingStatus, upsertPending, type PendingEntry } from "./knowledge/approvalQueue.js";
+import { isSubmittedStatus, loadPendingQueue, setVisualCheck, updatePendingStatus, upsertPending, type PendingEntry } from "./knowledge/approvalQueue.js";
+import { evaluateScreen } from "./knowledge/visualCheck.js";
 import { loadInternshipList, refreshInternshipCsv } from "./sources/internshipList.js";
 import { loadProfile } from "./knowledge/profile.js";
 import { loadX8NoteConfig, syncNoteStage } from "./knowledge/x8note.js";
@@ -311,6 +312,40 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
         ok: true,
         message: `job list rebuilt: ${after} listing(s)${delta === 0 ? " (unchanged)" : delta > 0 ? `, ${delta} new` : `, ${-delta} fewer`}`,
       };
+    }
+
+    case "visual_check": {
+      /**
+       * An x8ocr job came back. Evaluate it HERE — the website only carried the text across,
+       * because this process is the only writer of pending-approvals.json.
+       *
+       * The entry may be gone or already replaced: a re-fill during OCR produces a new
+       * screenshot and its own job, and applying a verdict about the old screen to the new
+       * entry would be worse than applying nothing. setVisualCheck returns false when the
+       * entry has vanished; the jobId comparison covers the replaced case.
+       */
+      const entry = await findEntry(command.code);
+      if (!entry) return { ok: true, message: `[${command.code}] no queue entry left to verify — verdict dropped` };
+      if (command.jobId && entry.visualCheck?.jobId && entry.visualCheck.jobId !== command.jobId) {
+        return { ok: true, message: `[${command.code}] verdict is for a superseded screenshot (${command.jobId}) — dropped` };
+      }
+      const at = new Date().toISOString();
+
+      if (command.failed || !command.screenText?.trim()) {
+        await setVisualCheck(entry.key, { state: "unavailable", jobId: command.jobId, at });
+        return { ok: true, message: `[${command.code}] visual cross-check unavailable (${command.failed ?? "no text"}) — not blocking` };
+      }
+
+      const gaps = evaluateScreen(command.screenText, (entry.answers ?? []).map((a) => ({ label: a.label, value: a.value })));
+      if (gaps.length) {
+        await setVisualCheck(entry.key, { state: "gaps", gaps, jobId: command.jobId, at });
+        return {
+          ok: true,
+          message: `[${command.code}] the screen does not match what was recorded — submit is blocked:\n${gaps.map((g) => `     • ${g}`).join("\n")}`,
+        };
+      }
+      await setVisualCheck(entry.key, { state: "clean", jobId: command.jobId, at });
+      return { ok: true, message: `[${command.code}] visual cross-check: every recorded value is on the screen` };
     }
 
     case "sweep": {

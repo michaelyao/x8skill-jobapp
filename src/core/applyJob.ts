@@ -12,7 +12,7 @@ import { HybridAgent } from "../agent/hybridAgent.js";
 import { compareToApproved, describeDrift, type DriftReport } from "./approvalDrift.js";
 import { describeProblems, reviewApplication } from "./applicationSanity.js";
 import { parseResumeHistory } from "../knowledge/resumeHistory.js";
-import { missingFromScreen, ocrImage, placeholdersShowing } from "../knowledge/visualCheck.js";
+import { submitOcrJob } from "../knowledge/visualCheck.js";
 import type { ResumeFacts } from "./factChecks.js";
 import { addLearnedAnswer } from "../knowledge/answerStore.js";
 import {
@@ -20,7 +20,7 @@ import {
   findCrossAtsDuplicate,
   recordApplication,
 } from "../knowledge/applications.js";
-import { loadPendingQueue, upsertPending, updatePendingStatus } from "../knowledge/approvalQueue.js";
+import { loadPendingQueue, upsertPending, updatePendingStatus, type PendingEntry } from "../knowledge/approvalQueue.js";
 import { resolveResumeForJob } from "../knowledge/resume.js";
 import {
   fetchStoredJobDescription,
@@ -409,39 +409,35 @@ export async function applyToJob(
     console.log(`  Review screenshot: ${shotPath}`);
 
     /**
-     * Cross-check the SCREEN against what we believe we filled.
+     * Cross-check the SCREEN against what we believe we filled — ASYNCHRONOUSLY.
      *
      * Every bad application this session had the same shape: the DOM said a value was there and
      * the screen disagreed. The clearest was a Workable End date recorded as "05/2028" that the
      * screenshot showed as an empty "MM/YYYY" — read() asked the input and the input lied. OCR of
      * the screenshot is the only source that cannot lie in that direction.
      *
-     * ONE call, here, on a screenshot we already take. It is 25-33s per full page, so per-page it
-     * would add minutes to every application; at review it is noise. Best-effort throughout: no
-     * OCR service, a timeout, or an empty result means this says NOTHING rather than blaming the
-     * application. Set OCR_VERIFY=0 to skip it.
+     * This used to await the OCR here, which cost 6-56s at the end of every fill — on a run that
+     * is already the slowest thing this project does. It no longer waits. The screenshot goes to
+     * x8ocr as a job, x8ocr POSTs the result back to the website, and the worker applies the
+     * verdict to the queue entry (see the "visual_check" command).
+     *
+     * The verdict is a GATE, not a note: submitApprovedEntry() refuses to submit while it is
+     * "pending" or "gaps". That is what makes returning early safe — an approval arriving before
+     * the result does cannot send an unverified application.
+     *
+     * Best-effort as before: no OCR service, a refused submission, or a result that never comes
+     * back all end as "unavailable", which says NOTHING rather than blaming the application.
+     * Set OCR_VERIFY=0 to skip it.
      */
-    let visualGaps: string[] = [];
+    let visualCheck: NonNullable<PendingEntry["visualCheck"]> | undefined;
     if (process.env.OCR_VERIFY !== "0") {
-      const screen = await ocrImage(shotPath);
-      if (!screen) {
-        console.log(`  (visual cross-check skipped — no OCR result)`);
+      const jobId = await submitOcrJob(shotPath, { code: job.id ?? "job" });
+      if (jobId) {
+        visualCheck = { state: "pending", jobId, at: new Date().toISOString() };
+        console.log(`  👁 visual cross-check queued (x8ocr job ${jobId}) — verdict applies before any submit`);
       } else {
-        const gaps = missingFromScreen(
-          result.answers.map((a) => ({ label: a.label, value: a.value })),
-          screen,
-        );
-        const placeholders = placeholdersShowing(screen);
-        visualGaps = [
-          ...gaps.map((g) => `"${g.label}" was recorded as ${JSON.stringify(g.value)} but is not on the screen`),
-          ...placeholders,
-        ];
-        if (visualGaps.length) {
-          console.log(`  👁 the screen does not match what was recorded:`);
-          for (const g of visualGaps) console.log(`     • ${g}`);
-        } else {
-          console.log(`  👁 visual cross-check: every recorded value is on the screen`);
-        }
+        visualCheck = { state: "unavailable", at: new Date().toISOString() };
+        console.log(`  (visual cross-check unavailable — not submitted to x8ocr)`);
       }
     }
 
@@ -521,8 +517,10 @@ export async function applyToJob(
           documents: result.documents,
           facts: resumeFacts(profile),
         }),
-        // A value that is not on the screen was not filled, whatever the DOM said.
-        ...visualGaps.map((message) => ({ code: "not-on-screen" as const, message })),
+        // The visual cross-check is NOT part of this gate any more: it has not returned yet.
+        // It gates the SUBMIT instead (submitApprovedEntry), which is the point every send
+        // passes through — so a gap still stops the application, just later and without making
+        // every fill wait for OCR first.
       ];
       if (gaps.length) {
         console.log(`  ⛔ reached review, but the application is not worth sending:`);
@@ -594,6 +592,9 @@ export async function applyToJob(
           attempts: 0,
           lastError: undefined,
           reapproval: undefined,
+          // A fresh fill means a fresh screen: the previous verdict described a screenshot that
+          // no longer exists, so it must be replaced, never inherited.
+          visualCheck,
         });
         queued = true;
         console.log("  → queued for approval (poller will submit once you reply APPROVE).");

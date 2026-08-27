@@ -1,7 +1,7 @@
 import { applyToJob, type ApplyDeps } from "./applyJob.js";
 import { buildJobIdentity } from "./jobIdentity.js";
 import { hasSubmittedBefore } from "../knowledge/applications.js";
-import { updatePendingStatus, type PendingEntry } from "../knowledge/approvalQueue.js";
+import { setVisualCheck, updatePendingStatus, type PendingEntry } from "../knowledge/approvalQueue.js";
 import { ReplayAgent } from "../agent/replayAgent.js";
 import { describeDiff, diffRounds, listRounds } from "../knowledge/rounds.js";
 import type { FilledAnswer } from "../agent/types.js";
@@ -47,6 +47,14 @@ export interface SubmitOutcome {
  * answers they arrive here, which is why "submitted == approved" still holds after an edit:
  * the edit happens before approval, and no LLM runs on this path.
  */
+/**
+ * How long an approved entry waits for an outstanding visual cross-check before giving up on
+ * it. Generous relative to the measured 1.6-56s so a slow provider still gets its verdict in,
+ * short enough that a lost x8ocr job (in-memory, does not survive a restart) cannot park an
+ * application indefinitely.
+ */
+const VISUAL_CHECK_GRACE_MS = Number(process.env.VISUAL_CHECK_GRACE_MS || 10 * 60_000);
+
 export async function submitApprovedEntry(
   entry: PendingEntry,
   ctx: SubmitContext,
@@ -75,6 +83,45 @@ export async function submitApprovedEntry(
       answers,
       applications,
     };
+  }
+
+  /**
+   * The visual cross-check gate.
+   *
+   * The fill run no longer waits for OCR, so an entry can be approved before the screen has
+   * been verified. This is the one place every send passes through, so it is where that gap is
+   * closed: refuse while the verdict is outstanding, and refuse outright when the screen
+   * disagreed with what we recorded.
+   *
+   * A "pending" that never resolves must not strand the application forever — x8ocr holds jobs
+   * in memory and a restart loses them. After VISUAL_CHECK_GRACE_MS it ages out and is treated
+   * as unavailable, which is exactly how a missing OCR result has always been treated: it says
+   * nothing rather than blaming the application.
+   */
+  const vc = entry.visualCheck;
+  if (vc?.state === "gaps") {
+    await updatePendingStatus(entry.key, "error", {
+      lastError: `the screen did not match what was recorded: ${(vc.gaps ?? []).join("; ")}`,
+    });
+    return {
+      result: "gave_up",
+      message: `[${label}] NOT submitting — the review screen did not match what was recorded:\n${(vc.gaps ?? []).map((g) => `     • ${g}`).join("\n")}\n     Re-fill it (./bin/jobapp retry ${label}) rather than approving it again.`,
+      answers,
+      applications,
+    };
+  }
+  if (vc?.state === "pending") {
+    const waited = Date.now() - Date.parse(vc.at);
+    if (Number.isFinite(waited) && waited < VISUAL_CHECK_GRACE_MS) {
+      return {
+        result: "will_retry",
+        message: `[${label}] waiting on the visual cross-check (x8ocr job ${vc.jobId ?? "?"}, ${Math.round(waited / 1000)}s) — still queued, it will submit once the screen is verified`,
+        answers,
+        applications,
+      };
+    }
+    // Aged out. Proceed exactly as if OCR had never been available.
+    await setVisualCheck(entry.key, { state: "unavailable", jobId: vc.jobId, at: new Date().toISOString() });
   }
 
   // Write-ahead marker: if this process dies after the click but before the outcome is

@@ -29,7 +29,8 @@ export type CommandName =
   | "retry"
   | "sweep"
   | "refresh_list"
-  | "update_answers";
+  | "update_answers"
+  | "visual_check";
 
 interface Base {
   id: string;
@@ -96,6 +97,22 @@ export type Command = Base &
         supportedOnly?: boolean;
         latestFirst?: boolean;
         forceRetry?: boolean;
+      }
+    | {
+        /**
+         * An x8ocr job finished and this is what the screen said. Enqueued by the website's
+         * /api/ocr-result callback receiver; applied here because the worker is the only
+         * writer of pending-approvals.json. The website deliberately does not evaluate the
+         * text or touch the entry — it only carries the result across.
+         */
+        name: "visual_check";
+        code: string;
+        /** x8ocr job id, for tracing a result back to its submission. */
+        jobId?: string;
+        /** Page text as x8ocr read it. Empty/absent means the OCR produced nothing. */
+        screenText?: string;
+        /** Set when the OCR job itself failed; the check is then recorded as unavailable. */
+        failed?: string;
       }
     | { name: "refresh_list" }
     | { name: "update_answers"; entries: Array<{ question: string; answer: string }> }
@@ -167,6 +184,12 @@ const PRIORITY: Record<string, number> = {
   skip: 0,
   // A decision, like approve and skip: it takes no browser and the user is waiting on it.
   manual_submit: 0,
+  // Same class, for the same two reasons: it is a JSON evaluation and a file write (no browser),
+  // and its verdict GATES the submit — an approved application sits unsent until this lands. Left
+  // to the default rank of 2 it would queue behind a `change`, and behind whatever fill is already
+  // running, which can be twenty minutes. Declared rather than defaulted: an implicit priority for
+  // something on the submit path is the kind of silent choice that goes wrong here.
+  visual_check: 0,
   update_answers: 1,
   forget_answers: 1,
   change: 2,

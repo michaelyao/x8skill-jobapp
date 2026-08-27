@@ -1,4 +1,4 @@
-import { missingFromScreen, placeholdersShowing } from "../knowledge/visualCheck.js";
+import { evaluateScreen, missingFromScreen, placeholdersShowing } from "../knowledge/visualCheck.js";
 
 /**
  * Cases for the visual (OCR) cross-check.  npm run test:visual
@@ -76,6 +76,40 @@ check(`an empty OCR result blames nothing`, missingFromScreen([{ label: "* Schoo
 console.log("\nplaceholder detection");
 check(`two MM/YYYY placeholders are reported`, /2 date field/.test(placeholdersShowing(SCREEN)[0] ?? ""), placeholdersShowing(SCREEN));
 check(`a clean page reports none`, placeholdersShowing("First name Nathan Last name Yao").length === 0);
+
+/**
+ * evaluateScreen is the ONE implementation of the verdict, shared by the async callback path
+ * (worker: case "visual_check") and anything else that judges a screen. The cases that matter
+ * are the quiet ones: this verdict now blocks a SUBMIT, so a false gap strands a finished
+ * application behind a guard nobody asked for.
+ */
+console.log("\nevaluateScreen (the async verdict)");
+const verdict = (answers: Array<[string, string]>, screen = SCREEN): string[] =>
+  evaluateScreen(screen, answers.map(([label, value]) => ({ label, value })));
+
+check(
+  `reports a recorded date that the screen shows as a placeholder`,
+  verdict([["End date", "05/2028"]]).some((g) => /not on the screen/.test(g)),
+  verdict([["End date", "05/2028"]]),
+);
+check(
+  `still reports the MM/YYYY placeholders themselves`,
+  verdict([]).some((g) => /date field/.test(g)),
+  verdict([]),
+);
+check(
+  `stays silent on a value that IS on the screen`,
+  verdict([["Company (Optional)", "Amazon"]]).filter((g) => /not on the screen/.test(g)).length === 0,
+  verdict([["Company (Optional)", "Amazon"]]),
+);
+check(
+  `stays silent on a visually truncated value`,
+  verdict([["Title", "Software Engineering Intern, Shield Infrastructure"]]).filter((g) => /not on the screen/.test(g)).length === 0,
+);
+// An empty result must NEVER produce a gap: with the check now gating submits, "OCR said
+// nothing" has to mean "no opinion", or every lost job would block its application.
+check(`no OCR text yields no verdict at all`, verdict([["School", "Carnegie Mellon University"]], "").length === 0);
+check(`whitespace-only OCR text yields no verdict`, verdict([["School", "Carnegie Mellon University"]], "   \n  ").length === 0);
 
 console.log(`\n${fail ? "✗" : "✓"} ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
