@@ -51,6 +51,7 @@ export interface SanityProblem {
     | "education-incomplete"
     | "experience-incomplete"
     | "document-missing"
+    | "not-on-screen"
     | FactProblem["code"];
   message: string;
 }

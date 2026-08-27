@@ -12,6 +12,7 @@ import { HybridAgent } from "../agent/hybridAgent.js";
 import { compareToApproved, describeDrift, type DriftReport } from "./approvalDrift.js";
 import { describeProblems, reviewApplication } from "./applicationSanity.js";
 import { parseResumeHistory } from "../knowledge/resumeHistory.js";
+import { missingFromScreen, ocrImage, placeholdersShowing } from "../knowledge/visualCheck.js";
 import type { ResumeFacts } from "./factChecks.js";
 import { addLearnedAnswer } from "../knowledge/answerStore.js";
 import {
@@ -408,6 +409,43 @@ export async function applyToJob(
     console.log(`  Review screenshot: ${shotPath}`);
 
     /**
+     * Cross-check the SCREEN against what we believe we filled.
+     *
+     * Every bad application this session had the same shape: the DOM said a value was there and
+     * the screen disagreed. The clearest was a Workable End date recorded as "05/2028" that the
+     * screenshot showed as an empty "MM/YYYY" — read() asked the input and the input lied. OCR of
+     * the screenshot is the only source that cannot lie in that direction.
+     *
+     * ONE call, here, on a screenshot we already take. It is 25-33s per full page, so per-page it
+     * would add minutes to every application; at review it is noise. Best-effort throughout: no
+     * OCR service, a timeout, or an empty result means this says NOTHING rather than blaming the
+     * application. Set OCR_VERIFY=0 to skip it.
+     */
+    let visualGaps: string[] = [];
+    if (process.env.OCR_VERIFY !== "0") {
+      const screen = await ocrImage(shotPath);
+      if (!screen) {
+        console.log(`  (visual cross-check skipped — no OCR result)`);
+      } else {
+        const gaps = missingFromScreen(
+          result.answers.map((a) => ({ label: a.label, value: a.value })),
+          screen,
+        );
+        const placeholders = placeholdersShowing(screen);
+        visualGaps = [
+          ...gaps.map((g) => `"${g.label}" was recorded as ${JSON.stringify(g.value)} but is not on the screen`),
+          ...placeholders,
+        ];
+        if (visualGaps.length) {
+          console.log(`  👁 the screen does not match what was recorded:`);
+          for (const g of visualGaps) console.log(`     • ${g}`);
+        } else {
+          console.log(`  👁 visual cross-check: every recorded value is on the screen`);
+        }
+      }
+    }
+
+    /**
      * The whole-application guardrail, in the ONE place every submit passes through — the
      * emailed/website approval path, the terminal confirmation, and any future caller. Putting it
      * in each caller is how the submit guards drifted apart once before.
@@ -474,14 +512,18 @@ export async function applyToJob(
       // application as a whole before asking a human to bless it: an application whose education
       // and work history are blank is not something to put in a review queue and wait on, it is
       // something to re-fill. Caught on four Workable jobs that all reached review empty.
-      const gaps = reviewApplication({
-        answers: result.answers,
-        observedFields: result.observedFields,
-        resumeAttached: result.resumeAttached,
-        history: result.history,
-        documents: result.documents,
-        facts: resumeFacts(profile),
-      });
+      const gaps = [
+        ...reviewApplication({
+          answers: result.answers,
+          observedFields: result.observedFields,
+          resumeAttached: result.resumeAttached,
+          history: result.history,
+          documents: result.documents,
+          facts: resumeFacts(profile),
+        }),
+        // A value that is not on the screen was not filled, whatever the DOM said.
+        ...visualGaps.map((message) => ({ code: "not-on-screen" as const, message })),
+      ];
       if (gaps.length) {
         console.log(`  ⛔ reached review, but the application is not worth sending:`);
         for (const g of gaps) console.log(`     • ${g.message}`);

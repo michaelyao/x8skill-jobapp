@@ -18,7 +18,8 @@
     "test:verifycode": "tsx src/debug/verifyCodeCases.ts",
     "test:sanity": "tsx src/debug/applicationSanityCases.ts",
     "test:history": "tsx src/debug/resumeHistoryCases.ts",
-    "test:facts": "tsx src/debug/factCheckCases.ts"
+    "test:facts": "tsx src/debug/factCheckCases.ts",
+    "test:visual": "tsx src/debug/visualCheckCases.ts"
   },
   "repository": {
     "type": "git",
