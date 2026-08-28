@@ -360,6 +360,21 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   for review in the website but never submits during the fill.
 - **Structured answers come from `TurnLoopResult.answers`** — that is what the website's review
   page, the replay and the queue all read. (It also fed the old HTML review email, which is gone.)
+- **A FACT LIVES IN MORE THAN ONE PLACE. Changing it in the resume is not enough.** The GPA went
+  from 3.53 to 3.44 and all three resume files were updated, but two other sources still held the
+  old number and both outrank the resume for any question they match:
+  - **`Q&A.txt`** — the seed answer store. `loadAnswers()` rebuilds from it on every read, so a
+    stale line there keeps being handed out no matter what the resume says. It had `GPA: 3.53`.
+  - **`data/learned-answers.json`** — a correction there beats everything, including the resume and
+    the band picker. It held `"For your most recent degree… GPA…" -> "3.5-4.0"`, which for a 3.44
+    OVERSTATES — a false claim rather than a gap, and the worst kind of error on an application.
+    That form offered `[NA, < 3.0, 3.0 -3.5, 3.6-4.0]`, so `3.5-4.0` was never even an option and
+    had been typed by hand. Remove one with a `forget_answers` command; never edit the file while
+    the worker is running (it is the single writer).
+  - `data/profile.json` caches it too, but is write-only and self-heals on the next `loadProfile()`.
+  After changing a fact, run `npm run audit:queue` — the checks are anchored on the resume, so they
+  follow the new value on their own and will name every queued application that now misstates it.
+  Nine of eleven did.
 - **Corrections live in `data/learned-answers.json` and OVERRIDE the seed.** `loadAnswers()` rebuilds
   every entry from `Q&A.txt` on each read, so an answer recorded anywhere else was erased by the next
   read — which is why "remember what I edited" quietly failed for a day. Learned entries are merged on
