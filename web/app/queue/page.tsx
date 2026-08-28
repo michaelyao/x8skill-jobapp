@@ -6,12 +6,22 @@ import { readProfileSnapshot } from "@core/knowledge/profile.js";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * The decisions page — and ONLY the decisions.
+ *
+ * Everything the system will move on its own (a submit in flight, a queued re-fill, an application
+ * that reached Review with something missing) now lives on /status. It used to share this page, and
+ * each of those arrived beside an Approve button — approving a copy that is being re-filled sends
+ * answers that are being rewritten as you read them. The split is by "is a human the next step",
+ * not by status.
+ *
+ * What stays here needs a person and nothing else can resolve it: a finished application to approve,
+ * one that gave up after three failed submits, and one stuck mid-submit that must be checked on the
+ * ATS before anything else happens to it.
+ */
 export default async function QueuePage() {
   const { queue, worker, pendingCommandCount } = await getOverview();
   const decisions = await getDecisions();
-  // Anything the worker is already acting on needs nothing from you, so it sinks to the bottom.
-  // Everything above the line is genuinely waiting on a decision — including a job you approved
-  // whose submit then failed and was re-filled, which is a NEW copy and a fresh decision.
   const withWorker = (code?: string) => {
     const d = decisions.get(code ?? "");
     return Boolean(d?.working || d?.pending);
@@ -34,11 +44,12 @@ export default async function QueuePage() {
           .map((entry): Readiness => ({ entry, problems: [] })),
         needsWork: [] as Readiness[],
       } satisfies QueueSplit);
-  const notReady = split.needsWork.filter((r) => !withWorker(r.entry.code ?? r.entry.key));
-  const beingRefilled = queue.filter(
-    (e) => e.status === "awaiting_approval" && withWorker(e.code ?? e.key),
-  );
   const readyKeys = new Set(split.ready.map((r) => r.entry.key));
+  // Counted, not listed: they belong on /status, but a page that silently drops them would read as
+  // "there is nothing else", which is the opposite of true.
+  const elsewhere =
+    split.needsWork.filter((r) => !withWorker(r.entry.code ?? r.entry.key)).length +
+    queue.filter((e) => e.status === "awaiting_approval" && withWorker(e.code ?? e.key)).length;
   // "Why can I approve this again?" — because the submit failed and nothing was sent. That is
   // correct behaviour (only a genuine "nothing was submitted" outcome resets an entry), but the
   // page gave no sign of it, so a job approved on 19 Aug looked brand new.
@@ -55,16 +66,12 @@ export default async function QueuePage() {
    */
   const awaiting = queue
     .filter((e) => e.status === "awaiting_approval" && readyKeys.has(e.key) && !withWorker(e.code ?? e.key))
-    .sort((a, b) => {
-      const byState = Number(withWorker(a.code ?? a.key)) - Number(withWorker(b.code ?? b.key));
-      if (byState) return byState;
-      return (b.reviewSentAt ?? "").localeCompare(a.reviewSentAt ?? "");
-    });
+    .sort((a, b) => (b.reviewSentAt ?? "").localeCompare(a.reviewSentAt ?? ""));
 
   // "submitting" means two very different things, and conflating them is alarming: a submit
   // running RIGHT NOW, or one whose outcome was never recorded because the process died.
-  // The worker's heartbeat is what tells them apart — if it is alive and working on this
-  // exact code, the job is in flight, not abandoned.
+  // The worker's heartbeat is what tells them apart — the live one is progress and shows on
+  // /status; only the abandoned one needs a person, so only it stays here.
   // A job that failed three submit attempts is parked as "error". It is not in the awaiting list,
   // and /blocked skips anything that has a queue entry — so it was visible on neither page. It
   // needs you more than anything else here.
@@ -75,78 +82,23 @@ export default async function QueuePage() {
   // abandoned. A held browser lock whose owner is still running proves a session is open.
   const lockHolder = await browserLockHolder();
   const workerLive = (!worker.stale || lockHolder !== null) && worker.status?.state === "busy";
-  const inFlight = submitting.filter((e) => workerLive && worker.status?.code === e.code);
-  const abandoned = submitting.filter((e) => !inFlight.includes(e));
+  const abandoned = submitting.filter((e) => !(workerLive && worker.status?.code === e.code));
 
   return (
     <>
       <h1>Queue</h1>
       <p className="sub">
-        {awaiting.filter((e) => !withWorker(e.code ?? e.key)).length} ready for your review
-        {awaiting.some((e) => withWorker(e.code ?? e.key))
-          ? `, ${awaiting.filter((e) => withWorker(e.code ?? e.key)).length} already with the worker`
-          : ""}
-        {notReady.length ? `, ${notReady.length} not ready` : ""}. Nothing is submitted until you
-        approve it — and a job you approved that then failed comes back here as a new copy needing a
-        fresh look.
+        {awaiting.length} ready for your review. Nothing is submitted until you approve it — and a
+        job you approved that then failed comes back here as a new copy needing a fresh look.
+        {elsewhere ? (
+          <>
+            {" "}
+            {elsewhere} more are still being worked on — see <a href="/status">Status</a>.
+          </>
+        ) : null}
       </p>
 
       <WorkerBar initial={worker} pendingCommands={pendingCommandCount} />
-
-      {inFlight.length ? (
-        <div className="card" style={{ borderColor: "var(--accent)", marginTop: 14 }}>
-          <h3 style={{ color: "var(--accent)" }}>Submitting now</h3>
-          <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
-            The worker is filling and submitting this application. It takes a few minutes — this page updates itself when it finishes.
-          </p>
-          {inFlight.map((e) => (
-            <div key={e.key} className="code">
-              <span className="pill accent">in progress</span> {e.code} — {e.company} · {e.title}
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      {beingRefilled.length ? (
-        <div className="card" style={{ marginTop: 14 }}>
-          <h3>Being re-filled — {beingRefilled.length}</h3>
-          <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
-            A re-fill is queued or running for these, so the copy here is about to be replaced.
-            Nothing to decide yet — they return to the list above once the new copy is verified.
-          </p>
-          {beingRefilled.map((e) => (
-            <div key={e.key} className="code" style={{ paddingBottom: 4 }}>
-              {e.code} — {e.company} · {e.title}
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      {notReady.length ? (
-        <div className="card" style={{ borderColor: "var(--warn, #b8860b)", marginTop: 14 }}>
-          <h3>Not ready to review — {notReady.length}</h3>
-          <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
-            These reached the Review step but something is missing or wrong, so they are not a
-            decision waiting on you — they need re-filling. Approving one would be refused at
-            submit for the same reason shown here.
-          </p>
-          {notReady.map(({ entry, problems }) => (
-            <div key={entry.key} style={{ paddingBottom: 10 }}>
-              <span className="code">{entry.code}</span> — {entry.company} · {entry.title}{" "}
-              <a href={`/queue/${entry.code}`}>look</a> ·{" "}
-              <a href={entry.applyUrl} target="_blank" rel="noreferrer">
-                open posting
-              </a>
-              <ul className="muted" style={{ fontSize: 12, margin: "4px 0 0 0", paddingLeft: 18 }}>
-                {problems.slice(0, 3).map((p) => (
-                  <li key={p}>{p.length > 150 ? `${p.slice(0, 149)}…` : p}</li>
-                ))}
-                {problems.length > 3 ? <li>+{problems.length - 3} more</li> : null}
-              </ul>
-            </div>
-          ))}
-        </div>
-      ) : null}
 
       {gaveUp.length ? (
         <div className="card" style={{ borderColor: "var(--bad)", marginTop: 14 }}>
@@ -217,11 +169,7 @@ export default async function QueuePage() {
                       ) : null}
                     </td>
                     <td style={{ fontSize: 12 }}>
-                      {d.working ? (
-                        <span className="pill accent">worker on it now</span>
-                      ) : d.pending ? (
-                        <span className="pill accent">{d.pending} queued</span>
-                      ) : e.reapproval ? (
+                      {e.reapproval ? (
                         <span className="pill warn">held — form changed</span>
                       ) : d.superseded ? (
                         <>
