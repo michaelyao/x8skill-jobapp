@@ -111,6 +111,12 @@ export type Command = Base &
         jobId?: string;
         /** Page text as x8ocr read it. Empty/absent means the OCR produced nothing. */
         screenText?: string;
+        /** Layout blocks, when the result carried them — enables FIELD-level verification
+         *  instead of whole-page containment. See screenBlocks.ts. */
+        blocks?: unknown[];
+        /** The engine's own trust statement: whether its boxes are exact and its text literal.
+         *  Without it the field-level path is not taken. */
+        capability?: Record<string, unknown>;
         /** Set when the OCR job itself failed; the check is then recorded as unavailable. */
         failed?: string;
       }

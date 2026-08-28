@@ -1,5 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
+import {
+  boxesAreExact,
+  describeVerdicts,
+  textIsLiteral,
+  verifyFields,
+  type ScreenBlock,
+  type ScreenCapability,
+} from "./screenBlocks.js";
 
 /**
  * What the page LOOKS like, via OCR of the review screenshot — the one source of truth the DOM
@@ -163,6 +171,10 @@ export async function submitOcrJob(
     // `code` rides along so the callback can name the entry the verdict belongs to.
     body.append("callbackUrl", `${callbackUrl}${callbackUrl.includes("?") ? "&" : "?"}code=${encodeURIComponent(opts.code)}`);
     body.append("callbackToken", callbackToken);
+    // Layout blocks turn this from "does the value appear anywhere on the page" into "is it in ITS
+    // OWN box" — see screenBlocks.ts. Containment alone can PASS an empty field whose value happens
+    // to appear elsewhere on the page.
+    body.append("includeLayout", "true");
 
     const res = await fetch(`${endpoint().replace(/\/$/, "")}/v1/jobs`, {
       method: "POST",
@@ -187,7 +199,26 @@ export async function submitOcrJob(
 export function evaluateScreen(
   screenText: string,
   answers: Array<{ label: string; value: string }>,
+  /** Layout blocks and the engine's own trust statement, when the result carried them. */
+  layout?: { blocks?: ScreenBlock[]; capability?: ScreenCapability },
 ): string[] {
+  /**
+   * FIELD-LEVEL when the engine's boxes are real, page-level otherwise.
+   *
+   * Page-level containment catches a false success but can produce a false PASS: a value that
+   * appears somewhere else on the page — in the job description, or inside another field's text —
+   * vouches for a field that is actually empty. With exact boxes each label is paired to its own
+   * value box, so "empty" means empty.
+   *
+   * Both gates matter. `boxes: "approximate"` is an LLM's estimate and must not be lined up against
+   * anything; `textFidelity: "normalized"` means the model may tidy text away, so absent text is
+   * not evidence of an unfilled field. Either one and this falls back rather than guessing.
+   */
+  const blocks = layout?.blocks ?? [];
+  if (blocks.length && boxesAreExact(layout?.capability) && textIsLiteral(layout?.capability)) {
+    return describeVerdicts(verifyFields(blocks, answers));
+  }
+
   if (!screenText.trim()) return []; // no OCR result — say nothing rather than blame the application
   return [
     ...missingFromScreen(answers, screenText).map(

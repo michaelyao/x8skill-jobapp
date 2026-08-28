@@ -336,7 +336,11 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
         return { ok: true, message: `[${command.code}] visual cross-check unavailable (${command.failed ?? "no text"}) — not blocking` };
       }
 
-      const gaps = evaluateScreen(command.screenText, (entry.answers ?? []).map((a) => ({ label: a.label, value: a.value })));
+      const gaps = evaluateScreen(
+        command.screenText,
+        (entry.answers ?? []).map((a) => ({ label: a.label, value: a.value })),
+        { blocks: command.blocks as never, capability: command.capability as never },
+      );
       if (gaps.length) {
         await setVisualCheck(entry.key, { state: "gaps", gaps, jobId: command.jobId, at });
         return {

@@ -20,6 +20,7 @@
     "test:history": "tsx src/debug/resumeHistoryCases.ts",
     "test:facts": "tsx src/debug/factCheckCases.ts",
     "test:visual": "tsx src/debug/visualCheckCases.ts",
+    "test:blocks": "tsx src/debug/screenBlockCases.ts",
     "audit:queue": "tsx src/debug/auditQueue.ts"
   },
   "repository": {

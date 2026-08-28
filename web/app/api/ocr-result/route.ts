@@ -41,7 +41,17 @@ interface Callback {
   jobId?: string;
   state?: string;
   error?: string;
-  result?: { ok?: boolean; markdown?: string; reason?: string; message?: string };
+  result?: {
+    ok?: boolean;
+    markdown?: string;
+    reason?: string;
+    message?: string;
+    /** Per-page layout blocks, when includeLayout was requested. */
+    pages?: Array<{ blocks?: unknown[] }>;
+    /** The engine's trust statement — carried across so the worker can decide whether to use
+     *  the boxes. This route still does not interpret any of it. */
+    capability?: Record<string, unknown>;
+  };
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -68,12 +78,18 @@ export async function POST(request: Request): Promise<Response> {
     : body.result?.ok === false ? (body.result.reason ?? "extract failed")
     : undefined;
 
+  // Blocks from every page, flattened. A long application screenshot is one page here, but
+  // flattening costs nothing and avoids silently dropping the rest if that ever changes.
+  const blocks = (body.result?.pages ?? []).flatMap((p) => p.blocks ?? []);
+
   const command = await enqueueCommand({
     name: "visual_check",
     code,
     source: "x8ocr",
     jobId: body.jobId,
     screenText: body.result?.markdown ?? "",
+    ...(blocks.length ? { blocks } : {}),
+    ...(body.result?.capability ? { capability: body.result.capability } : {}),
     ...(failed ? { failed } : {}),
   });
 
