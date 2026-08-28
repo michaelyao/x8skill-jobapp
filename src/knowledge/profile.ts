@@ -37,6 +37,22 @@ function cleanInstitution(line: string): string {
     .trim();
 }
 
+/**
+ * Read the last snapshot WITHOUT re-parsing or writing anything.
+ *
+ * loadProfile() writes profile.json as a side effect, which a website page render must not do:
+ * the worker is the single writer of state here, and a render that writes could race it. This is
+ * the read-only door for display code. The snapshot is refreshed by the worker on every job, and
+ * the authoritative check at submit time still calls loadProfile().
+ */
+export async function readProfileSnapshot(): Promise<ProfileData | null> {
+  try {
+    return JSON.parse(await fs.readFile(PROFILE_JSON_PATH, "utf8")) as ProfileData;
+  } catch {
+    return null;
+  }
+}
+
 export async function loadProfile(): Promise<ProfileData> {
   // Prefer the markdown resume (easiest to parse), then the txt. Both come from
   // resumes.config, so switching resumes never means touching code.

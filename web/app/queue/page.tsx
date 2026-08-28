@@ -1,6 +1,8 @@
 import { browserLockHolder, getDecisions, getOverview } from "@/lib/store";
 import { draftCount } from "@/lib/stats";
 import { WorkerBar } from "@/components/WorkerBar";
+import { splitQueue } from "@core/core/queueReadiness.js";
+import { readProfileSnapshot } from "@core/knowledge/profile.js";
 
 export const dynamic = "force-dynamic";
 
@@ -14,8 +16,24 @@ export default async function QueuePage() {
     const d = decisions.get(code ?? "");
     return Boolean(d?.working || d?.pending);
   };
+  /**
+   * "Awaiting approval" was doing two jobs: an application that is FINISHED and waiting on you,
+   * and one that reached review with something missing. Both showed here as though a decision was
+   * all they needed — which is how an application with eleven unanswered required fields sat in
+   * this list looking reviewable.
+   *
+   * splitQueue applies the same guardrail submitApprovedEntry will apply, so this list and that
+   * refusal cannot disagree. Read-only: it computes a verdict, it does not write one.
+   */
+  const profileSnapshot = await readProfileSnapshot();
+  const split = profileSnapshot
+    ? splitQueue(queue.filter((e) => e.status === "awaiting_approval"), profileSnapshot)
+    : { ready: queue.filter((e) => e.status === "awaiting_approval").map((entry) => ({ entry, problems: [] })), needsWork: [] };
+  const notReady = split.needsWork;
+  const readyKeys = new Set(split.ready.map((r) => r.entry.key));
+
   const awaiting = queue
-    .filter((e) => e.status === "awaiting_approval")
+    .filter((e) => e.status === "awaiting_approval" && readyKeys.has(e.key))
     .sort((a, b) => {
       const byState = Number(withWorker(a.code ?? a.key)) - Number(withWorker(b.code ?? b.key));
       if (byState) return byState;
@@ -43,12 +61,13 @@ export default async function QueuePage() {
     <>
       <h1>Queue</h1>
       <p className="sub">
-        {awaiting.filter((e) => !withWorker(e.code ?? e.key)).length} waiting on a decision
+        {awaiting.filter((e) => !withWorker(e.code ?? e.key)).length} ready for your review
         {awaiting.some((e) => withWorker(e.code ?? e.key))
           ? `, ${awaiting.filter((e) => withWorker(e.code ?? e.key)).length} already with the worker`
           : ""}
-        . Nothing is submitted until you approve it — and a job you approved that then failed comes
-        back here as a new copy needing a fresh look.
+        {notReady.length ? `, ${notReady.length} not ready` : ""}. Nothing is submitted until you
+        approve it — and a job you approved that then failed comes back here as a new copy needing a
+        fresh look.
       </p>
 
       <WorkerBar initial={worker} pendingCommands={pendingCommandCount} />
@@ -62,6 +81,32 @@ export default async function QueuePage() {
           {inFlight.map((e) => (
             <div key={e.key} className="code">
               <span className="pill accent">in progress</span> {e.code} — {e.company} · {e.title}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {notReady.length ? (
+        <div className="card" style={{ borderColor: "var(--warn, #b8860b)", marginTop: 14 }}>
+          <h3>Not ready to review — {notReady.length}</h3>
+          <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
+            These reached the Review step but something is missing or wrong, so they are not a
+            decision waiting on you — they need re-filling. Approving one would be refused at
+            submit for the same reason shown here.
+          </p>
+          {notReady.map(({ entry, problems }) => (
+            <div key={entry.key} style={{ paddingBottom: 10 }}>
+              <span className="code">{entry.code}</span> — {entry.company} · {entry.title}{" "}
+              <a href={`/queue/${entry.code}`}>look</a> ·{" "}
+              <a href={entry.applyUrl} target="_blank" rel="noreferrer">
+                open posting
+              </a>
+              <ul className="muted" style={{ fontSize: 12, margin: "4px 0 0 0", paddingLeft: 18 }}>
+                {problems.slice(0, 3).map((p) => (
+                  <li key={p}>{p.length > 150 ? `${p.slice(0, 149)}…` : p}</li>
+                ))}
+                {problems.length > 3 ? <li>+{problems.length - 3} more</li> : null}
+              </ul>
             </div>
           ))}
         </div>
