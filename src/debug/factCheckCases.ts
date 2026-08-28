@@ -15,8 +15,10 @@ const check = (name: string, cond: boolean, got?: unknown) => {
   if (cond) { pass += 1; console.log(`  ✓ ${name}`); }
   else { fail += 1; console.log(`  ✗ ${name}${got === undefined ? "" : ` — got ${JSON.stringify(got)}`}`); }
 };
-const codes = (answers: Array<[string, string]>) =>
-  checkFacts(answers.map(([label, value]) => ({ label, value })), FACTS).map((p) => p.code).sort();
+const codes = (answers: Array<[string, string, string[]?]>) =>
+  checkFacts(answers.map(([label, value, options]) => ({ label, value, options })), FACTS)
+    .map((p) => p.code)
+    .sort();
 
 console.log("degree level classification");
 check(`"B.S." is a bachelor's`, degreeLevel("B.S.") === "bachelor", degreeLevel("B.S."));
@@ -43,7 +45,24 @@ check(`the wrong degree level`, codes([["Degree*", "Associate's Degree"]]).inclu
 check(`a field of study given as the degree`, codes([["Degree", "Information Systems"]]).includes("degree-not-a-degree"));
 check(`a SKILL given as the degree`, codes([["Degree", "Python (Programming Language) (Suggested)"]]).includes("degree-not-a-degree"));
 check(`"Yes" given as the degree program`, codes([["What is your Current Degree Program?*", "Yes"]]).includes("degree-not-a-degree"));
-check(`a GPA band that excludes the real GPA`, codes([["What is your cumulative GPA?*", "3.0-3.5"]]).includes("gpa-wrong"));
+// Aquatic Capital: 3.5-4.0 was on offer and fits 3.53, so answering 3.0-3.5 was wrong. This is
+// the bug that was reported.
+check(`a band that excludes the GPA when a fitting one was offered`,
+  codes([["What is your cumulative GPA?*", "3.0-3.5", ["3.5-4.0", "3.0-3.5", "Below 3.0"]]]).includes("gpa-wrong"),
+  codes([["What is your cumulative GPA?*", "3.0-3.5", ["3.5-4.0", "3.0-3.5", "Below 3.0"]]]));
+// With no options recorded (older entries) the benefit of the doubt goes to the application: this
+// check catches misstatements, it does not fail on missing metadata.
+check(`the same answer with no options recorded is still flagged`,
+  codes([["What is your cumulative GPA?*", "3.0-3.5"]]).includes("gpa-wrong"));
+// Verkada: 3.6-4.0 / 3.1-3.5 / 3.0-or-under — a 3.53 fits NOTHING. Understating into the nearest
+// band below is the honest pick, and flagging it would leave a required field unanswerable.
+check(`understating is excused when the form offered nothing that fits`,
+  codes([["What is your GPA?*", "3.1 - 3.5", ["3.6 - 4.0", "3.1 - 3.5", "3.0 or under"]]]).length === 0,
+  codes([["What is your GPA?*", "3.1 - 3.5", ["3.6 - 4.0", "3.1 - 3.5", "3.0 or under"]]]));
+// …but OVERSTATING is never excused, whatever the form offered.
+check(`overstating is never excused`,
+  codes([["What is your GPA?*", "3.6 - 4.0", ["3.6 - 4.0", "3.1 - 3.5", "3.0 or under"]]]).includes("gpa-wrong"),
+  codes([["What is your GPA?*", "3.6 - 4.0", ["3.6 - 4.0", "3.1 - 3.5", "3.0 or under"]]]));
 check(`a master's when the resume says bachelor's`, codes([["Highest level of education", "Master of Science"]]).includes("degree-wrong"));
 
 console.log("\nmust stay QUIET — real questions from the 50 queued applications");
@@ -68,8 +87,8 @@ check(`a GPA question whose label mentions "degree" is not a degree question`,
   codes([["For your most recent degree, what is/was your GPA (normalized to 4.0)", "3.53"]]));
 // …but the SAME label with a wrong band must still be caught as a GPA problem.
 check(`that same label with a band excluding 3.53 IS still caught`,
-  codes([["For your most recent degree, what is/was your GPA (normalized to 4.0)", "3.0 -3.5"]]).includes("gpa-wrong"),
-  codes([["For your most recent degree, what is/was your GPA (normalized to 4.0)", "3.0 -3.5"]]));
+  codes([["For your most recent degree, what is/was your GPA (normalized to 4.0)", "3.0 -3.5", ["3.5-4.0", "3.0 -3.5"]]]).includes("gpa-wrong"),
+  codes([["For your most recent degree, what is/was your GPA (normalized to 4.0)", "3.0 -3.5", ["3.5-4.0", "3.0 -3.5"]]]));
 
 console.log("\nmust stay QUIET — correct answers");
 check(`"Bachelor of Science"`, codes([["Degree (Optional)", "Bachelor of Science"]]).length === 0, codes([["Degree (Optional)", "Bachelor of Science"]]));

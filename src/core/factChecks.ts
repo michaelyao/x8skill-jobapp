@@ -55,6 +55,34 @@ export function parseGpaBand(text: string): GpaBand | undefined {
   return undefined;
 }
 
+/**
+ * Pick the best of the bands a form actually offers, when none of them contains the GPA.
+ *
+ * Verkada asks "What is your GPA?*" with `['3.6 - 4.0', '3.1 - 3.5', '3.0 or under']`. A 3.53 sits
+ * in the GAP: above 3.1-3.5, below 3.6-4.0. So bandContains rejects all three, the agent picked
+ * nothing, and a REQUIRED field went unanswered — which is how that application reached review with
+ * no GPA on it at all.
+ *
+ * The rule is to never OVERSTATE. Of the bands that do not contain the value, prefer the closest one
+ * BELOW it (3.1-3.5 for a 3.53) over the closest above (3.6-4.0), because understating a GPA is a
+ * rounding decision a person would defend and overstating it is a false claim on a job application.
+ * Returns undefined when nothing is defensible, so the caller leaves the field for a human rather
+ * than inventing an answer.
+ */
+export function bestBand(options: string[], gpa: number): string | undefined {
+  const parsed = options
+    .map((label) => ({ label, band: parseGpaBand(label) }))
+    .filter((o): o is { label: string; band: GpaBand } => Boolean(o.band));
+  const exact = parsed.find((o) => bandContains(o.band, gpa));
+  if (exact) return exact.label;
+
+  // Nothing contains it. Take the nearest band that lies entirely BELOW the real value.
+  const below = parsed
+    .filter((o) => o.band.max !== undefined && o.band.max < gpa)
+    .sort((a, b) => (b.band.max ?? 0) - (a.band.max ?? 0));
+  return below[0]?.label;
+}
+
 /** Does the band the form was given actually contain the real GPA? */
 export function bandContains(band: GpaBand, gpa: number): boolean {
   // A range is treated as inclusive at both ends. "3.0-3.5" does NOT contain 3.53, which is the
@@ -115,13 +143,15 @@ const GPA_QUESTION = /\bgpa\b|grade point average|overall result/i;
 const NON_ANSWER = /^(yes|no|n\/?a|none|true|false)$/i;
 
 export function checkFacts(
-  answers: Array<{ label: string; value: string }>,
+  /** `options` is what the field OFFERED, when known — see the GPA rule below. */
+  answers: Array<{ label: string; value: string; options?: string[] }>,
   facts: ResumeFacts,
 ): FactProblem[] {
   const problems: FactProblem[] = [];
   const expected = facts.degree ? degreeLevel(facts.degree) : undefined;
 
-  for (const { label, value } of answers) {
+  for (const a of answers) {
+    const { label, value } = a;
     const text = (value ?? "").trim();
     if (!text) continue;
 
@@ -153,7 +183,25 @@ export function checkFacts(
     if (GPA_QUESTION.test(label) && facts.gpa) {
       const real = Number(facts.gpa);
       const band = parseGpaBand(text);
-      if (!Number.isNaN(real) && band && !bandContains(band, real)) {
+      /**
+       * A band that does not contain the GPA is wrong unless it was the best on offer.
+       *
+       * Two real forms, and the difference between them is the whole rule:
+       *   Verkada        3.6-4.0 / 3.1-3.5 / 3.0-or-under   nothing fits a 3.53. Picking 3.1-3.5
+       *                                                     understates, and is the honest choice.
+       *   Aquatic Capital  …/ 3.5-4.0 / 3.0-3.5 …           3.5-4.0 DOES fit. Answering 3.0-3.5
+       *                                                     there was the reported bug.
+       * So an understatement is excused only when the field offered nothing better. With no
+       * `options` recorded (older entries) the benefit of the doubt goes to the application — this
+       * check exists to catch misstatements, not to fail on missing metadata.
+       */
+      const hadBetter = (a.options ?? []).some((o) => {
+        const b2 = parseGpaBand(o);
+        return b2 && bandContains(b2, real);
+      });
+      const understates = band?.max !== undefined && band.max < real;
+      const excused = understates && !hadBetter && (a.options?.length ?? 0) > 0;
+      if (!Number.isNaN(real) && band && !bandContains(band, real) && !excused) {
         problems.push({
           code: "gpa-wrong",
           message: `"${label.trim().slice(0, 60)}" says ${JSON.stringify(text.slice(0, 30))}, which does not contain the real GPA of ${facts.gpa}`,

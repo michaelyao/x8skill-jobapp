@@ -21,7 +21,7 @@ const CASES: Array<{ name: string; input: SanityInput; want: string[] }> = [
       answers: [ans("* First name", "Nathan"), ans("* Email", "n@example.com")],
       resumeAttached: true,
     },
-    want: ["education-blank"],
+    want: ["education-blank", "required-unanswered"],
   },
   {
     name: "experience section present and entirely blank",
@@ -30,7 +30,7 @@ const CASES: Array<{ name: string; input: SanityInput; want: string[] }> = [
       answers: [ans("* First name", "Nathan")],
       resumeAttached: true,
     },
-    want: ["experience-blank"],
+    want: ["experience-blank", "required-unanswered"],
   },
   {
     // The real Workable experience section is Title + Company + Industry. Bare "* Title" is NOT
@@ -42,12 +42,31 @@ const CASES: Array<{ name: string; input: SanityInput; want: string[] }> = [
       answers: [],
       resumeAttached: true,
     },
-    want: ["education-blank", "experience-blank"],
+    want: ["education-blank", "experience-blank", "required-unanswered"],
   },
   {
     name: "no resume attached",
     input: { observedFields: [field("* First name", true)], answers: [ans("* First name", "Nathan")], resumeAttached: false },
     want: ["no-resume"],
+  },
+  {
+    /**
+     * BOGWYU (Verkada) reached review and sat awaiting_approval with ELEVEN required fields
+     * unanswered — Country*, Location (City)*, Degree*, Discipline*, When do you graduate?*,
+     * What is your GPA?* and five more. Two guards let it through:
+     *   turnLoop blocks on `required && filled === false`, and all eleven had filled === undefined
+     *   (never attempted — a field nobody tried looks unknown, not empty);
+     *   the section checks ask whether a section is ENTIRELY blank, and "School*" WAS answered, so
+     *   education counted as present while Degree, Discipline and GPA were missing.
+     * Hence the blunt question: did the employer require it, and do we have it?
+     */
+    name: "a required field with no answer is reported even when its section is partly filled",
+    input: {
+      observedFields: [field("* School", true), field("Degree*", true), field("What is your GPA?*", true)],
+      answers: [ans("* School", "Carnegie Mellon University")],
+      resumeAttached: true,
+    },
+    want: ["required-unanswered"],
   },
   // ---- must stay QUIET ------------------------------------------------------------------
   {
@@ -105,7 +124,7 @@ const CASES: Array<{ name: string; input: SanityInput; want: string[] }> = [
       answers: [ans("* School", "   ")],
       resumeAttached: true,
     },
-    want: ["education-blank"],
+    want: ["education-blank", "required-unanswered"],
   },
   {
     // "Title" is also the salutation field (Mr/Ms/Dr). Matching it as work experience would fire
@@ -125,7 +144,7 @@ const CASES: Array<{ name: string; input: SanityInput; want: string[] }> = [
       answers: [],
       resumeAttached: true,
     },
-    want: ["identity-blank"],
+    want: ["identity-blank", "required-unanswered"],
   },
 ];
 

@@ -52,6 +52,7 @@ export interface SanityProblem {
     | "experience-incomplete"
     | "document-missing"
     | "not-on-screen"
+    | "required-unanswered"
     | FactProblem["code"];
   message: string;
 }
@@ -124,7 +125,17 @@ export function reviewApplication(input: SanityInput): SanityProblem[] {
    * factChecks.ts — the checks are anchored on the resume, so they cannot invent a disagreement.
    */
   if (facts) {
-    for (const p of checkFacts(answers.map((a) => ({ label: a.label ?? "", value: a.value ?? "" })), facts)) {
+    // Carry each answer's OPTIONS across. The GPA rule needs to know whether the field offered a
+    // band that fits: understating is honest when nothing did, and wrong when something did.
+    const optionsByLabel = new Map(
+      observedFields.filter((f) => f.options?.length).map((f) => [(f.label ?? "").trim().toLowerCase(), f.options!]),
+    );
+    const withOptions = answers.map((a) => ({
+      label: a.label ?? "",
+      value: a.value ?? "",
+      options: optionsByLabel.get((a.label ?? "").trim().toLowerCase()),
+    }));
+    for (const p of checkFacts(withOptions, facts)) {
       problems.push(p);
     }
   }
@@ -190,6 +201,52 @@ export function reviewApplication(input: SanityInput): SanityProblem[] {
           .join(", ")}${fields.length > 3 ? ", …" : ""}) and every one of them is blank`,
       });
     }
+  }
+
+  /**
+   * A field the FORM ITSELF marked required, with no answer recorded. No domain knowledge needed
+   * and nothing to tune: the employer said it was mandatory and we have nothing for it.
+   *
+   * This is the check that would have caught BOGWYU, which reached review and sat awaiting
+   * approval with ELEVEN required fields unanswered — Country*, Location (City)*, Degree*,
+   * Discipline*, When do you graduate?*, What is your GPA?*, and five more. Two guards let it
+   * through and it is worth recording why, because each looked reasonable:
+   *
+   *   - turnLoop's gate blocks on `required && filled === false` — fields it is CONFIDENT are
+   *     empty. All eleven had `filled === undefined`: never attempted, so never confidently
+   *     empty. A field nobody tried does not look empty, it looks unknown.
+   *   - The section checks below ask whether a section is ENTIRELY blank. "School*" was answered,
+   *     so education counted as present while Degree, Discipline and GPA were all missing.
+   *
+   * Both were too generous in the same direction, and neither is wrong on its own terms — which is
+   * why this asks the blunt question instead: did the employer require it, and do we have it?
+   */
+  /**
+   * Compare labels with the REQUIRED MARKER STRIPPED. The reader emits both "Phone" and "Phone*"
+   * for one control (the marker is part of the label text here), and the answer is recorded against
+   * whichever it saw last — so an exact-label comparison reported the twin as unanswered on three
+   * applications that had a phone number all along. Whitespace is folded for the same reason.
+   */
+  const key = (s: string) =>
+    s
+      .replace(/[*✱﹡＊]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+  const answered = new Set(answers.filter((a) => !isBlank(a.value)).map((a) => key(a.label ?? "")));
+  const unanswered = observedFields.filter((f) => {
+    if (!f.required) return false;
+    const label = key(f.label ?? "");
+    return Boolean(label) && !answered.has(label);
+  });
+  if (unanswered.length) {
+    const names = unanswered.map((f) => (f.label ?? "").trim());
+    problems.push({
+      code: "required-unanswered",
+      message:
+        `${unanswered.length} field(s) the form marks REQUIRED have no answer: ` +
+        `${names.slice(0, 6).join(", ")}${names.length > 6 ? `, +${names.length - 6} more` : ""}`,
+    });
   }
 
   // Name and email blank means we are about to submit an anonymous application.

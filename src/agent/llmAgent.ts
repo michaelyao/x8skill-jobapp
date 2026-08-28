@@ -1,6 +1,6 @@
 import { normalizeQuestion } from "../utils/normalize.js";
 import { parseResumeHistory } from "../knowledge/resumeHistory.js";
-import { bandContains, degreeLevel, parseGpaBand } from "../core/factChecks.js";
+import { bandContains, bestBand, degreeLevel, parseGpaBand } from "../core/factChecks.js";
 import type { Agent, AgentContext, FieldAnswer, FieldSpec, PageSnapshot } from "./types.js";
 
 // Legal / demographic / compensation fields we must never free-guess. The agent
@@ -535,12 +535,13 @@ export class LlmAgent implements Agent {
       // GPA: the exact figure in a text box, and the band that CONTAINS it in a dropdown.
       if (/\bgpa\b|grade point average|overall result/i.test(label) && !Number.isNaN(realGpa) && realGpa > 0) {
         if (field.options?.length) {
-          const band = field.options.find((o) => {
-            const parsed = parseGpaBand(o);
-            return parsed && bandContains(parsed, realGpa);
-          });
+          // bestBand handles the case no band contains the value: Verkada offers
+          // 3.6-4.0 / 3.1-3.5 / 3.0-or-under and a 3.53 falls in the gap between two of them. It
+          // then takes the nearest band BELOW, never above — understating is a rounding decision,
+          // overstating is a false claim. A required GPA went unanswered before this.
+          const band = bestBand(field.options, realGpa);
           if (band && answer.value !== band) {
-            console.log(`  [agent] GPA band → ${JSON.stringify(band)} (contains the real ${realGpa}; was ${JSON.stringify(answer.value)})`);
+            console.log(`  [agent] GPA band → ${JSON.stringify(band)} (for the real ${realGpa}; was ${JSON.stringify(answer.value)})`);
             answer.value = band;
             answer.source = "profile";
             answer.confidence = 1;
