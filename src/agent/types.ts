@@ -92,6 +92,14 @@ export interface HistoryOutcome {
   problems: string[];
   /** Dates and the like that were inferred rather than stated, for the reviewer to see. */
   derived: string[];
+  /**
+   * What actually went into the repeatable sections, as label/value pairs.
+   *
+   * These are committed to the form and then vanish from the DOM, so without recording them here
+   * the work history is invisible to the review page, to every fact check, and to
+   * compareToApproved at submit. A section nobody records is a section nobody can check.
+   */
+  entries: Array<{ label: string; value: string }>;
 }
 
 /** The LLM driver: turns a page snapshot + context into per-field answers. */

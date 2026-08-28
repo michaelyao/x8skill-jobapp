@@ -252,6 +252,17 @@ export async function runApplication(
         console.log(`    history sections failed: ${(error as Error).message.split("\n")[0]}`);
         return undefined;
       });
+      /**
+       * Fold what went into the repeatable sections into the run's ANSWERS.
+       *
+       * These entries are committed to the form and then vanish from the DOM, so without this the
+       * work history is invisible everywhere downstream: the review page cannot show it, no fact
+       * check can read it, and compareToApproved has nothing to verify at submit. The application
+       * carried seven jobs and the record of it carried none.
+       */
+      for (const e of history?.entries ?? []) {
+        if (e.value?.trim()) answersByLabel.set(e.label, { label: e.label, type: "text", value: e.value });
+      }
     }
 
     // Prune BEFORE reading. The resume autofill commits skills the ATS guessed from the PDF,

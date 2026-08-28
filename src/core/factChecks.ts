@@ -180,6 +180,30 @@ export function checkFacts(
       }
     }
 
+    /**
+     * A GPA stated inside FREE TEXT. The rules below only inspect an answer whose LABEL is a GPA
+     * question, so a cover letter reading "Information Systems student at Carnegie Mellon (GPA
+     * 3.53)" sails past every one of them — the value is wrong, it is on the application, and
+     * nothing was looking at it. Found on ZNSIQU after the GPA changed to 3.44.
+     *
+     * Anchored on the word GPA so it cannot fire on an unrelated number: a version string, a
+     * salary, a date. Prose is LLM-drafted, so it goes stale the moment a fact changes — this is
+     * the only check that notices.
+     */
+    if (facts.gpa && text.length > 40) {
+      const real = Number(facts.gpa);
+      for (const m of text.matchAll(/\bgpa\b[^\d]{0,12}(\d\.\d{1,2})/gi)) {
+        const stated = Number(m[1]);
+        if (!Number.isNaN(real) && !Number.isNaN(stated) && Math.abs(stated - real) > 1e-9) {
+          problems.push({
+            code: "gpa-wrong",
+            message: `"${label.trim().slice(0, 50)}" states a GPA of ${m[1]} in its text, but the real GPA is ${facts.gpa}`,
+          });
+          break; // one report per field is enough
+        }
+      }
+    }
+
     if (GPA_QUESTION.test(label) && facts.gpa) {
       const real = Number(facts.gpa);
       const band = parseGpaBand(text);

@@ -1,7 +1,7 @@
 import { browserLockHolder, getDecisions, getOverview } from "@/lib/store";
 import { draftCount } from "@/lib/stats";
 import { WorkerBar } from "@/components/WorkerBar";
-import { splitQueue } from "@core/core/queueReadiness.js";
+import { splitQueue, type QueueSplit, type Readiness } from "@core/core/queueReadiness.js";
 import { readProfileSnapshot } from "@core/knowledge/profile.js";
 
 export const dynamic = "force-dynamic";
@@ -28,12 +28,33 @@ export default async function QueuePage() {
   const profileSnapshot = await readProfileSnapshot();
   const split = profileSnapshot
     ? splitQueue(queue.filter((e) => e.status === "awaiting_approval"), profileSnapshot)
-    : { ready: queue.filter((e) => e.status === "awaiting_approval").map((entry) => ({ entry, problems: [] })), needsWork: [] };
-  const notReady = split.needsWork;
+    : ({
+        ready: queue
+          .filter((e) => e.status === "awaiting_approval")
+          .map((entry): Readiness => ({ entry, problems: [] })),
+        needsWork: [] as Readiness[],
+      } satisfies QueueSplit);
+  const notReady = split.needsWork.filter((r) => !withWorker(r.entry.code ?? r.entry.key));
+  const beingRefilled = queue.filter(
+    (e) => e.status === "awaiting_approval" && withWorker(e.code ?? e.key),
+  );
   const readyKeys = new Set(split.ready.map((r) => r.entry.key));
+  // "Why can I approve this again?" — because the submit failed and nothing was sent. That is
+  // correct behaviour (only a genuine "nothing was submitted" outcome resets an entry), but the
+  // page gave no sign of it, so a job approved on 19 Aug looked brand new.
+  const priorApproval = new Map(
+    [...split.ready, ...split.needsWork]
+      .filter((r) => r.previouslyApproved)
+      .map((r) => [r.entry.key, r.previouslyApproved!]),
+  );
 
+  /**
+   * An entry with a re-fill ALREADY QUEUED is not a decision either: the copy on screen is about to
+   * be replaced, so approving it would send answers that are being rewritten as you look at them.
+   * It showed here with a "retry queued" badge and an Approve button, which is a footgun.
+   */
   const awaiting = queue
-    .filter((e) => e.status === "awaiting_approval" && readyKeys.has(e.key))
+    .filter((e) => e.status === "awaiting_approval" && readyKeys.has(e.key) && !withWorker(e.code ?? e.key))
     .sort((a, b) => {
       const byState = Number(withWorker(a.code ?? a.key)) - Number(withWorker(b.code ?? b.key));
       if (byState) return byState;
@@ -81,6 +102,21 @@ export default async function QueuePage() {
           {inFlight.map((e) => (
             <div key={e.key} className="code">
               <span className="pill accent">in progress</span> {e.code} — {e.company} · {e.title}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {beingRefilled.length ? (
+        <div className="card" style={{ marginTop: 14 }}>
+          <h3>Being re-filled — {beingRefilled.length}</h3>
+          <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
+            A re-fill is queued or running for these, so the copy here is about to be replaced.
+            Nothing to decide yet — they return to the list above once the new copy is verified.
+          </p>
+          {beingRefilled.map((e) => (
+            <div key={e.key} className="code" style={{ paddingBottom: 4 }}>
+              {e.code} — {e.company} · {e.title}
             </div>
           ))}
         </div>
@@ -195,7 +231,22 @@ export default async function QueuePage() {
                           </div>
                         </>
                       ) : d.decidedAt ? (
-                        <span className="pill good">approved {d.decidedAt.slice(0, 10)}</span>
+                        /**
+                         * A green "approved" pill on an item sitting in the APPROVAL queue reads as
+                         * a contradiction — which is what it looked like on TXWZQB: approved on
+                         * 19 Aug, still here, still approvable. The behaviour is right (the submit
+                         * failed, nothing was sent, and only a genuine "nothing was submitted"
+                         * outcome resets an entry) but the page never said so. Say it.
+                         */
+                        <>
+                          <span className="pill warn">approved {d.decidedAt.slice(0, 10)} — not sent</span>
+                          <div className="muted" style={{ marginTop: 3 }}>
+                            the submit failed, so nothing was submitted; it needs a fresh approval
+                            {priorApproval.get(e.key)?.failure
+                              ? ` — ${priorApproval.get(e.key)!.failure!.slice(0, 70)}`
+                              : ""}
+                          </div>
+                        </>
                       ) : (
                         <span className="muted">not decided</span>
                       )}

@@ -235,6 +235,7 @@ export class WorkableDriver extends GenericDriver {
       experienceCommitted: 0,
       problems: [],
       derived: history.education.flatMap((e) => e.derived ?? []),
+      entries: [],
     };
 
     for (const [index, edu] of history.education.entries()) {
@@ -255,6 +256,13 @@ export class WorkableDriver extends GenericDriver {
       if (edu.endDate) await this.typeField(page, "end_date", edu.endDate);
       if (await this.commitEntry(page, "school", `education (${edu.school})`)) {
         out.educationCommitted += 1;
+        out.entries.push(
+          { label: "Education — School", value: edu.school },
+          { label: "Education — Degree", value: edu.degree },
+          { label: "Education — Field of study", value: edu.fieldOfStudy },
+          ...(edu.startDate ? [{ label: "Education — Start date", value: edu.startDate }] : []),
+          ...(edu.endDate ? [{ label: "Education — End date", value: edu.endDate }] : []),
+        );
         console.log(`      ✓ education: ${edu.school} — ${edu.degree}, ${edu.fieldOfStudy} (${edu.startDate ?? "?"}–${edu.endDate ?? "?"})`);
       } else {
         out.problems.push(`education entry for ${edu.school} would not commit`);
@@ -262,7 +270,19 @@ export class WorkableDriver extends GenericDriver {
       }
     }
 
-    for (const [index, job] of history.experience.entries()) {
+    /**
+     * OLDEST FIRST, deliberately — the resume lists newest first and this reverses it.
+     *
+     * Workable PREPENDS each committed entry, so insertion order comes out reversed on the form:
+     * adding Amazon (current) first put it at the BOTTOM and Bay Area Rapid Transit (2023) at the
+     * top, which is the wrong way round on any application. Reported on ZNSIQU.
+     *
+     * The entries are also RECORDED into `out.entries` now. They were committed to the form and
+     * then forgotten: not in the queue entry's answers, so the review page could not show the work
+     * history, no fact check could see it, and compareToApproved had nothing to verify at submit.
+     * A section nobody records is a section nobody can check.
+     */
+    for (const [index, job] of [...history.experience].reverse().entries()) {
       // expandSections already left the FIRST panel open, so "+ Add" is legitimately disabled at
       // that point — asking for a new entry there reported a failure that was not one. Only reach
       // for "+ Add" when no panel is open.
@@ -290,6 +310,12 @@ export class WorkableDriver extends GenericDriver {
       }
       if (await this.commitEntry(page, "title", `experience (${job.company})`)) {
         out.experienceCommitted += 1;
+        out.entries.push(
+          { label: `Experience — Company`, value: job.company },
+          { label: `Experience — Title`, value: job.title },
+          ...(job.startDate ? [{ label: `Experience — Start date`, value: job.startDate }] : []),
+          ...(job.current ? [{ label: `Experience — Current`, value: "Yes" }] : job.endDate ? [{ label: `Experience — End date`, value: job.endDate }] : []),
+        );
         console.log(`      ✓ experience: ${job.company} — ${job.title} (${job.startDate ?? "?"}–${job.current ? "present" : job.endDate ?? "?"})`);
       } else {
         out.problems.push(`experience entry for ${job.company} would not commit`);

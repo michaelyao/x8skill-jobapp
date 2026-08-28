@@ -28,6 +28,8 @@ export interface Readiness {
   entry: PendingEntry;
   /** Empty when the application is ready for a human to review. */
   problems: string[];
+  /** Set when this was approved before and came back because the submit failed. */
+  previouslyApproved?: { by?: string; at?: string; failure?: string };
 }
 
 /** Facts the checks compare stated answers against. */
@@ -109,7 +111,21 @@ export function judgeEntry(entry: PendingEntry, facts: ReturnType<typeof resumeF
     problems.push(...(entry.visualCheck.gaps ?? ["the review screen did not match what was recorded"]));
   }
 
-  return { entry, problems };
+  return { entry, problems, previouslyApproved: priorApproval(entry) };
+}
+
+/**
+ * An entry the user ALREADY approved, whose submit then failed and reset it to awaiting_approval.
+ *
+ * This is deliberate — only a genuine "nothing was submitted" outcome resets an entry, because the
+ * alternative is never retrying a job whose submit died. But the queue showed it as an ordinary
+ * item with no sign of any of that, so it reads as "why am I approving this again?". TXWZQB was
+ * approved on 19 Aug, the browser context was dead so nothing was opened, and it came back looking
+ * brand new. Saying so is the whole fix; the behaviour is correct.
+ */
+function priorApproval(entry: PendingEntry): { by?: string; at?: string; failure?: string } | undefined {
+  if (!entry.decidedAt && !entry.approvedBy) return undefined;
+  return { by: entry.approvedBy, at: entry.decidedAt, failure: entry.lastError };
 }
 
 export interface QueueSplit {
