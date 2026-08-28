@@ -102,6 +102,33 @@ the check entirely.
 command existed rejects it as *"unrecognised command"*, so no verdict is ever applied and every
 check ages out to unavailable — safe, but no verification happens.
 
+**A verdict is only as good as the PAIRING, and a bad pairing must never read as a fault.**
+Field-level checking pairs a recorded label with the block holding its value (`screenBlocks.ts`).
+Three pairing bugs, each measured on a real capture, held nine finished applications out of the
+review queue:
+
+| What the check said | What was actually happening |
+|---|---|
+| `"Name" … but the screen shows "Current location"` | it paired with the NEXT FIELD'S LABEL 299px below, because the name input's own text was never detected. Real pairs sit 15–35px apart |
+| `"High School Name" … shows "UNIVERSITY"` | a section HEADING (`label: "title"`) read as a value |
+| `"…proudest of" … shows "'acking, reaching 200+…"` | the textarea was scrolled to the caret, so the box shows the value's TAIL and OCR mangled the character it clipped through |
+
+So a value must be within reach of its label (3× the label height, min 60px), a `title` block is
+never a value, a block whose text is another recorded label is never a value, and truncation is
+tolerated at BOTH ends. A label block that carries text beyond the label may vouch for a value found
+inside it (Workday merges a question and its answer into one region).
+
+**"Empty" means a box we FOUND showing a placeholder — never "we found no box".** A filled value the
+OCR did not detect is indistinguishable from an empty field, and blocking a finished application on
+our own reader's miss is the failure this check exists to prevent. An unattributable field is
+`value-not-located` and, like `label-not-found`, is NOT reported. Cases: `npm run test:blocks`.
+
+**A stale verdict is re-judged from the SCREENSHOT, not by re-filling.** When the judging code
+changes, verdicts already written are stale about themselves, not about the form — and re-filling to
+get a fresh screenshot re-opens a live application at an employer to photograph a form we already
+have a photograph of. `npm run recheck:screens` re-runs OCR on the saved `review-CODE.png` and
+enqueues the same `visual_check` command the callback uses, so the WORKER still writes the verdict.
+
 ## Architecture
 
 ```
@@ -201,6 +228,14 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   click that dispatched without deleting is reported as stuck, never as removed. The decision
   is a pure function (`pillsToRemove`), NOT logic inside an `evaluate()` string, so it can be
   tested. Cases: `src/debug/skillRemovalCases.ts`.
+- **`/queue` is for decisions; `/status` is for progress.** The split is by "is a human the next
+  step", not by status. An application being re-filled, one mid-submit, and one that reached Review
+  with something missing are all things the system moves on its own — they used to sit on the
+  approval page, each beside an Approve button, which is a footgun: approving a copy that is being
+  re-filled sends answers that are being rewritten as you read them. Both pages call the same
+  `splitQueue`, so the list you approve from and the guard that refuses a submit cannot disagree.
+  `/queue` keeps a COUNT of what moved with a link to `/status` — a page that silently dropped 26
+  items would read as "there is nothing else".
 - **`manual_submitted` is a submitted status, not a skip, and must be written to BOTH stores.**
   A skip means no application exists; this means the user filled and submitted it by hand on
   the ATS, so it is the most important kind to never re-open. The `manual_submit` command
