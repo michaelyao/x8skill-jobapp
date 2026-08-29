@@ -1,6 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
+
+/**
+ * Commands that settle what happens to this application. `update_answers` is not one — it teaches
+ * the answer store and is sent as part of approving, so it must not lock anything on its own.
+ */
+const DECISIONS = new Set(["approve", "skip", "manual_submit", "change"]);
 import type { PendingEntry } from "@core/knowledge/approvalQueue.js";
 
 interface Props {
@@ -45,6 +51,17 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
   );
   const [answers, setAnswers] = useState<Answer[]>(original);
   const [busy, setBusy] = useState<string | null>(null);
+  /**
+   * A decision has been queued and the worker will act on it.
+   *
+   * `busy` only covers the request itself, so the buttons came back the instant it returned and you
+   * could Skip an application you had just approved, or queue a re-fill on top of a submit that was
+   * already running. The worker drains commands in order and cannot tell which one you meant.
+   *
+   * Locked until the page is reloaded, deliberately: reloading shows the entry's real state, which
+   * is the only honest basis for a second decision.
+   */
+  const [decided, setDecided] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [changeText, setChangeText] = useState("");
   const [showChange, setShowChange] = useState(false);
@@ -149,6 +166,7 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
         return;
       }
       setNote(body.message ?? "Queued — the worker picks it up within a few seconds.");
+      if (DECISIONS.has(name)) setDecided(name);
     } catch {
       setNote("Could not reach the server");
     } finally {
@@ -180,15 +198,15 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
 
       <div className="card" style={{ borderColor: "var(--accent)" }}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          <button className="primary" onClick={approve} disabled={busy !== null}>
+          <button className="primary" onClick={approve} disabled={busy !== null || decided !== null}>
             {busy === "approve" ? "Sending…" : edited ? `Approve with ${editedCount} edit${editedCount === 1 ? "" : "s"}` : "Approve & submit"}
           </button>
-          <button onClick={() => send("skip")} disabled={busy !== null}>Skip</button>
+          <button onClick={() => send("skip")} disabled={busy !== null || decided !== null}>Skip</button>
           {confirmManual ? (
             <button
               className="primary"
               style={{ background: "var(--good, #2f9e44)" }}
-              disabled={busy !== null}
+              disabled={busy !== null || decided !== null}
               onClick={async () => {
                 setConfirmManual(false);
                 await send("manual_submit");
@@ -197,11 +215,11 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
               {busy === "manual_submit" ? "Recording…" : "Confirm — it is already submitted"}
             </button>
           ) : (
-            <button onClick={() => setConfirmManual(true)} disabled={busy !== null}>
+            <button onClick={() => setConfirmManual(true)} disabled={busy !== null || decided !== null}>
               I submitted this myself…
             </button>
           )}
-          <button onClick={() => setShowChange((v) => !v)} disabled={busy !== null}>Request re-fill…</button>
+          <button onClick={() => setShowChange((v) => !v)} disabled={busy !== null || decided !== null}>Request re-fill…</button>
           {edited ? <span className="pill warn">{editedCount} edited — these become the approved answers</span> : null}
           {edited ? (
             <label className="muted" style={{ fontSize: 13, display: "flex", gap: 6, alignItems: "center" }}>
@@ -215,7 +233,7 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
           <div style={{ marginTop: 12 }}>
             <label htmlFor="change">Describe what to change — the agent re-fills the form and comes back for approval</label>
             <textarea id="change" rows={3} value={changeText} onChange={(e) => setChangeText(e.target.value)} placeholder="e.g. use the Pittsburgh address" />
-            <button style={{ marginTop: 8 }} disabled={!changeText.trim() || busy !== null} onClick={() => send("change", { instruction: changeText.trim() })}>
+            <button style={{ marginTop: 8 }} disabled={!changeText.trim() || busy !== null || decided !== null} onClick={() => send("change", { instruction: changeText.trim() })}>
               Send re-fill request
             </button>
             <p className="muted" style={{ fontSize: 12 }}>
@@ -233,6 +251,14 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
         ) : null}
 
         {note ? <p style={{ marginBottom: 0, marginTop: 12, color: "var(--accent)" }}>{note}</p> : null}
+        {decided ? (
+          // Greyed-out buttons with no explanation read as broken. Say what happened and what to do.
+          <p className="muted" style={{ marginBottom: 0, marginTop: 6, fontSize: 13 }}>
+            The buttons are locked while that runs, so a second decision cannot land on top of it.{" "}
+            <a href="" onClick={(e) => { e.preventDefault(); window.location.reload(); }}>Reload</a> to
+            see where it got to.
+          </p>
+        ) : null}
       </div>
 
       {DECIDED[entry.status] ? (
