@@ -1757,38 +1757,46 @@ export abstract class GenericDriver implements AtsDriver {
   async uploadDocuments(root: Root, resumePath: string): Promise<DocumentUploads> {
     const out: DocumentUploads = { attached: [], missing: [] };
     const inputs = root.locator('input[type="file"]');
-    const count = await inputs.count().catch(() => 0);
-    if (count === 0) return out;
+    if ((await inputs.count().catch(() => 0)) === 0) return out;
 
-    for (let i = 0; i < count; i += 1) {
-      const input = inputs.nth(i);
-      // Already holds a file, or the form is showing an uploaded item for it — leave it alone.
-      const hasFile = await input.evaluate((el) => (el as HTMLInputElement).files?.length ?? 0).catch(() => 0);
-      if (hasFile > 0) continue;
+    /**
+     * Describe every upload in ONE round trip, before touching any of them.
+     *
+     * Greenhouse REMOVES a file input from the DOM the moment it accepts a file, so the list
+     * shifts underneath a per-index loop: attaching the resume made input 1 become input 0, and
+     * the next `inputs.nth(i).evaluate` waited thirty seconds on a node that no longer existed.
+     * Reading the whole list first, then re-locating each one by id, is immune to that.
+     */
+    const specs = (await inputs
+      .evaluateAll((els) =>
+        els.map((el, index) => {
+          const bits = [
+            el.getAttribute("aria-label") ?? "",
+            el.getAttribute("name") ?? "",
+            el.getAttribute("data-testid") ?? "",
+            el.id ?? "",
+          ];
+          if (el.id) {
+            const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+            if (lab) bits.push((lab as HTMLElement).innerText ?? "");
+          }
+          const box = el.closest('[class*="field" i], fieldset, div, section');
+          if (box) bits.push(((box as HTMLElement).innerText ?? "").slice(0, 200));
+          return {
+            index,
+            id: el.id ?? "",
+            described: bits.join(" ").toLowerCase(),
+            hasFile: ((el as HTMLInputElement).files?.length ?? 0) > 0,
+          };
+        }),
+      )
+      .catch(() => [])) as Array<{ index: number; id: string; described: string; hasFile: boolean }>;
 
-      // What does this upload want? Read the label, the accessible name and the surrounding text.
-      const described = (
-        await input
-          .evaluate((el) => {
-            const bits = [
-              el.getAttribute("aria-label") ?? "",
-              el.getAttribute("name") ?? "",
-              el.getAttribute("data-testid") ?? "",
-              el.id ?? "",
-            ];
-            if (el.id) {
-              const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-              if (lab) bits.push((lab as HTMLElement).innerText ?? "");
-            }
-            const box = el.closest('[class*="field" i], fieldset, div, section');
-            if (box) bits.push(((box as HTMLElement).innerText ?? "").slice(0, 200));
-            return bits.join(" ");
-          })
-          .catch(() => "")
-      ).toLowerCase();
+    for (const spec of specs) {
+      if (spec.hasFile) continue; // already holds a file — leave it alone
 
-      const wantsTranscript = /transcript|academic record|grade report|marksheet|mark sheet/.test(described);
-      const wantsResume = /resume|cv\b|curriculum/.test(described);
+      const wantsTranscript = /transcript|academic record|grade report|marksheet|mark sheet/.test(spec.described);
+      const wantsResume = /resume|cv\b|curriculum/.test(spec.described);
       const target = wantsTranscript ? TRANSCRIPT_PATH : resumePath;
       const kind = wantsTranscript ? "transcript" : "resume";
 
@@ -1801,18 +1809,52 @@ export abstract class GenericDriver implements AtsDriver {
         continue;
       }
 
-      await input.setInputFiles(target).catch(() => undefined);
-      await root.locator("body").waitFor({ timeout: 500 }).catch(() => undefined);
-      const landed = await input.evaluate((el) => (el as HTMLInputElement).files?.length ?? 0).catch(() => 0);
-      if (landed > 0) {
+      const input = spec.id
+        ? root.locator(`input[type="file"][id="${spec.id.replace(/"/g, '\\"')}"]`).first()
+        : inputs.nth(spec.index);
+      // Was the name already on the page? Then its presence afterwards proves nothing about THIS
+      // attach — a re-entered flow shows the previous one.
+      const shownBefore = await this.showsFileName(root, path.basename(target));
+      let failure = "";
+      await input.setInputFiles(target, { timeout: 20_000 }).catch((error: Error) => {
+        failure = error.message.split("\n")[0];
+      });
+
+      /**
+       * Verify by what the FORM shows, not only by files.length.
+       *
+       * Greenhouse takes the file and then removes the input, so reading files.length back gives 0
+       * on a detached node — indistinguishable from a refusal. 130 log lines said "setInputFiles
+       * did not take" about uploads that had worked, and the required-document gate then blocked
+       * finished applications over a resume that was already attached. The filename appearing on
+       * the page is the form's own confirmation, and it is the same evidence a person would use.
+       */
+      const landed = (await input
+        .evaluate((el) => (el as HTMLInputElement).files?.length ?? 0, undefined, { timeout: 2_000 })
+        .catch(() => -1)) as number;
+      const named = !shownBefore && (await this.showsFileName(root, path.basename(target)));
+      if (landed > 0 || named) {
         out.attached.push(kind);
-        console.log(`    ✓ ${kind} attached`);
+        console.log(`    ✓ ${kind} attached${landed > 0 ? "" : " (the form is showing the file)"}`);
       } else {
-        out.missing.push(`${kind} (setInputFiles did not take)`);
-        console.log(`    ✗ ${kind} would not attach`);
+        out.missing.push(`${kind} (${failure || "setInputFiles did not take"})`);
+        console.log(`    ✗ ${kind} would not attach${failure ? ` — ${failure}` : ""}`);
       }
     }
     return out;
+  }
+
+  /** Is the form displaying this filename? That is its own confirmation of an upload. */
+  private async showsFileName(root: Root, fileName: string): Promise<boolean> {
+    const text = ((await root
+      .locator("body")
+      .innerText({ timeout: 2_000 })
+      .catch(() => "")) || "").toLowerCase();
+    if (!text) return false;
+    const base = fileName.toLowerCase();
+    // Some forms drop the extension, others rewrite spaces — match on the stem.
+    const stem = base.replace(/\.[a-z0-9]+$/, "");
+    return text.includes(base) || (stem.length > 8 && text.includes(stem));
   }
 
   protected async hasSubmit(root: Root): Promise<boolean> {

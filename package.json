@@ -14,6 +14,7 @@
     "test:skill-removal": "tsx src/debug/skillRemovalCases.ts",
     "test:longlist": "tsx src/debug/longListCases.ts",
     "test:reactselect": "tsx src/debug/reactSelectCases.ts",
+    "test:upload": "tsx src/debug/uploadCases.ts",
     "test:sources": "node tools/build_internships.mjs --selftest",
     "test:ats": "tsx src/debug/atsDetectionCases.ts",
     "test:verifycode": "tsx src/debug/verifyCodeCases.ts",

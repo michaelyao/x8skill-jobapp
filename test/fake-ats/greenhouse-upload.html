@@ -1,0 +1,43 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>fake ATS — an upload that removes its own input</title>
+<!--
+  From the live DOM of job-boards.greenhouse.io: the file input is 1x1 and custom-styled, and the
+  form REMOVES it once it accepts a file, replacing it with the filename. Reading files.length back
+  therefore reports 0 on a node that no longer exists — indistinguishable from a refusal, which is
+  how 130 log lines said "setInputFiles did not take" about uploads that had worked.
+
+  The second input is here because removing the first one shifts the list: a per-index loop then
+  waits the full locator timeout on a node that moved.
+-->
+<style>
+  body { font: 14px system-ui; padding: 24px; }
+  input[type=file] { width: 1px; height: 1px; }
+  .chip { margin-top: 8px; font-weight: 600; }
+</style>
+
+<div class="field" id="resume-field">
+  <label for="resume">Resume/CV *</label>
+  <input type="file" id="resume" accept=".pdf,.doc,.docx">
+</div>
+
+<div class="field" id="transcript-field">
+  <label for="transcript">Unofficial transcript</label>
+  <input type="file" id="transcript" accept=".pdf">
+</div>
+
+<script>
+  window.__uploaded = [];
+  for (const id of ["resume", "transcript"]) {
+    document.getElementById(id).addEventListener("change", function (e) {
+      var input = e.target;
+      var name = input.files[0] ? input.files[0].name : "";
+      window.__uploaded.push({ id: id, name: name });
+      var chip = document.createElement("div");
+      chip.className = "chip";
+      chip.textContent = name;
+      input.parentElement.appendChild(chip);
+      input.remove(); // <- the whole point
+    });
+  }
+</script>
