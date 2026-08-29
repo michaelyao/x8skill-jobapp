@@ -60,7 +60,18 @@ export class AshbyDriver extends GenericDriver {
         if (await this.pickFromTypeahead(root, combo, wanted)) return true;
         // A country list will not contain "Sunnyvale, CA"; fall back to the country itself before
         // giving up, rather than leaving a required field empty.
-        if (wanted !== "United States" && (await this.pickFromTypeahead(root, combo, "United States"))) return true;
+        if (wanted !== "United States" && (await this.pickFromTypeahead(root, combo, "United States"))) {
+          /**
+           * SAY WHAT WAS ACTUALLY FILLED. The fallback used to return true while the recorded
+           * answer stayed "Pittsburgh, PA", so the review page showed one value and the form held
+           * another — the visual cross-check caught it on two applications ("Location was recorded
+           * as Pittsburgh, PA but the screen shows United States") and it would have been refused
+           * at submit by compareToApproved. turnLoop reads answer.value AFTER the fill, so
+           * correcting it here is what makes the record faithful.
+           */
+          answer.value = "United States";
+          return true;
+        }
         return false;
       }
     }
