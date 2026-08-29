@@ -29,6 +29,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ code: s
 
   return (
     <>
+      <FeedbackBox code={code.toUpperCase()} company={entry.company} title={entry.title} />
       <ReviewPanel
         entry={JSON.parse(JSON.stringify(entry))}
         description={description}
@@ -36,7 +37,6 @@ export default async function ReviewPage({ params }: { params: Promise<{ code: s
         role={user?.role ?? "reviewer"}
         hasScreenshot={Boolean(app?.lastRunDir)}
       />
-      <FeedbackBox code={code.toUpperCase()} company={entry.company} title={entry.title} />
       <p className="muted" style={{ fontSize: 13, marginTop: 14 }}>
         <a href={`/history/${code}`}>History — every recorded copy of this application</a>
       </p>

@@ -24,6 +24,7 @@ interface Note {
  * and that is where most of these turn out to live.
  */
 export function FeedbackBox({ code, company, title }: { code: string; company?: string; title?: string }) {
+  const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const [state, setState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [message, setMessage] = useState("");
@@ -60,12 +61,54 @@ export function FeedbackBox({ code, company, title }: { code: string; company?: 
     }
   }
 
-  const open = notes.filter((n) => !n.resolvedAt);
+  const waiting = notes.filter((n) => !n.resolvedAt);
   const done = notes.filter((n) => n.resolvedAt);
 
+  /**
+   * Folded by default, and at the TOP of the page.
+   *
+   * It has to be the first thing in reach — the problem is noticed while reading the application,
+   * and a box below several screens of answers is a box you scroll past. Folded because on most
+   * applications there is nothing to say, and an open textarea at the top of every review would
+   * push the thing being reviewed down the page.
+   *
+   * The heading stays a real summary line: it counts what has already been said here, so a note
+   * left earlier is visible without opening anything.
+   */
   return (
-    <div className="card" style={{ marginTop: 14 }}>
-      <h3 style={{ marginTop: 0 }}>Something wrong with this application?</h3>
+    <div className="card" style={{ marginTop: 0, marginBottom: 14 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        style={{
+          all: "unset",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          width: "100%",
+          fontWeight: 600,
+        }}
+      >
+        <span style={{ display: "inline-block", width: 12, transform: open ? "rotate(90deg)" : "none", transition: "transform .12s" }}>
+          ›
+        </span>
+        Something wrong with this application?
+        {waiting.length ? (
+          <span className="pill warn" style={{ fontSize: 12 }}>
+            {waiting.length} waiting
+          </span>
+        ) : null}
+        {done.length ? (
+          <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>
+            {done.length} dealt with
+          </span>
+        ) : null}
+      </button>
+
+      {!open ? null : (
+      <div style={{ marginTop: 12 }}>
       <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
         Describe it here rather than in a terminal — a missing transcript, a stale fact, a field
         filled with the wrong thing. This goes to whoever is fixing the system, not to the worker:
@@ -95,10 +138,10 @@ export function FeedbackBox({ code, company, title }: { code: string; company?: 
         ) : null}
       </div>
 
-      {open.length ? (
+      {waiting.length ? (
         <div style={{ marginTop: 14 }}>
           <strong style={{ fontSize: 13 }}>Waiting to be picked up</strong>
-          {open.map((n) => (
+          {waiting.map((n) => (
             <div key={n.id} style={{ marginTop: 6, fontSize: 13 }}>
               <span className="muted">
                 {n.at.slice(0, 16).replace("T", " ")} · {n.by}
@@ -127,6 +170,8 @@ export function FeedbackBox({ code, company, title }: { code: string; company?: 
           ))}
         </div>
       ) : null}
+      </div>
+      )}
     </div>
   );
 }
