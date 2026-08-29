@@ -194,6 +194,31 @@ check(
   verifyFields(HELPED_ANSWERED, [{ label: "Can you work on-site in San Francisco during the week?", value: "Yes" }])[0]?.status,
 );
 
+// LSWING (Ashby). "Location" labels two different things on one page: the JOB's location in the
+// posting panel on the left, and the applicant's own Location field on the form to the right.
+const TWICE_LABELLED: ScreenBlock[] = [
+  { label: "text", text: "Location", box: [232, 236, 291, 255], order: 1 },
+  { label: "text", text: "New York City", box: [232, 262, 348, 285], order: 3 },
+  { label: "text", text: "Location $ ^{*} $", box: [534, 1117, 615, 1139], order: 28 },
+];
+
+console.log("\nthe same word can label two different things (LSWING)");
+check(
+  `the job's city does not contradict the applicant's location`,
+  gaps(TWICE_LABELLED, [{ label: "Location", value: "Pittsburgh, PA" }]).length === 0,
+  gaps(TWICE_LABELLED, [{ label: "Location", value: "Pittsburgh, PA" }]),
+);
+check(
+  `the form's own field is the one that could not be read`,
+  verifyFields(TWICE_LABELLED, [{ label: "Location", value: "Pittsburgh, PA" }])[0]?.status === "value-not-located",
+  verifyFields(TWICE_LABELLED, [{ label: "Location", value: "Pittsburgh, PA" }])[0]?.status,
+);
+check(
+  `and when one of them DOES hold the value, that is a match`,
+  verifyFields([...TWICE_LABELLED, { label: "text", text: "Pittsburgh, PA", box: [534, 1145, 640, 1167], order: 29 }],
+    [{ label: "Location", value: "Pittsburgh, PA" }])[0]?.status === "match",
+);
+
 console.log("\nthe fixes must not silence a real gap");
 // Same real blocks, a value that genuinely is not there. If these pass, the change has only
 // removed findings that were never about the form.

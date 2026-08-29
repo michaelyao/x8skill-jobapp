@@ -114,6 +114,26 @@ export interface LocatedField {
 }
 
 /**
+ * Every block that could be this label, best first.
+ *
+ * A label is not unique on a real page. An Ashby posting prints "Location" as a heading over the
+ * JOB's location in the left column, and the application form has its own "Location *" field on
+ * the right — so pairing the first match reported "Location was recorded as Pittsburgh, PA but the
+ * screen shows New York City", the job's city, about a field that was filled correctly.
+ */
+export function labelBlocksFor(blocks: ScreenBlock[], wanted: string): ScreenBlock[] {
+  const key = labelKey(wanted);
+  if (!key) return [];
+  const positioned = blocks.filter((b) => b.box);
+  const exact = positioned.filter((b) => labelKey(b.text) === key);
+  const prefixed =
+    key.length >= 6
+      ? positioned.filter((b) => labelKey(b.text).startsWith(key) && labelKey(b.text) !== key)
+      : [];
+  return [...exact, ...prefixed];
+}
+
+/**
  * The block holding the value for `wanted`, or undefined when the label is not on the page.
  * Returns the label block itself for a checkbox, whose state is on the block.
  *
@@ -123,26 +143,40 @@ export interface LocatedField {
  * after it. The comment above this function has always said a recognised label is not a value; this
  * is that check, finally written.
  */
+/**
+ * The block holding the value for `wanted`, or undefined when the label is not on the page.
+ * Returns the label block itself for a checkbox, whose state is on the block.
+ *
+ * `otherLabels` are the labels of the OTHER answers on the same screen. Without them the search
+ * pairs a label with whatever text sits below it, and on a real form that is usually the NEXT
+ * FIELD'S LABEL: "Name" was reported as showing "Current location", which is the label of the field
+ * after it.
+ */
 export function valueBlockFor(
   blocks: ScreenBlock[],
   wanted: string,
   otherLabels: string[] = [],
 ): LocatedField | undefined {
-  const key = labelKey(wanted);
-  if (!key) return undefined;
-  const positioned = blocks.filter((b) => b.box);
-
-  // The label block: an exact key match, else one that starts with the key (forms truncate).
-  const label =
-    positioned.find((b) => labelKey(b.text) === key) ??
-    positioned.find((b) => labelKey(b.text).startsWith(key) && key.length >= 6);
+  const label = labelBlocksFor(blocks, wanted)[0];
   if (!label?.box) return undefined;
+  return locateFrom(blocks, label, wanted, otherLabels);
+}
+
+/** The pairing, from ONE specific label block. */
+function locateFrom(
+  blocks: ScreenBlock[],
+  label: ScreenBlock,
+  wanted: string,
+  otherLabels: string[],
+): LocatedField {
+  const key = labelKey(wanted);
+  const positioned = blocks.filter((b) => b.box);
 
   // A checkbox carries its own state and its own text — there is nothing below to pair with.
   if (label.label === "checkbox") return { label };
   if (isMergedRegion(label, key)) return { label, merged: true };
 
-  const lb = label.box;
+  const lb = label.box!;
   const others = new Set(otherLabels.map(labelKey).filter((k) => k && k !== key));
   /**
    * A value sits DIRECTLY under its label. Three hundred pixels down is the next section, not this
@@ -191,85 +225,85 @@ export function verifyFields(
   for (const { label, value } of answers) {
     const recorded = (value ?? "").trim();
     if (!recorded) continue;
-    const found = valueBlockFor(blocks, label ?? "", allLabels);
-    if (!found) {
+    const places = labelBlocksFor(blocks, label ?? "");
+    if (!places.length) {
       out.push({ label, recorded, onScreen: "", status: "label-not-found" });
       continue;
     }
-    if (found.label.label === "checkbox") {
-      const wantChecked = /^(yes|true|checked|i agree|agree|on)$/i.test(recorded);
-      const isChecked = found.label.checked === true;
-      out.push({
-        label,
-        recorded,
-        onScreen: isChecked ? "checked" : "unchecked",
-        status: wantChecked === isChecked ? "match" : "different",
-      });
-      continue;
-    }
-
-    const a = fold(recorded);
-    const head = a.length > 24 ? a.slice(0, 24) : a;
     /**
-     * The label block sometimes CONTAINS the answer: OCR merges a question and the option under it
-     * into one region. That is the field's own block, not "somewhere on the page", so it is
-     * evidence — and it is checked only when the block carries text beyond the label itself, so a
-     * bare "Start date (Optional)" can never vouch for an empty date.
+     * Judge EVERY place the label appears and keep the kindest reading. When the same words label
+     * two different things — the job's location in the posting and the applicant's location on the
+     * form — a problem is only real if every plausible pairing agrees there is one.
      */
-    if (carriesMoreThanTheLabel(found.label, labelKey(label ?? "")) && fold(found.label.text).includes(head)) {
-      out.push({ label, recorded, onScreen: found.label.text.trim(), status: "match" });
-      continue;
-    }
-    /**
-     * No box we can attribute to this field. That is NOT "the field is empty": a filled value OCR
-     * did not detect looks identical from here, and blocking a finished application on our own
-     * reader's miss is the failure this check exists to avoid. Only a box we FOUND, showing a
-     * placeholder, counts as empty.
-     */
-    if (found.merged || !found.value) {
-      out.push({ label, recorded, onScreen: "", status: "value-not-located" });
-      continue;
-    }
-
-    /**
-     * ANY block within reach may hold the value. A question is often followed by helper text and
-     * then the control, so insisting on the nearest block reports the guidance as the answer.
-     */
-    const fits = (text: string): boolean => {
-      const b = fold(text);
-      if (!b) return false;
-      const tail = b.split(" ").slice(1).join(" ");
-      return b.includes(head) || (tail.length >= 12 && a.includes(tail));
-    };
-    const hit = (found.candidates ?? [found.value]).find((c) => c && fits(c.text ?? ""));
-    if (hit) {
-      out.push({ label, recorded, onScreen: (hit.text ?? "").trim(), status: "match" });
-      continue;
-    }
-
-    const shown = (found.value.text ?? "").trim();
-    if (looksEmpty(shown)) {
-      out.push({ label, recorded, onScreen: shown, status: "empty" });
-      continue;
-    }
-    if (looksLikeProse(shown, recorded)) {
-      out.push({ label, recorded, onScreen: shown, status: "value-not-located" });
-      continue;
-    }
-    out.push({ label, recorded, onScreen: shown, status: "different" });
+    const readings = places.map((place) => judgeOne(blocks, place, label, recorded, allLabels));
+    out.push(
+      readings.find((r) => r.status === "match") ??
+        readings.find((r) => r.status === "value-not-located") ??
+        readings[0],
+    );
   }
   return out;
 }
 
-/**
- * The verdicts worth blocking a submit for, as sentences.
- *
- * `label-not-found` and `value-not-located` are NOT reported. A label the OCR did not place, or a
- * field whose value box we could not attribute, is far more likely to be our reader's problem, a
- * section scrolled out of the capture, or an overlay merge than a real empty field — and blocking
- * on it would fire on almost every long form. Only a field we located and found empty or
- * contradicted counts.
- */
+function judgeOne(
+  blocks: ScreenBlock[],
+  place: ScreenBlock,
+  label: string,
+  recorded: string,
+  allLabels: string[],
+): FieldVerdict {
+  const found = locateFrom(blocks, place, label, allLabels);
+
+  if (found.label.label === "checkbox") {
+    const wantChecked = /^(yes|true|checked|i agree|agree|on)$/i.test(recorded);
+    const isChecked = found.label.checked === true;
+    return {
+      label,
+      recorded,
+      onScreen: isChecked ? "checked" : "unchecked",
+      status: wantChecked === isChecked ? "match" : "different",
+    };
+  }
+
+  const a = fold(recorded);
+  const head = a.length > 24 ? a.slice(0, 24) : a;
+  /**
+   * The label block sometimes CONTAINS the answer: OCR merges a question and the option under it
+   * into one region. That is the field's own block, not "somewhere on the page", so it is
+   * evidence — and it is checked only when the block carries text beyond the label itself, so a
+   * bare "Start date (Optional)" can never vouch for an empty date.
+   */
+  if (carriesMoreThanTheLabel(found.label, labelKey(label ?? "")) && fold(found.label.text).includes(head)) {
+    return { label, recorded, onScreen: found.label.text.trim(), status: "match" };
+  }
+  /**
+   * No box we can attribute to this field. That is NOT "the field is empty": a filled value OCR
+   * did not detect looks identical from here, and blocking a finished application on our own
+   * reader's miss is the failure this check exists to avoid. Only a box we FOUND, showing a
+   * placeholder, counts as empty.
+   */
+  if (found.merged || !found.value) return { label, recorded, onScreen: "", status: "value-not-located" };
+
+  /**
+   * ANY block within reach may hold the value. A question is often followed by helper text and
+   * then the control, so insisting on the nearest block reports the guidance as the answer.
+   */
+  const fits = (text: string): boolean => {
+    const b = fold(text);
+    if (!b) return false;
+    const tail = b.split(" ").slice(1).join(" ");
+    return b.includes(head) || (tail.length >= 12 && a.includes(tail));
+  };
+  const hit = (found.candidates ?? [found.value]).find((c) => c && fits(c.text ?? ""));
+  if (hit) return { label, recorded, onScreen: (hit.text ?? "").trim(), status: "match" };
+
+  const shown = (found.value.text ?? "").trim();
+  if (looksEmpty(shown)) return { label, recorded, onScreen: shown, status: "empty" };
+  if (looksLikeProse(shown, recorded)) return { label, recorded, onScreen: shown, status: "value-not-located" };
+  return { label, recorded, onScreen: shown, status: "different" };
+}
+
+
 export function describeVerdicts(verdicts: FieldVerdict[]): string[] {
   const out: string[] = [];
   for (const v of verdicts) {
