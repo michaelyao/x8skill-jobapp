@@ -1,0 +1,102 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>fake ATS — react-select combobox (Greenhouse job-boards)</title>
+<!--
+  Reproduces the contract that cost 776 field timeouts in one batch, from the live DOM of
+  job-boards.greenhouse.io:
+
+    · the control is an <input role="combobox" class="select__input"> — there is no <select>
+    · the OPEN menu is a sibling with id = the input's aria-controls, NOT a descendant of
+      .select__control, so a container-scoped option query finds nothing
+    · typing filters; Enter commits the single remaining row and CLOSES the menu
+    · the committed value lives in .select__single-value and may be SHORTER than the row that
+      was chosen — "United States +1" commits as "+1"
+    · none of the rows carry a Workday data-automation-label, so every speculative read of one
+      must be bounded or it waits the Playwright default, per row
+-->
+<style>
+  body { font: 14px system-ui; padding: 24px; }
+  .select__control { border: 1px solid #999; border-radius: 4px; padding: 6px 8px; width: 320px; display: flex; }
+  .select__value-container { flex: 1; display: flex; }
+  .select__single-value { margin-right: 4px; }
+  .select__input { border: 0; outline: 0; flex: 1; font: inherit; }
+  .select__menu { border: 1px solid #ccc; width: 320px; max-height: 180px; overflow-y: auto; }
+  .select__menu[hidden] { display: none; }
+  .select__option { padding: 6px 8px; cursor: pointer; }
+</style>
+
+<label for="country">Country*</label>
+<div class="select select__container">
+  <div class="select-shell">
+    <div class="select__control">
+      <div class="select__value-container">
+        <span class="select__single-value" id="single"></span>
+        <div class="select__input-container">
+          <input id="country" class="select__input" role="combobox" aria-expanded="false" autocomplete="off">
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="select__menu" id="react-select-country-listbox" role="listbox" hidden></div>
+
+<script>
+  // "United States +1" first on purpose: filtering to it leaves the first row UNCHANGED, so a
+  // "has the list answered?" test that only compares the first row waits forever.
+  var OPTIONS = ["United States +1", "Afghanistan +93", "Åland Islands +358", "Albania +355",
+    "Algeria +213", "Andorra +376", "Angola +244", "Argentina +54", "Armenia +374", "Australia +61",
+    "Austria +43", "Bahrain +973", "Bangladesh +880", "Belgium +32", "Brazil +55", "Canada +1"];
+  var input = document.getElementById("country");
+  var menu = document.getElementById("react-select-country-listbox");
+  var single = document.getElementById("single");
+  window.__picked = null;
+
+  function commit(text) {
+    window.__picked = text;
+    // The control shows the DIAL CODE only — deliberately not the row that was chosen.
+    single.textContent = text.indexOf("+") >= 0 ? text.slice(text.indexOf("+")) : text;
+    close();
+  }
+  function close() {
+    menu.hidden = true;
+    menu.innerHTML = "";
+    input.setAttribute("aria-expanded", "false");
+    input.removeAttribute("aria-controls");
+    input.value = "";
+  }
+  function render() {
+    var q = input.value.trim().toLowerCase();
+    var rows = OPTIONS.filter(function (o) { return !q || o.toLowerCase().indexOf(q) >= 0; });
+    menu.innerHTML = "";
+    rows.forEach(function (o, i) {
+      var d = document.createElement("div");
+      d.className = "select__option";
+      d.setAttribute("role", "option");
+      d.id = "react-select-country-option-" + i;
+      d.textContent = o;
+      d.addEventListener("mousedown", function () { commit(o); });
+      menu.appendChild(d);
+    });
+    menu.hidden = false;
+    input.setAttribute("aria-expanded", "true");
+    input.setAttribute("aria-controls", "react-select-country-listbox");
+  }
+  input.addEventListener("mousedown", render);
+  input.addEventListener("focus", render);
+  input.addEventListener("input", function () {
+    // An input event with an EMPTY value closes the menu — react-select's own behaviour, and why
+    // clearing the box before typing threw away the list that had just opened.
+    if (input.value === "") { close(); return; }
+    render();
+  });
+  input.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") { close(); return; }
+    if (e.key === "ArrowDown") { render(); return; }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      var rows = menu.querySelectorAll('[role="option"]');
+      if (!menu.hidden && rows.length === 1) commit(rows[0].textContent);
+      else close(); // Enter into a list that is not down to one row CLOSES it
+    }
+  });
+</script>

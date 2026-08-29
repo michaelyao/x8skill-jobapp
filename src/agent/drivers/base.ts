@@ -33,6 +33,51 @@ function parseDate(value: string): { y: number; m: number; day: number } | null 
  * in a rich editor compared against text a model typed. Fold them, collapse whitespace, lowercase.
  * Nothing here is lossy in a way that could match two genuinely different options.
  */
+/**
+ * Does what a control DISPLAYS answer for the value we wanted?
+ *
+ * Pure, so the react-select commit check can be tested without a browser: npm run test:committed.
+ * Containment counts in both directions because a control shows the option's own wording — "United
+ * States of America (+1)" for "+1", "Bachelor's Degree" for "Bachelor" — but only when the shorter
+ * side is substantial, or "No" would vouch for "November".
+ */
+/**
+ * Which of these option texts answers `want` (already normalised)? -1 for none.
+ *
+ * Pure and exported so the ladder can be tested and, more importantly, so the two places that need
+ * it — the menu we read after typing and the menu we read after opening — cannot drift apart.
+ * The order matters and each rung was earned:
+ *   1. a phone dialling code ("+1") matches on the parenthesised code, preferring the United
+ *      States, because +1 also covers Canada, Guam and American Samoa;
+ *   2. the leading segment before a comma/paren, when the row says MORE than the value —
+ *      "Python (Programming Language)" over the bare free-text row "python";
+ *   3. exact; 4. leading segment; 5. containment either way.
+ */
+export function indexOfOption(texts: string[], want: string): number {
+  const lead = (t: string) => normaliseOption(t).split(/[,(:\u2014\u2013-]/)[0].trim();
+  if (/^\+\d{1,4}$/.test(want)) {
+    const withCode = texts.map((t, i) => ({ t, i })).filter(({ t }) => t.includes(`(${want})`));
+    const us = withCode.find(({ t }) => /united states/i.test(t));
+    const idx = (us ?? withCode[0])?.i;
+    if (idx !== undefined) return idx;
+  }
+  let idx = texts.findIndex((t) => lead(t) === want && t.length > want.length);
+  if (idx < 0) idx = texts.findIndex((t) => normaliseOption(t) === want);
+  if (idx < 0) idx = texts.findIndex((t) => lead(t) === want);
+  if (idx < 0) idx = texts.findIndex((t) => normaliseOption(t).includes(want) || want.includes(normaliseOption(t)));
+  return idx;
+}
+
+export function optionMatches(shown: string, wantNormalised: string): boolean {
+  const got = normaliseOption(shown);
+  const want = wantNormalised.trim();
+  if (!got || !want) return false;
+  if (got === want) return true;
+  const shorter = got.length < want.length ? got : want;
+  if (shorter.length < 4) return false;
+  return got.includes(want) || want.includes(got);
+}
+
 export function normaliseOption(text: string): string {
   return text
     .replace(/[\u2018\u2019\u02BC\u00B4\u2032`]/g, "'")
@@ -1036,6 +1081,124 @@ export abstract class GenericDriver implements AtsDriver {
     return this.fillReactSelectOne(root, control, value, keySelector);
   }
 
+  /**
+   * What a react-select control DISPLAYS as its chosen value, or "" while it holds none.
+   *
+   * The selected value is not in the input — the input is the SEARCH box and react-select clears it
+   * on commit. The value lives in a sibling `select__single-value` node, and the value-container
+   * gains `--has-value`. Reading the control's whole text instead would return the placeholder
+   * ("Select…") for an empty field.
+   */
+  private async committedSelection(control: Locator): Promise<string> {
+    const shell = control.locator('xpath=ancestor::*[contains(@class,"select__control")][1]');
+    if (!(await shell.count().catch(() => 0))) return "";
+    const value = shell.locator('[class*="single-value"], [class*="singleValue"], [class*="multi-value__label"], [class*="multiValue__label"]');
+    if (!(await value.count().catch(() => 0))) return "";
+    return ((await value.first().innerText().catch(() => "")) || "").trim();
+  }
+
+  /**
+   * The text of the first `n` option rows.
+   *
+   * EVERY read is bounded, and that is the point. The promptOption lookup is a WORKDAY probe: on
+   * any other ATS the inner locator matches nothing and `getAttribute` waits the Playwright default
+   * — 30 SECONDS — before the catch turns it into null. Per row. That, not a matching failure, is
+   * what burned the 90-second field deadline on Greenhouse's School, Degree, Discipline, Country
+   * and End date month: 776 timeouts in a single batch, every one logged as "tried but the field
+   * would not take it" about a menu whose options were sitting there, readable, all along.
+   *
+   * textContent backs up innerText because innerText is the RENDERED text and comes back empty for
+   * a row React has just re-rendered.
+   */
+  /**
+   * Take the answer straight off a list that FILTERED as we typed, before any Enter is pressed.
+   *
+   * A react-select answers the keystrokes themselves, and Enter into a list that has not finished
+   * loading closes the menu instead of choosing from it — which is what left Greenhouse's School
+   * and Discipline typeaheads empty while the driver went on to page through the unfiltered list
+   * looking for "Carnegie Mellon University" among the A's.
+   *
+   * Guarded on the list having CHANGED from what was on screen before the keystrokes. Workday
+   * leaves its previous, unfiltered page up while it re-queries, and picking from that is how
+   * "Info" once matched "Accounting"; an unchanged list means "no answer yet", never "not there".
+   */
+  private async pickFromFilteredMenu(
+    menu: () => Promise<Locator>,
+    stale: { first: string; count: number },
+    want: string,
+    page: Page,
+    control: Locator,
+  ): Promise<boolean> {
+    // A list that will not answer without an Enter (Workday's remote-search prompt leaves its
+    // previous page up) must not cost the whole poll on every attempt — six unchanged reads is
+    // enough to stop asking and let the Enter path run.
+    let unchanged = 0;
+    for (let round = 0; round < 12; round += 1) {
+      await page.waitForTimeout(250);
+      const opts = await menu();
+      const count = await opts.count().catch(() => 0);
+      if (!count) continue;
+      const first = ((await opts.first().innerText({ timeout: 1_000 }).catch(() => "")) || "").trim();
+      if (/no items|no options/i.test(first)) return false; // a definite answer: nothing matches
+      /**
+       * Has the list ANSWERED the keystrokes? A changed first row says yes — but so does a changed
+       * length, and the length is the only signal when the wanted row was already at the top:
+       * Greenhouse's country selector lists "United States +1" first, so filtering to it alone
+       * left the first row identical and the guard waited out all twelve rounds on a list that had
+       * answered immediately.
+       */
+      if (stale.first && first === stale.first && count === stale.count) {
+        unchanged += 1;
+        if (unchanged >= 6) return false;
+        continue;
+      }
+      const texts = await this.readOptionTexts(opts, Math.min(count, 60));
+      const idx = indexOfOption(texts, want);
+      if (idx < 0) return false; // the list answered and does not hold it — let the retries run
+      const chosen = normaliseOption(texts[idx] ?? "");
+      await opts.nth(idx).click({ timeout: 3_000 }).catch(() => undefined);
+      await page.waitForTimeout(300);
+      const committed = await this.committedSelection(control);
+      /**
+       * Verify against the ROW WE CLICKED, not only against the value we wanted. A control displays
+       * the option's own wording and sometimes only part of it: picking "United States +1" from
+       * Greenhouse's country selector leaves the control reading "+1", which answers "United
+       * States" perfectly well and matches it not at all. Comparing to the row keeps the check
+       * strict — a click that landed on nothing still fails.
+       */
+      // Containment against the CLICKED row, not the fuzzy match: we know which row it was, so any
+      // part of it showing in the control is proof the click landed there.
+      if (committed) return optionMatches(committed, want) || chosen.includes(normaliseOption(committed));
+      // No react-select shell to read back (a Workday prompt). A menu that closed on the click is
+      // the only other evidence available, and a click that dispatched without selecting must not
+      // be reported as filled.
+      const after = await menu();
+      return (await after.count().catch(() => 0)) === 0;
+    }
+    return false;
+  }
+
+  private async readOptionTexts(locator: Locator, n: number): Promise<string[]> {
+    const out: string[] = [];
+    for (let i = 0; i < n; i += 1) {
+      const row = locator.nth(i);
+      // Prefer the option's own label attribute: the row wraps a checkbox, so innerText can pick
+      // up decoration, while promptOption carries the exact text Workday matches on.
+      const label =
+        (await row.getAttribute("data-automation-label", { timeout: 1_000 }).catch(() => null)) ||
+        (await row
+          .locator('[data-automation-id="promptOption"]')
+          .first()
+          .getAttribute("data-automation-label", { timeout: 400 })
+          .catch(() => null)) ||
+        (await row.innerText({ timeout: 1_000 }).catch(() => "")) ||
+        (await row.textContent({ timeout: 1_000 }).catch(() => "")) ||
+        "";
+      out.push(label.replace(/\s+not checked$/i, "").trim());
+    }
+    return out;
+  }
+
   private async fillReactSelectOne(root: Root, control: Locator, value: string, keySelector?: string): Promise<boolean> {
     const page = control.page();
     const want = normaliseOption(value);
@@ -1058,6 +1221,15 @@ export abstract class GenericDriver implements AtsDriver {
     ].filter((p) => p.length >= 2);
     let lastSeen: string[] = [];
     let typedInto = "";
+    /**
+     * One line per attempt when SELECT_TRACE=1. A dropdown that will not take a value looks
+     * identical in the log to one whose menu never opened, and the difference decides whether to
+     * fix the matching or the opening — diagnosing the Greenhouse commit bug meant reconstructing
+     * this by hand in a scratch script.
+     */
+    const trace = (note: string): void => {
+      if (process.env.SELECT_TRACE === "1") console.log(`      · select[${value.slice(0, 24)}] ${note}`);
+    };
     // DO NOT add an early-out here for "no option list appeared yet". It was tried (2026-08-21)
     // and it is wrong: bailing after the two open strategies produced nothing broke the country
     // phone code, "United States of America (+1)" — the case longListCases.ts exists for. On a
@@ -1096,11 +1268,11 @@ export abstract class GenericDriver implements AtsDriver {
       await page.waitForTimeout(350);
       // What is on screen before we type? Anything still showing this after the keystrokes is
       // a stale render, not an answer to our query.
+      trace(`attempt ${attempt} — clicked`);
       const preOpts = await menu();
+      const staleCount = await preOpts.count().catch(() => 0);
       const staleFirst =
-        (await preOpts.count().catch(() => 0)) > 0
-          ? ((await preOpts.first().innerText().catch(() => "")) || "").trim()
-          : "";
+        staleCount > 0 ? ((await preOpts.first().innerText({ timeout: 1_000 }).catch(() => "")) || "").trim() : "";
       if (attempt === 1) {
         await control.press("ArrowDown").catch(() => undefined); // open without filtering
       } else {
@@ -1108,7 +1280,14 @@ export abstract class GenericDriver implements AtsDriver {
         // so a retry appended the text to itself ("Job BoardJob Board"), which matched no
         // option at all and turned a recoverable miss into a permanent failure.
         const probe = probes[attempt === 0 ? 0 : Math.min(attempt - 1, probes.length - 1)];
-        await control.fill("").catch(() => undefined);
+        // Clear ONLY when there is something to clear. `fill("")` on react-select dispatches an
+        // input event that CLOSES the menu it just opened, so on the common path — an empty search
+        // box — clearing threw away the open list and the attempt could not commit. Workday's
+        // prompt is the case this exists for: it keeps the previous text between attempts, so a
+        // retry typed "Job BoardJob Board".
+        if (((await control.inputValue().catch(() => "")) || "").length > 0) {
+          await control.fill("").catch(() => undefined);
+        }
         await control.pressSequentially(probe, { delay: 20 }).catch(() => undefined);
         // Did the text actually land in the box the page filters on? A Workday prompt kept
         // offering the same alphabetical first page — Accounting, Actuarial Science … — no
@@ -1120,6 +1299,9 @@ export abstract class GenericDriver implements AtsDriver {
           await page.waitForTimeout(250);
           typedInto = (await control.inputValue().catch(() => "")) || `(keyboard: ${probe})`;
         }
+        // Look before pressing anything: a react-select has already filtered, and Enter into a
+        // half-loaded list closes the menu rather than choosing from it.
+        if (await this.pickFromFilteredMenu(menu, { first: staleFirst, count: staleCount }, want, page, control)) return true;
         // A Workday prompt backed by a REMOTE search (its rows come back as
         // "menuItem-REMOTE_SKILL-1-119486") does not query on keystrokes — it queries on ENTER.
         // Without it the list keeps showing the pre-search page, which is why every probe from
@@ -1128,6 +1310,22 @@ export abstract class GenericDriver implements AtsDriver {
         // Python IDLE, Pandas Python Library, and so on.
         await control.press("Enter").catch(() => undefined);
         await page.waitForTimeout(400);
+        /**
+         * TYPE-AND-ENTER IS A COMPLETE SELECTION on react-select — check before doing anything
+         * else. Greenhouse's newer forms (job-boards.greenhouse.io) commit right here: typing
+         * filters the list to one row and Enter takes it. The code then went looking for an OPEN
+         * menu, found none because the menu had CLOSED on commit, read that as "the menu never
+         * opened", and retried the whole sequence for every remaining probe — 90 seconds per
+         * field, ending in "tried but the field would not take it" about a field that was
+         * correctly filled on the first attempt. 776 of those in one batch, on School, Degree,
+         * Discipline, Country and End date month.
+         *
+         * It also stops the SECOND Enter below from ever reaching a form with no menu open, where
+         * it is a submit keystroke rather than a search one.
+         */
+        const committedNow = await this.committedSelection(control);
+        trace(`typed ${JSON.stringify(typedInto)} → control shows ${JSON.stringify(committedNow)}`);
+        if (committedNow && optionMatches(committedNow, want)) return true;
         // Workday's taxonomy prompts do NOT filter as you type — they run the search on
         // ENTER. Without this the list never changed, so every probe read back the same
         // unfiltered first page (Accounting | Actuarial Science | Advertising …) and the
@@ -1180,25 +1378,20 @@ export abstract class GenericDriver implements AtsDriver {
           break;
         }
       }
-      if (count === 0) continue; // menu didn't open — retry
+      if (count === 0) {
+        // A closed menu is not always a failure to open: it is also what a COMMITTED selection
+        // looks like (ArrowDown then Enter, or a click that landed). Ask the control what it
+        // holds before spending another attempt on it.
+        const settled = await this.committedSelection(control);
+        trace(`no options in menu; control shows ${JSON.stringify(settled)}`);
+        if (settled && optionMatches(settled, want)) return true;
+        continue; // menu didn't open — retry
+      }
 
-      const readTexts = async (locator: Locator, n: number): Promise<string[]> => {
-        const out: string[] = [];
-        for (let i = 0; i < n; i += 1) {
-          // Prefer the option's own label attribute: the row wraps a checkbox, so innerText can
-          // pick up decoration, while promptOption carries the exact text Workday matches on.
-          const row = locator.nth(i);
-          const label =
-            (await row.getAttribute("data-automation-label").catch(() => null)) ||
-            (await row.locator('[data-automation-id="promptOption"]').first().getAttribute("data-automation-label").catch(() => null)) ||
-            (await row.innerText().catch(() => "")) ||
-            "";
-          out.push(label.replace(/\s+not checked$/i, "").trim());
-        }
-        return out;
-      };
+      const readTexts = (locator: Locator, n: number) => this.readOptionTexts(locator, n);
       let texts = await readTexts(opts, count);
       lastSeen = texts;
+      trace(`${count} option(s): ${texts.slice(0, 4).join(" | ")}`);
       const lead = (t: string) => normaliseOption(t).split(/[,(:—–-]/)[0].trim();
       // Workday's skill search returns the taxonomy's canonical entries AND a free-text row for
       // whatever was typed — searching "python" yields both "Python (Programming Language)" and
@@ -1207,18 +1400,7 @@ export abstract class GenericDriver implements AtsDriver {
       // A phone country code arrives as "+1" while the options read "United States of America
       // (+1)". Match on the parenthesised code, preferring the United States when several
       // countries share it (+1 covers Canada, American Samoa, Guam…).
-      let idx = -1;
-      if (/^\+\d{1,4}$/.test(want)) {
-        const withCode = texts
-          .map((t, i) => ({ t, i }))
-          .filter(({ t }) => t.includes(`(${want})`));
-        const us = withCode.find(({ t }) => /united states/i.test(t));
-        idx = (us ?? withCode[0])?.i ?? -1;
-      }
-      if (idx < 0) idx = texts.findIndex((t) => lead(t) === want && t.length > want.length);
-      if (idx < 0) idx = texts.findIndex((t) => normaliseOption(t) === want);
-      if (idx < 0) idx = texts.findIndex((t) => lead(t) === want);
-      if (idx < 0) idx = texts.findIndex((t) => normaliseOption(t).includes(want) || want.includes(normaliseOption(t)));
+      let idx = indexOfOption(texts, want);
       if (idx < 0) {
         // ReactVirtualized renders only the rows in view. Scroll the listbox and re-read before
         // concluding the value is absent.
