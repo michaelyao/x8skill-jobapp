@@ -572,9 +572,24 @@ export abstract class GenericDriver implements AtsDriver {
     // the resume states the skills plainly: the model was told its true answer was not allowed.
     // Applied here, after options are attached, so it covers every driver's sampling path.
     for (const field of fields) {
-      if (field.searchable || !field.options || field.options.length < 8) continue;
+      if (!field.options || field.options.length < 8) continue;
       const initials = new Set(field.options.map((o) => (o[0] ?? "").toUpperCase()));
-      if (initials.size === 1) field.searchable = true;
+      if (!field.searchable) {
+        if (initials.size === 1) field.searchable = true;
+        continue;
+      }
+      /**
+       * And the inverse: a type-to-search box whose captured list SPANS the alphabet is showing
+       * the whole taxonomy, not a page of it, so the agent should choose from it rather than
+       * answer from general knowledge. Greenhouse's Discipline offers all 72 disciplines at once
+       * including "Information Systems" — the candidate's actual degree — and the agent, given
+       * only the first ten as a sample, answered "Information Science", which that list does not
+       * contain and no amount of searching will find.
+       *
+       * A single initial still means a page (Workday's Field of Study opens on Accounting through
+       * Ancient Studies), and that case keeps its freedom to answer.
+       */
+      if (initials.size >= 6) field.searchable = false;
     }
 
     return { url: root.url(), fields, submitReady: await this.hasSubmit(root), nextAvailable: await this.hasNext(root) };
