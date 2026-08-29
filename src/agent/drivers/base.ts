@@ -631,17 +631,26 @@ export abstract class GenericDriver implements AtsDriver {
     // on as chips inside the field itself. Reading those chips is what made every search after
     // the first return the previous search's picks, twice over.
     /**
-     * THE CONTROL'S OWN MENU FIRST. A control that names a listbox is telling us which popup is
-     * its own, and nothing else on the page can be more authoritative than that.
+     * Workday's OPEN menu first, and only its promptOption rows. Measured on a live prompt:
+     * clicking the role="option" node does nothing — "0 items selected" — while clicking
+     * promptOption commits. menuItem precedes promptOption in DOM order, so a selector matching
+     * both always clicked the dead one.
      *
-     * The root-scoped activeListContainer query below used to run first, and its own comment says
-     * why that is wrong: it returns the FIRST popup in the DOM, which on a page with several
-     * prompt fields is a neighbour's. Measured on Uline — "How Did You Hear About Us?" was read
-     * with the 234-entry country dialling list as its options, so the agent dutifully answered
-     * "United States of America (+1)" and the real menu then offered nothing of the sort.
-     * promptOption is still preferred INSIDE the owned menu, so Workday's clickable row still wins
-     * over the dead menuItem node that precedes it.
+     * REVERTED, on measurement: asking the control for its own aria-controls listbox FIRST reads
+     * better — a control that names a listbox is telling us which popup is its own — and it made
+     * Uline's "How Did You Hear About Us?" strictly worse. The field had been captured with 44
+     * options: its own 42 plus two leaked country rows. Asking aria-controls first returned FOUR,
+     * and none of them belonged to it: "English", "Español", and the country code twice. The
+     * contamination this was meant to fix is handled where it happens instead — captureSelectOptions
+     * now VERIFIES the previous menu closed rather than pressing Escape once and hoping. Do not
+     * reorder these again without a live Workday capture to compare against.
      */
+    const openMenu = root.locator('[data-automation-id="activeListContainer"] [data-automation-id="promptOption"]');
+    if ((await openMenu.count().catch(() => 0)) > 0) return openMenu;
+
+    // The control names its own listbox while open. Ask IT next: a root-scoped activeListContainer
+    // query returns the first popup in the DOM, and on a page with several prompt fields that is a
+    // neighbour's.
     const ownedId =
       (await control.getAttribute("aria-controls", { timeout: 1_000 }).catch(() => null)) ||
       (await control.getAttribute("aria-owns", { timeout: 1_000 }).catch(() => null));
@@ -651,9 +660,6 @@ export abstract class GenericDriver implements AtsDriver {
       );
       if ((await owned.count().catch(() => 0)) > 0) return owned;
     }
-
-    const openMenu = root.locator('[data-automation-id="activeListContainer"] [data-automation-id="promptOption"]');
-    if ((await openMenu.count().catch(() => 0)) > 0) return openMenu;
     // Otherwise the popup Workday renders next to THIS field, not the first one on the page.
     const nearby = root
       .locator(keySelector)
