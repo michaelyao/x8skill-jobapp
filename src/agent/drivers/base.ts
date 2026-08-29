@@ -1840,15 +1840,27 @@ export abstract class GenericDriver implements AtsDriver {
             box = box.parentElement;
           }
           if (described) bits.push(described.slice(0, 600));
+          const joined = bits.join(" ");
           return {
             index,
             id: el.id ?? "",
-            described: bits.join(" ").toLowerCase(),
+            described: joined.toLowerCase(),
+            /** The question as printed, for saying WHICH upload was not filled. */
+            question: described.slice(0, 120),
+            /** The red star. A form that marks an upload required means it. */
+            required: /\*|\brequired\b/i.test(described),
             hasFile: ((el as HTMLInputElement).files?.length ?? 0) > 0,
           };
         }),
       )
-      .catch(() => [])) as Array<{ index: number; id: string; described: string; hasFile: boolean }>;
+      .catch(() => [])) as Array<{
+      index: number;
+      id: string;
+      described: string;
+      question: string;
+      required: boolean;
+      hasFile: boolean;
+    }>;
 
     for (const spec of specs) {
       if (spec.hasFile) continue; // already holds a file — leave it alone
@@ -1858,9 +1870,22 @@ export abstract class GenericDriver implements AtsDriver {
       const target = wantsTranscript ? TRANSCRIPT_PATH : resumePath;
       const kind = wantsTranscript ? "transcript" : "resume";
 
-      // Only fill an UNLABELLED input with the resume, and only if the resume is not in already —
-      // otherwise a second anonymous upload gets a duplicate copy of the CV.
-      if (!wantsTranscript && !wantsResume && out.attached.includes("resume")) continue;
+      /**
+       * An upload we cannot name gets the resume only if the resume is not in already — otherwise a
+       * second anonymous upload gets a duplicate copy of the CV.
+       *
+       * But SKIPPING IT SILENTLY is how two applications reached "ready for review" with a required
+       * transcript missing and the red star still on the label. If the form marks it required, say
+       * so: the required-field gate and the review page both read `missing`, and neither can act on
+       * a document nobody mentioned.
+       */
+      if (!wantsTranscript && !wantsResume && out.attached.includes("resume")) {
+        if (spec.required) {
+          out.missing.push(`${spec.question || "an upload"} — required, and no file here matches it`);
+          console.log(`    ✗ required upload not recognised: ${spec.question.slice(0, 70)}`);
+        }
+        continue;
+      }
 
       if (wantsTranscript && !fs.existsSync(TRANSCRIPT_PATH)) {
         out.missing.push(`transcript (the form asks for one and ${path.basename(TRANSCRIPT_PATH)} is not present)`);
@@ -1895,7 +1920,8 @@ export abstract class GenericDriver implements AtsDriver {
         out.attached.push(kind);
         console.log(`    ✓ ${kind} attached${landed > 0 ? "" : " (the form is showing the file)"}`);
       } else {
-        out.missing.push(`${kind} (${failure || "setInputFiles did not take"})`);
+        const why = failure || "setInputFiles did not take";
+        out.missing.push(spec.required ? `${kind} — REQUIRED and not attached (${why})` : `${kind} (${why})`);
         console.log(`    ✗ ${kind} would not attach${failure ? ` — ${failure}` : ""}`);
       }
     }

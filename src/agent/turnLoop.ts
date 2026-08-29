@@ -309,6 +309,28 @@ export async function runApplication(
     if (after.submitReady) {
       // Only treat Review as reached if nothing required is left empty.
       if (missing.length === 0) {
+        /**
+         * ASK THE FORM before believing our own reading.
+         *
+         * read() cannot see a file input — they are excluded — so a REQUIRED upload is invisible to
+         * `missing`, and two applications reached "ready for review" with a required transcript
+         * unattached while the page itself printed "This field is required." under the very field.
+         * The form's own words outrank anything inferred here, and until now they were only
+         * consulted when the loop was already STUCK: a single-page Greenhouse form fills, sees
+         * Submit, and never asks.
+         *
+         * A validation message the form is showing means the form is not ready, whatever we think.
+         */
+        const showing = (await driver.validationErrors?.(root).catch(() => [])) ?? [];
+        if (showing.length) {
+          blockedRequired = showing.map((e) => `form says: ${e}`);
+          console.log(
+            `  ⚠ Submit is present and nothing reads as empty, but the FORM is showing ${showing.length} error(s) — NOT review-ready: ${showing
+              .map((e) => `"${e}"`)
+              .join("; ")}`,
+          );
+          break;
+        }
         reachedReview = true;
         console.log("  Submit control reached, all required fields filled — stopping (never clicked).");
         break;
