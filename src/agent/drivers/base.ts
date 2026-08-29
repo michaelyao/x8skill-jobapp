@@ -1814,8 +1814,32 @@ export abstract class GenericDriver implements AtsDriver {
             const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
             if (lab) bits.push((lab as HTMLElement).innerText ?? "");
           }
-          const box = el.closest('[class*="field" i], fieldset, div, section');
-          if (box) bits.push(((box as HTMLElement).innerText ?? "").slice(0, 200));
+          /**
+           * CLIMB for the question. `closest("div")` stops at the innermost div, which around an
+           * upload button reads "Attach Attach" and names nothing — measured on Appian, where
+           * "Please upload a copy of an unofficial undergraduate transcript.*" sits FIVE levels up
+           * on div.file-upload, so the transcript input looked unlabelled and was skipped while the
+           * form marked it required.
+           *
+           * The cap is what keeps this honest: stop before the ancestor that holds the WHOLE form,
+           * or every upload would see every other upload's question and the resume input would
+           * happily claim to want a transcript.
+           */
+          let box: Element | null = el.parentElement;
+          let described = "";
+          for (let up = 0; up < 8 && box; up += 1) {
+            /**
+             * STOP at the first ancestor that holds a SECOND upload. A container with two file
+             * inputs cannot describe either of them, and climbing past it is how the resume input
+             * came to read the transcript question and take the transcript file.
+             */
+            if (box.querySelectorAll('input[type="file"]').length > 1) break;
+            const text = ((box as HTMLElement).innerText ?? "").replace(/\s+/g, " ").trim();
+            if (text.length > 600) break; // prose this long is the form, not the field
+            if (text.length > described.length) described = text;
+            box = box.parentElement;
+          }
+          if (described) bits.push(described.slice(0, 600));
           return {
             index,
             id: el.id ?? "",

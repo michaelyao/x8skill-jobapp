@@ -35,6 +35,10 @@ check("and it is reported attached", result.attached.includes("resume"), result.
 // The index shift used to cost the full locator timeout on the next input.
 check(`no 30-second wait on the moved input (${seconds.toFixed(1)}s)`, seconds < 15, seconds);
 // Matched by what the form CALLS each upload, never by position.
+// Appian's nesting: the question is five levels above the input and every wrapper between reads
+// "Attach Attach". Skipping it left a REQUIRED transcript unattached with nothing in the log.
+check("an upload whose question is five levels up is still recognised",
+  uploaded.some((u) => u.id === "transcript"), uploaded);
 check("the transcript input gets the transcript, not a second copy of the CV",
   uploaded.every((u) => (u.id === "resume") === u.name.toLowerCase().includes("resume")),
   uploaded);

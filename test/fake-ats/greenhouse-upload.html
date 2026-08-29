@@ -21,9 +21,25 @@
   <input type="file" id="resume" accept=".pdf,.doc,.docx">
 </div>
 
-<div class="field" id="transcript-field">
-  <label for="transcript">Unofficial transcript</label>
-  <input type="file" id="transcript" accept=".pdf">
+<!--
+  The transcript upload as Appian actually nests it: the QUESTION sits five levels above the input,
+  and every wrapper in between reads "Attach Attach". closest("div") stops at the innermost one, so
+  the input looks unlabelled and gets skipped while the form marks it required.
+-->
+<div class="file-upload" id="transcript-field">
+  <div class="question">Please upload a copy of an unofficial undergraduate transcript.*</div>
+  <div class="file-upload__wrapper">
+    <div class="button-container">
+      <div class="secondary-button">
+        <div>
+          <span>Attach</span>
+          <input type="file" id="transcript" accept=".pdf">
+        </div>
+      </div>
+      <span>Dropbox</span> <span>Google Drive</span>
+      <span>Accepted file types: pdf, doc, docx, txt, rtf</span>
+    </div>
+  </div>
 </div>
 
 <script>
