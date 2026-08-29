@@ -228,6 +228,31 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   click that dispatched without deleting is reported as stuck, never as removed. The decision
   is a pure function (`pillsToRemove`), NOT logic inside an `evaluate()` string, so it can be
   tested. Cases: `src/debug/skillRemovalCases.ts`.
+- **`launchctl kickstart -k` does NOT reliably kill the worker — check the process table.** The
+  agent runs `node_modules/.bin/tsx`, which spawns the real node process as a CHILD. launchd tracks
+  the parent (`launchctl list` showed 82099) and kills that; the node process actually running the
+  worker (82101) survived, so a restart on 2026-08-28 left TWO workers alive at once, the old one
+  still holding Chrome and running the old code — the second time this has happened. After any
+  restart, `pgrep -fl "tsx src/worker.ts"` must show exactly ONE pid, and if an orphaned Chrome is
+  still on the profile (`pgrep -f "user-data-dir=.*playwright/.auth"`) kill it and delete
+  `playwright/.auth/Singleton{Lock,Socket,Cookie}` — otherwise every launch fails with *"Target
+  page, context or browser has been closed"*.
+- **A dropdown that will not take a value and one whose menu never opened look identical in the
+  log.** `SELECT_TRACE=1` prints one line per attempt (what was typed, how many options came back,
+  what the control shows). 776 field timeouts in one batch were diagnosed only by reconstructing
+  that by hand; do not remove it. The four causes, all fixed and all covered by `npm run
+  test:reactselect` against `test/fake-ats/greenhouse-select.html`:
+  1. every speculative locator read must carry an explicit `timeout`. The `data-automation-label`
+     probe is WORKDAY-only; on any other ATS it matches nothing and `getAttribute` waits the
+     Playwright default of 30 SECONDS per option row before the `catch` turns it into null.
+  2. `fill("")` on a react-select input closes the menu the click just opened — clear only when
+     there is something to clear.
+  3. Enter into a list that has not filtered down closes the menu instead of choosing from it, so
+     the filtered list is read and clicked FIRST; Enter is the fallback for Workday's remote search.
+  4. type-and-Enter IS a complete selection. The committed value lives in `.select__single-value`
+     (react-select clears the input) and may be SHORTER than the row chosen — "United States +1"
+     commits as "+1" — so the check compares against the row that was clicked as well as the value
+     that was wanted.
 - **`/queue` is for decisions; `/status` is for progress.** The split is by "is a human the next
   step", not by status. An application being re-filled, one mid-submit, and one that reached Review
   with something missing are all things the system moves on its own — they used to sit on the
