@@ -30,7 +30,12 @@ check("the leading segment beats a bare free-text row",
 check("a dialling code prefers the United States",
   indexOfOption(["Canada (+1)", "United States of America (+1)"], "+1") === 1);
 check("a value the list does not hold", indexOfOption(["Computer Science", "Information Systems"], "information science") === -1);
-check("containment, either direction", indexOfOption(["United States +1"], "united states") === 0);
+check("an option CONTAINING the value answers it", indexOfOption(["United States +1"], "united states") === 0);
+// A fragment of the value is only an answer when it opens the value or accounts for most of it.
+check("a fragment that opens the value", indexOfOption(["Carnegie Mellon University"], "carnegie mellon university - pittsburgh") === 0);
+check("a fragment that does NOT — \"Science\" is not \"Information Science\"",
+  indexOfOption(["Accounting", "Science", "Information Systems"], "information science") === -1,
+  indexOfOption(["Accounting", "Science", "Information Systems"], "information science"));
 // The control displays the option's own wording, sometimes only part of it.
 check("a control reading \"+1\" does not vouch for \"United States\" on its own", !optionMatches("+1", "united states"));
 check("but it does for the row that was clicked", "united states +1".includes("+1"));

@@ -64,7 +64,23 @@ export function indexOfOption(texts: string[], want: string): number {
   let idx = texts.findIndex((t) => lead(t) === want && t.length > want.length);
   if (idx < 0) idx = texts.findIndex((t) => normaliseOption(t) === want);
   if (idx < 0) idx = texts.findIndex((t) => lead(t) === want);
-  if (idx < 0) idx = texts.findIndex((t) => normaliseOption(t).includes(want) || want.includes(normaliseOption(t)));
+  /**
+   * Containment, but not in both directions equally.
+   *
+   * An option that CONTAINS the whole wanted value is safe — "United States +1" answers "United
+   * States". The reverse, an option that is a FRAGMENT of what we wanted, silently narrows the
+   * answer: asked for "Information Science", Greenhouse's discipline list has a row called
+   * "Science", and picking it commits a claim the candidate never made. So a fragment must either
+   * open the value ("Carnegie Mellon University" for "Carnegie Mellon University - Pittsburgh") or
+   * account for most of it.
+   */
+  if (idx < 0) idx = texts.findIndex((t) => normaliseOption(t).includes(want));
+  if (idx < 0)
+    idx = texts.findIndex((t) => {
+      const opt = normaliseOption(t);
+      if (!opt || !want.includes(opt)) return false;
+      return want.startsWith(opt) || opt.length >= want.length * 0.6;
+    });
   return idx;
 }
 
@@ -1195,17 +1211,31 @@ export abstract class GenericDriver implements AtsDriver {
 
   private async readOptionTexts(locator: Locator, n: number): Promise<string[]> {
     const out: string[] = [];
+    if (!n) return out;
+    /**
+     * Ask ONCE whether this is a Workday list, then stop asking. `data-automation-label` is a
+     * Workday-only attribute; probing for it per row costs the full locator timeout on every other
+     * ATS, which is 29 seconds on a 72-row Greenhouse menu even with the timeout bounded to 400ms.
+     * `count()` does not wait, so the question itself is free.
+     */
+    const first = locator.first();
+    const workday =
+      (await first.getAttribute("data-automation-label", { timeout: 1_000 }).catch(() => null)) !== null ||
+      (await first.locator('[data-automation-id="promptOption"]').count().catch(() => 0)) > 0;
     for (let i = 0; i < n; i += 1) {
       const row = locator.nth(i);
       // Prefer the option's own label attribute: the row wraps a checkbox, so innerText can pick
       // up decoration, while promptOption carries the exact text Workday matches on.
+      const wd = workday
+        ? (await row.getAttribute("data-automation-label", { timeout: 1_000 }).catch(() => null)) ||
+          (await row
+            .locator('[data-automation-id="promptOption"]')
+            .first()
+            .getAttribute("data-automation-label", { timeout: 400 })
+            .catch(() => null))
+        : null;
       const label =
-        (await row.getAttribute("data-automation-label", { timeout: 1_000 }).catch(() => null)) ||
-        (await row
-          .locator('[data-automation-id="promptOption"]')
-          .first()
-          .getAttribute("data-automation-label", { timeout: 400 })
-          .catch(() => null)) ||
+        wd ||
         (await row.innerText({ timeout: 1_000 }).catch(() => "")) ||
         (await row.textContent({ timeout: 1_000 }).catch(() => "")) ||
         "";
@@ -1370,6 +1400,10 @@ export abstract class GenericDriver implements AtsDriver {
       // every remaining typing probe pointless: they all return the same first page, at five
       // seconds a go. One unchanged read is enough to know, and the bisect below does the work.
       let staticList = false;
+      // Did we WATCH this list change in response to the keystrokes? Only then is what it renders
+      // a complete answer for the query. Not the same as !staticList: a menu that opens empty and
+      // fills in tells us nothing either way, and must keep the old behaviour.
+      let filtered = false;
       for (let wait = 0; wait < 20; wait += 1) {
         await page.waitForTimeout(250);
         opts = await menu();
@@ -1381,7 +1415,10 @@ export abstract class GenericDriver implements AtsDriver {
         const firstNow = ((await opts.first().innerText().catch(() => "")) || "").trim();
         if (/no items/i.test(firstNow)) break; // a definite answer: the query matched nothing
         // The list changed away from what was showing before the keystrokes → it has answered.
-        if (staleFirst && firstNow !== staleFirst) break;
+        if (staleFirst && firstNow !== staleFirst) {
+          filtered = true;
+          break;
+        }
         // Nothing to compare against (the menu opened empty and filled in as we typed), so
         // require the list to hold still: two identical reads in a row. Taking the first
         // non-empty render here is what matched "Info" against the unfiltered A-page.
@@ -1426,7 +1463,18 @@ export abstract class GenericDriver implements AtsDriver {
         // America (+1)" sits some seventeen pages below "Afghanistan (+93)" and paging a few
         // screens never reaches it. Sorted list, known target: bisect on the scroll position.
         const ordered = texts.length > 3 && texts[0].localeCompare(texts[texts.length - 1], undefined, { sensitivity: "base" }) < 0;
-        if (ordered) {
+        /**
+         * Only bisect a list that did NOT answer the keystrokes. That is what the bisect is for —
+         * Workday's dialling codes are static and virtualised, so the target really is seventeen
+         * pages below what is rendered. A list that FILTERED has already told us everything it
+         * holds for this query, and scrolling a one-row result finds nothing; on Greenhouse that
+         * search cost most of the 90-second deadline per field before the next probe could run.
+         *
+         * The test is "we watched it change", not "it is not static": a menu that opens empty and
+         * fills in has told us nothing, and that case must keep bisecting — an early-out here on
+         * weaker evidence is what broke the country phone code once already.
+         */
+        if (ordered && !filtered) {
           /**
            * Scroll the list and read what is rendered, in one step.
            *
@@ -1475,7 +1523,7 @@ export abstract class GenericDriver implements AtsDriver {
               if ((await row.count().catch(() => 0)) > 0) {
                 await row.click().catch(() => undefined);
                 await page.waitForTimeout(300);
-                if (await this.hasSelection(root, keySelector, control)) return true;
+                if (await this.committedIsWanted(root, keySelector, control, want, normaliseOption(hereTexts[hit]))) return true;
               }
               opts = await menu();
               idx = hit;
@@ -1587,20 +1635,25 @@ export abstract class GenericDriver implements AtsDriver {
       // option, so an index taken from the text list can land on a sibling that does nothing.
       const byText = opts.filter({ hasText: texts[idx] }).first();
       const target = (await byText.count().catch(() => 0)) > 0 ? byText : opts.nth(idx);
+      const chosenRow = normaliseOption(texts[idx] ?? "");
       await target.click().catch(() => undefined);
       await page.waitForTimeout(350);
-      // Confirm a real SELECTION exists, not just text sitting in the search box. A Workday
-      // prompt shows the typed string while still reporting the field empty, so a click
-      // that failed to commit used to be reported as success — the field then never got
-      // retried and never blocked.
-      if (await this.hasSelection(root, keySelector, control)) return true;
+      /**
+       * Confirm a real SELECTION exists, AND that it is the one we asked for. A Workday prompt
+       * shows the typed string while still reporting the field empty, so a click that failed to
+       * commit used to be reported as success. And "something is selected" is not enough on its
+       * own: measured on Greenhouse's Discipline list, asking for "Information Science" — which
+       * that taxonomy does not contain — committed "Computer Science" and returned true. A value
+       * the candidate never gave, reported as filled, is the worst outcome this path can produce.
+       */
+      if (await this.committedIsWanted(root, keySelector, control, want, chosenRow)) return true;
       // Keyboard commit. Verified on a live Workday prompt: clicking the visible row can
       // leave "0 items selected", while ArrowDown + Enter commits ("1 item selected").
       await control.press("ArrowDown").catch(() => undefined);
       await page.waitForTimeout(300);
       await control.press("Enter").catch(() => undefined);
       await page.waitForTimeout(600);
-      if (await this.hasSelection(root, keySelector, control)) return true;
+      if (await this.committedIsWanted(root, keySelector, control, want, chosenRow)) return true;
       await page.keyboard.press("Escape").catch(() => undefined);
     }
     // Nothing worked. Print the widget's actual structure once, rather than guessing again at
@@ -1637,6 +1690,29 @@ export abstract class GenericDriver implements AtsDriver {
   }
 
   /** Does this combobox hold a committed value (a react-select value or a Workday pill)? */
+  /**
+   * A selection exists AND it is the one we meant.
+   *
+   * When the control displays its value (react-select), that text is checked against the value we
+   * wanted or the row we clicked — "United States +1" may show as "+1", which the clicked row
+   * accounts for. When there is nothing to read back (a Workday prompt commits into chips), fall
+   * back to `hasSelection`, which is all the evidence that widget offers.
+   */
+  private async committedIsWanted(
+    root: Root,
+    keySelector: string | undefined,
+    control: Locator,
+    want: string,
+    chosenRow: string,
+  ): Promise<boolean> {
+    const shown = await this.committedSelection(control);
+    if (shown) {
+      const got = normaliseOption(shown);
+      return optionMatches(shown, want) || (chosenRow !== "" && chosenRow.includes(got));
+    }
+    return this.hasSelection(root, keySelector, control);
+  }
+
   protected async hasSelection(root: Root, keySelector: string | undefined, control: Locator): Promise<boolean> {
     if (keySelector) {
       const shell = root
