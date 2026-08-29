@@ -1,5 +1,6 @@
 import { getApplication, getQueueEntry } from "@/lib/store";
 import { ReviewPanel } from "@/components/ReviewPanel";
+import { FeedbackBox } from "@/components/FeedbackBox";
 import { currentUser } from "@/lib/session";
 import { fetchStoredJobDescription, loadX8NoteConfig } from "@core/knowledge/x8note.js";
 
@@ -35,6 +36,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ code: s
         role={user?.role ?? "reviewer"}
         hasScreenshot={Boolean(app?.lastRunDir)}
       />
+      <FeedbackBox code={code.toUpperCase()} company={entry.company} title={entry.title} />
       <p className="muted" style={{ fontSize: 13, marginTop: 14 }}>
         <a href={`/history/${code}`}>History — every recorded copy of this application</a>
       </p>

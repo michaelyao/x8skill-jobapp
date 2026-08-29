@@ -1,4 +1,5 @@
 import os from "node:os";
+import { listFeedback, resolveFeedback } from "./knowledge/feedback.js";
 import { loadEnv } from "./utils/env.js";
 import {
   enqueueCommand,
@@ -51,6 +52,8 @@ Usage
   jobapp skip <CODE>                  drop it from the queue — no application was filed
   jobapp manual-submit <CODE>         you filled and submitted it yourself on the ATS
   jobapp history <CODE>               every recorded copy of that application
+  jobapp notes [--all]                what the reviewer said is wrong, from the review page
+  jobapp notes done <ID> --hint TEXT  mark a note dealt with, saying what was done
 
 Flags
   --max N        how many jobs a sweep should queue (default 10)
@@ -196,6 +199,13 @@ async function status(args: Argv): Promise<number> {
   if (worker?.lastError) console.log(`          last error: ${short(worker.lastError, 90)}`);
   console.log(`commands  ${pending.length} queued`);
   console.log(`awaiting  ${awaiting.length} application(s) need your approval${held.length ? `, ${held.length} held for re-approval` : ""}`);
+  /**
+   * Notes are useless if nobody sees them. The whole point of the box on the review page is that a
+   * problem gets reported at the moment it is noticed, so the status line has to say one is
+   * waiting — otherwise it is the same as writing it down and forgetting.
+   */
+  const openNotes = (await listFeedback()).length;
+  if (openNotes) console.log(`notes     ${openNotes} note(s) from the review page — jobapp notes`);
   if (inFlight.length) console.log(`in flight ${inFlight.map((e) => e.code).join(", ")} — submitting now`);
   if (stuck.length) console.log(`stuck     ${stuck.length} mid-submit — confirm on the ATS: ${stuck.map((e) => e.code).join(", ")}`);
 
@@ -294,6 +304,48 @@ switch (verb) {
     }
     // The verb is hyphenated for typing; the command name is not.
     exit = await send(verb === "manual-submit" ? "manual_submit" : verb, code, args);
+    break;
+  }
+  /**
+   * Notes the reviewer left ON an application, from the review page.
+   *
+   * Read here rather than acted on by the worker: they are about the code and the stored answers,
+   * which is why they were being typed into a terminal from memory instead of at the moment of
+   * noticing. `notes done` records what was actually changed, so the pairing survives.
+   */
+  case "notes": {
+    const sub = (args._[1] ?? "").toLowerCase();
+    if (sub === "done") {
+      const id = args._[2];
+      if (!id || !args.hint) {
+        console.error('usage: jobapp notes done <ID> --hint "what you changed"');
+        exit = 1;
+        break;
+      }
+      const done = await resolveFeedback(id, args.hint);
+      if (!done) {
+        console.error(`No open note matching "${id}".`);
+        exit = 1;
+        break;
+      }
+      console.log(`Marked ${done.id} dealt with: ${done.resolution}`);
+      break;
+    }
+    const notes = await listFeedback({ all: Boolean(args.all), code: args._[1] });
+    const open = notes.filter((n) => !n.resolvedAt);
+    if (!notes.length) {
+      console.log("No notes.");
+      break;
+    }
+    console.log(`${open.length} waiting${args.all ? ` · ${notes.length - open.length} dealt with` : ""}\n`);
+    for (const n of notes) {
+      const head = `${n.resolvedAt ? "✓" : "•"} ${n.id}  ${n.code ?? "(general)"}  ${n.at.slice(0, 16).replace("T", " ")}  ${n.by}`;
+      console.log(head);
+      if (n.company || n.title) console.log(`    ${[n.company, n.title].filter(Boolean).join(" — ")}`);
+      for (const line of n.text.split("\n")) console.log(`    ${line}`);
+      if (n.resolution) console.log(`    → ${n.resolution}`);
+      console.log("");
+    }
     break;
   }
   case "help":
