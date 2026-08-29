@@ -9,6 +9,37 @@ import type { Agent, AgentContext, FieldAnswer, FieldSpec, PageSnapshot } from "
 const SENSITIVE =
   /work autho|authoriz|sponsor|visa|citizen|\brace\b|ethnic|hispanic|latino|\bgender\b|\bsex\b|disab|veteran|felony|criminal|conviction|salary|compensation expectation|expected pay|date of birth|social security|\bssn\b/i;
 
+/**
+ * Which part of the home address does this field want, if any?
+ *
+ * NAMES a part; it does not merely mention one. "Are you currently authorized to work in the
+ * city/country where this position is located?" contains the word "city", and answering it with
+ * "Sunnyvale" is what this function exists to stop — measured on Appian, where a required yes/no
+ * question was answered with a city name on three passes in a row and the application stopped.
+ *
+ * The test is shape, not vocabulary: an address field is a LABEL — short, and not a question. A
+ * sentence ending in "?" is asking something; a 70-character label is asking something. Every real
+ * address label is a handful of words ("City", "City/Town", "Address Line 1", "Postal Code").
+ *
+ * Pure: npm run test:address.
+ */
+export function addressPartFor(
+  label: string,
+  address: { street: string; city: string; state: string; postal: string },
+): string | undefined {
+  const raw = label.replace(/[*✱﹡＊]/g, "").trim();
+  if (raw.includes("?")) return undefined;
+  // Long enough to be prose is long enough to be about something else.
+  if (raw.length > 40) return undefined;
+  const l = raw.toLowerCase();
+  if (/address line ?2|apt|suite|unit\b/.test(l)) return "";
+  if (/address line ?1|street address|^address\b/.test(l)) return address.street;
+  if (/\bcity\b|town/.test(l)) return address.city;
+  if (/\bstate\b|province|region$/.test(l)) return address.state;
+  if (/postal code|zip/.test(l)) return address.postal;
+  return undefined;
+}
+
 export function isSensitive(label: string): boolean {
   return SENSITIVE.test(label);
 }
@@ -453,15 +484,8 @@ export class LlmAgent implements Agent {
       };
       const [, street, city, stateRaw, postal] = parts;
       const state = STATES[stateRaw.trim().toLowerCase()] ?? stateRaw.trim();
-      const pick = (label: string): string | undefined => {
-        const l = label.toLowerCase();
-        if (/address line ?2|apt|suite|unit\b/.test(l)) return "";
-        if (/address line ?1|street address|^address\b/.test(l)) return street.trim();
-        if (/\bcity\b|town/.test(l)) return city.trim();
-        if (/\bstate\b|province|region$/.test(l)) return state;
-        if (/postal code|zip/.test(l)) return postal;
-        return undefined;
-      };
+      const pick = (label: string): string | undefined =>
+        addressPartFor(label, { street: street.trim(), city: city.trim(), state, postal });
       for (const field of snapshot.fields) {
         const wanted = pick(field.label);
         if (wanted === undefined) continue;
