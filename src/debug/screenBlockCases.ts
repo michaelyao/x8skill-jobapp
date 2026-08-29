@@ -160,6 +160,40 @@ check(
   verifyFields(SCROLLED, [{ label: PROUDEST, value: "I rewrote our billing system in Rust over one weekend and cut the monthly invoice run from six hours to nine minutes." }])[0]?.status === "different",
 );
 
+// NJQUXB. A question, then a sentence of guidance, then a Yes/No control OCR never detected.
+const HELPED: ScreenBlock[] = [
+  { label: "text", text: "Can you work on-site in San Francisco during the week?*", box: [532, 1475, 990, 1499], order: 30 },
+  { label: "text", text: "Our office is about a 10 minute walk from the Ferry Building", box: [532, 1505, 941, 1526], order: 31 },
+  { label: "text", text: "Do you have personal website, X account, or any public writing we can check out?", box: [533, 1618, 1188, 1641], order: 32 },
+];
+
+console.log("\nguidance under a question is not its answer (NJQUXB)");
+check(
+  `"Yes" against a sentence about the Ferry Building is not a difference`,
+  gaps(HELPED, [{ label: "Can you work on-site in San Francisco during the week?", value: "Yes" }]).length === 0,
+  gaps(HELPED, [{ label: "Can you work on-site in San Francisco during the week?", value: "Yes" }]),
+);
+check(
+  `it reads as unlocated, which is what it is`,
+  verifyFields(HELPED, [{ label: "Can you work on-site in San Francisco during the week?", value: "Yes" }])[0]?.status === "value-not-located",
+);
+// A long answer to a long question is still checked — the rule is about SHORT values under prose.
+check(
+  `a long recorded value is still compared`,
+  verifyFields(HELPED, [{ label: "Can you work on-site in San Francisco during the week?", value: "I would prefer to work remotely for most of the week" }])[0]?.status === "different",
+  verifyFields(HELPED, [{ label: "Can you work on-site in San Francisco during the week?", value: "I would prefer to work remotely for most of the week" }])[0]?.status,
+);
+// The value may sit BELOW the helper text rather than instead of it.
+const HELPED_ANSWERED: ScreenBlock[] = [
+  ...HELPED.slice(0, 2),
+  { label: "text", text: "Yes", box: [532, 1540, 590, 1562], order: 31.5 },
+];
+check(
+  `a value under the guidance is still found`,
+  verifyFields(HELPED_ANSWERED, [{ label: "Can you work on-site in San Francisco during the week?", value: "Yes" }])[0]?.status === "match",
+  verifyFields(HELPED_ANSWERED, [{ label: "Can you work on-site in San Francisco during the week?", value: "Yes" }])[0]?.status,
+);
+
 console.log("\nthe fixes must not silence a real gap");
 // Same real blocks, a value that genuinely is not there. If these pass, the change has only
 // removed findings that were never about the form.

@@ -74,6 +74,19 @@ const PLACEHOLDER = /^(mm\s*\/\s*yyyy|dd\s*\/\s*mm\s*\/\s*yyyy|yyyy|select|selec
 
 export const looksEmpty = (text: string): boolean => !text.trim() || PLACEHOLDER.test(text.trim());
 
+const words = (text: string): number => fold(text).split(" ").filter(Boolean).length;
+
+/**
+ * A sentence of guidance under a question is not that question's answer.
+ *
+ * "Can you work on-site in San Francisco during the week?" is followed by "Our office is about a
+ * 10 minute walk from the Ferry Building", and the Yes/No control below it was never detected —
+ * so the nearest block to the label is prose, and reporting it as the field's value turns a
+ * finished application into "recorded Yes but the screen shows Our office is about…".
+ */
+const looksLikeProse = (candidate: string, recorded: string): boolean =>
+  words(candidate) >= 6 && words(recorded) <= 3;
+
 const overlapsX = (a: [number, number, number, number], b: [number, number, number, number]): boolean => {
   const width = Math.min(a[2], b[2]) - Math.max(a[0], b[0]);
   // A value box is indented relative to its label, so require real overlap rather than containment.
@@ -92,7 +105,10 @@ const isMergedRegion = (block: ScreenBlock, key: string): boolean =>
 
 export interface LocatedField {
   label: ScreenBlock;
+  /** The nearest candidate — kept for callers that only want one. */
   value?: ScreenBlock;
+  /** Every block within reach, nearest first. A question can be followed by helper text. */
+  candidates?: ScreenBlock[];
   /** The label block swallowed several fields; its geometry cannot locate a value box. */
   merged?: boolean;
 }
@@ -134,7 +150,7 @@ export function valueBlockFor(
    * input to pair with a label 299px below. Real pairs on the same captures sit 15–35px apart.
    */
   const reach = Math.max(60, (lb[3] - lb[1]) * 3);
-  const value = positioned
+  const candidates = positioned
     .filter(
       (b) =>
         b !== label &&
@@ -145,9 +161,9 @@ export function valueBlockFor(
     )
     .sort((a, b) => (a.box![1] ?? 0) - (b.box![1] ?? 0))
     // A section heading is never a value, and neither is another field's label.
-    .find((b) => b.label !== "title" && !others.has(labelKey(b.text)));
+    .filter((b) => b.label !== "title" && !others.has(labelKey(b.text)));
 
-  return { label, value };
+  return { label, value: candidates[0], candidates };
 }
 
 export interface FieldVerdict {
@@ -215,15 +231,32 @@ export function verifyFields(
       continue;
     }
 
+    /**
+     * ANY block within reach may hold the value. A question is often followed by helper text and
+     * then the control, so insisting on the nearest block reports the guidance as the answer.
+     */
+    const fits = (text: string): boolean => {
+      const b = fold(text);
+      if (!b) return false;
+      const tail = b.split(" ").slice(1).join(" ");
+      return b.includes(head) || (tail.length >= 12 && a.includes(tail));
+    };
+    const hit = (found.candidates ?? [found.value]).find((c) => c && fits(c.text ?? ""));
+    if (hit) {
+      out.push({ label, recorded, onScreen: (hit.text ?? "").trim(), status: "match" });
+      continue;
+    }
+
     const shown = (found.value.text ?? "").trim();
     if (looksEmpty(shown)) {
       out.push({ label, recorded, onScreen: shown, status: "empty" });
       continue;
     }
-    const b = fold(shown);
-    const tail = b.split(" ").slice(1).join(" ");
-    const matched = b.includes(head) || (tail.length >= 12 && a.includes(tail));
-    out.push({ label, recorded, onScreen: shown, status: matched ? "match" : "different" });
+    if (looksLikeProse(shown, recorded)) {
+      out.push({ label, recorded, onScreen: shown, status: "value-not-located" });
+      continue;
+    }
+    out.push({ label, recorded, onScreen: shown, status: "different" });
   }
   return out;
 }
