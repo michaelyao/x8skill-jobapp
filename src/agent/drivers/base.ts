@@ -569,8 +569,14 @@ export abstract class GenericDriver implements AtsDriver {
     const control = root.locator(keySelector).first();
     if (!(await control.count())) return [];
     const page = control.page();
-    await page.keyboard.press("Escape").catch(() => undefined); // close any prior menu
-    await page.waitForTimeout(150);
+    // Close any prior menu, and CHECK that it closed. One Escape is not always enough, and a menu
+    // the previous field left open is read as this field's option list — which is how a "How did
+    // you hear about us?" field came back offering 234 country dialling codes.
+    for (let clear = 0; clear < 3; clear += 1) {
+      await page.keyboard.press("Escape").catch(() => undefined);
+      await page.waitForTimeout(150);
+      if (!(await root.locator('[data-automation-id="activeListContainer"]').count().catch(() => 0))) break;
+    }
     await control.scrollIntoViewIfNeeded().catch(() => undefined);
     await control.click().catch(() => undefined);
     await page.waitForTimeout(400);
@@ -585,7 +591,7 @@ export abstract class GenericDriver implements AtsDriver {
     const seen = new Set<string>();
     const list: string[] = [];
     for (let i = 0; i < count; i += 1) {
-      const t = ((await opts.nth(i).innerText().catch(() => "")) || "").trim();
+      const t = ((await opts.nth(i).innerText({ timeout: 1_000 }).catch(() => "")) || "").trim();
       // Workday renders the same option as menuItem, promptLeafNode AND promptOption, so the
       // raw list arrives in triplicate.
       if (t && !/^select(\.\.\.| one)?$/i.test(t) && !seen.has(t.toLowerCase())) {
@@ -608,21 +614,30 @@ export abstract class GenericDriver implements AtsDriver {
     // are the only promptOption nodes that are actually selectable — the ones already chosen live
     // on as chips inside the field itself. Reading those chips is what made every search after
     // the first return the previous search's picks, twice over.
-    const openMenu = root.locator('[data-automation-id="activeListContainer"] [data-automation-id="promptOption"]');
-    if ((await openMenu.count().catch(() => 0)) > 0) return openMenu;
-
-    // The control names its own listbox while open. Ask IT next: a root-scoped
-    // activeListContainer query returns the first popup in the DOM, and on a page with several
-    // prompt fields that is a neighbour's.
+    /**
+     * THE CONTROL'S OWN MENU FIRST. A control that names a listbox is telling us which popup is
+     * its own, and nothing else on the page can be more authoritative than that.
+     *
+     * The root-scoped activeListContainer query below used to run first, and its own comment says
+     * why that is wrong: it returns the FIRST popup in the DOM, which on a page with several
+     * prompt fields is a neighbour's. Measured on Uline — "How Did You Hear About Us?" was read
+     * with the 234-entry country dialling list as its options, so the agent dutifully answered
+     * "United States of America (+1)" and the real menu then offered nothing of the sort.
+     * promptOption is still preferred INSIDE the owned menu, so Workday's clickable row still wins
+     * over the dead menuItem node that precedes it.
+     */
     const ownedId =
-      (await control.getAttribute("aria-controls").catch(() => null)) ||
-      (await control.getAttribute("aria-owns").catch(() => null));
+      (await control.getAttribute("aria-controls", { timeout: 1_000 }).catch(() => null)) ||
+      (await control.getAttribute("aria-owns", { timeout: 1_000 }).catch(() => null));
     if (ownedId) {
       const owned = root.locator(
         `[id="${ownedId}"] [data-automation-id="promptOption"], [id="${ownedId}"] [role="option"], [id="${ownedId}"] [class*="select__option"]`,
       );
       if ((await owned.count().catch(() => 0)) > 0) return owned;
     }
+
+    const openMenu = root.locator('[data-automation-id="activeListContainer"] [data-automation-id="promptOption"]');
+    if ((await openMenu.count().catch(() => 0)) > 0) return openMenu;
     // Otherwise the popup Workday renders next to THIS field, not the first one on the page.
     const nearby = root
       .locator(keySelector)
