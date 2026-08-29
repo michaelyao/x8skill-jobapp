@@ -219,6 +219,26 @@ check(
     [{ label: "Location", value: "Pittsburgh, PA" }])[0]?.status === "match",
 );
 
+// The same capture, with the form's Location field actually holding a value — a REAL difference,
+// which must be described using the FORM's field and not the posting's heading further up.
+const TWICE_LABELLED_FILLED: ScreenBlock[] = [
+  ...TWICE_LABELLED,
+  { label: "text", text: "United States", box: [550, 1164, 662, 1187], order: 29 },
+  { label: "text", text: "Email $ ^{*} $", box: [534, 900, 600, 922], order: 20 },
+  { label: "text", text: "nyao2@andrew.cmu.edu", box: [550, 947, 760, 970], order: 21 },
+];
+check(
+  `a real difference is quoted from the FORM's field, not the posting heading`,
+  gaps(TWICE_LABELLED_FILLED, [
+    { label: "Email", value: "nyao2@andrew.cmu.edu" },
+    { label: "Location", value: "Pittsburgh, PA" },
+  ])[0] === '"Location" was recorded as "Pittsburgh, PA" but the screen shows "United States"',
+  gaps(TWICE_LABELLED_FILLED, [
+    { label: "Email", value: "nyao2@andrew.cmu.edu" },
+    { label: "Location", value: "Pittsburgh, PA" },
+  ]),
+);
+
 console.log("\nthe fixes must not silence a real gap");
 // Same real blocks, a value that genuinely is not there. If these pass, the change has only
 // removed findings that were never about the form.

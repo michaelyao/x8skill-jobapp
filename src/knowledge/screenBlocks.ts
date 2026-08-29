@@ -222,6 +222,19 @@ export function verifyFields(
 ): FieldVerdict[] {
   const out: FieldVerdict[] = [];
   const allLabels = answers.map((a) => a.label ?? "");
+  /**
+   * Where the FORM is. A posting page shows the job's details in one column and the application in
+   * another; most recorded labels belong to the form, so the median of the labels that appear
+   * exactly once locates it. Labels that appear twice are the ambiguous ones and are left out.
+   */
+  const unambiguous = allLabels
+    .map((l) => labelBlocksFor(blocks, l))
+    .filter((found) => found.length === 1)
+    .map((found) => found[0].box?.[0] ?? 0)
+    .filter((x) => x > 0)
+    .sort((a, b) => a - b);
+  const column = unambiguous.length ? unambiguous[Math.floor(unambiguous.length / 2)] : 0;
+
   for (const { label, value } of answers) {
     const recorded = (value ?? "").trim();
     if (!recorded) continue;
@@ -234,13 +247,23 @@ export function verifyFields(
      * Judge EVERY place the label appears and keep the kindest reading. When the same words label
      * two different things — the job's location in the posting and the applicant's location on the
      * form — a problem is only real if every plausible pairing agrees there is one.
+     *
+     * And when they DO agree, the one to report is the form's. Measured on the LSWING capture: the
+     * applicant's Location field holds "United States" while the entry recorded "Pittsburgh, PA",
+     * which is a real difference — but the posting's heading is higher up the page, so the finding
+     * was described as "the screen shows New York City", the job's city. True, useless, and it
+     * reads like a bug in the checker. The form's fields cluster in one column, so the label block
+     * nearest that cluster is the one to quote.
      */
-    const readings = places.map((place) => judgeOne(blocks, place, label, recorded, allLabels));
-    out.push(
-      readings.find((r) => r.status === "match") ??
-        readings.find((r) => r.status === "value-not-located") ??
-        readings[0],
-    );
+    const readings = places
+      .map((place) => ({ place, verdict: judgeOne(blocks, place, label, recorded, allLabels) }))
+      .sort((a, b) => {
+        const rank = (v: FieldVerdict) => (v.status === "match" ? 0 : v.status === "value-not-located" ? 1 : 2);
+        const byStatus = rank(a.verdict) - rank(b.verdict);
+        if (byStatus) return byStatus;
+        return Math.abs((a.place.box?.[0] ?? 0) - column) - Math.abs((b.place.box?.[0] ?? 0) - column);
+      });
+    out.push(readings[0].verdict);
   }
   return out;
 }
