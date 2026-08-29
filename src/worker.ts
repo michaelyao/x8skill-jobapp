@@ -483,12 +483,21 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
        * screenshot, an empty run directory — which is indistinguishable from a filling bug and is
        * not one. applyJob already collects the reason in summaryItem.notes; it was simply never read.
        */
-      const notes = (outcome.summaryItem?.notes ?? []).filter(Boolean);
+      /**
+       * The REASON, not the transcript of what went right. `notes` carries the whole "filled X: Y"
+       * list, so taking the first three turned a 105-field run that stopped on a stuck Terms &
+       * Conditions checkbox into "did not reach review — filled First Name: Nathan; filled Last
+       * Name: Yao", which reads like it stopped after two fields. Eight runs in one batch looked
+       * like that.
+       */
+      const notes = (outcome.summaryItem?.notes ?? [])
+        .filter(Boolean)
+        .filter((n) => !/^filled /i.test(n));
       const why = outcome.blockedRequired?.length
         ? `still blocked on: ${outcome.blockedRequired.join("; ")}`
         : notes.length
           ? `did not reach review — ${notes.slice(0, 3).join("; ")}`
-          : `did not reach review (outcome: ${outcome.summaryItem?.outcome ?? "unknown"}, no reason recorded)`;
+          : `did not reach review after filling ${outcome.summaryItem?.notes?.filter((n) => /^filled /i.test(n)).length ?? 0} field(s) — see the run log for the last control it could not pass`;
       return { ok: false, message: `[${command.code}] ${why}` };
     }
 
