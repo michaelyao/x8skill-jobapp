@@ -1,4 +1,5 @@
 import { detectAtsType, extractExternalJobId } from "../core/jobIdentity.js";
+import { redirectedAwayFromPosting } from "../core/applyJob.js";
 
 /**
  * ATS detection + posting-id extraction, over real URLs taken from the live list.
@@ -43,5 +44,32 @@ for (const [url, wantAts, wantId] of CASES) {
     console.log(`  ✗ ${url}\n      ats: got ${ats}, want ${wantAts}${idOk ? "" : `\n      id:  got ${id}, want ${wantId}`}`);
   }
 }
+
+/**
+ * A WITHDRAWN posting redirects, and the page it lands on never says it is closed.
+ *
+ * Greenhouse sends a dead job to the company's board index, so the text test for "no longer
+ * available" finds nothing, the reader sees other people's roles, and the run ends "0 field(s),
+ * submitReady=false / No next control" — the signature of not being on the form, reported as a
+ * failure to fill. Measured live on cssmerge/jobs/8687896002, which lands on
+ * job-boards.greenhouse.io/cssmerge?error=true titled "Jobs at ATOMS Careers page".
+ */
+console.log("\na posting that redirects away is a posting that is gone");
+const redirects: Array<[string, string, boolean, string]> = [
+  ["https://job-boards.greenhouse.io/cssmerge/jobs/8687896002", "https://job-boards.greenhouse.io/cssmerge?error=true", true, "the live case"],
+  ["https://job-boards.greenhouse.io/verkada/jobs/5210813007", "https://job-boards.greenhouse.io/verkada/jobs/5210813007", false, "still on the posting"],
+  ["https://job-boards.greenhouse.io/verkada/jobs/5210813007", "https://job-boards.greenhouse.io/verkada/jobs/5210813007#app", false, "an anchor is not a redirect"],
+  ["https://apply.workable.com/acme/j/ABC123/", "https://apply.workable.com/acme/?not_found=true", true, "workable's own flag"],
+  // Only a numeric id is used, so a uuid-addressed posting is judged by the flag alone — Lever,
+  // Ashby and Workday keep their existing behaviour.
+  ["https://jobs.lever.co/acme/2f1a-9c", "https://jobs.lever.co/acme/2f1a-9c/apply", false, "lever's apply step"],
+  ["https://acme.wd1.myworkdayjobs.com/en-US/careers/job/Remote/SWE_R123", "https://acme.wd1.myworkdayjobs.com/en-US/careers/login", false, "workday's own auth step"],
+];
+for (const [asked, landed, want, why] of redirects) {
+  const got = redirectedAwayFromPosting(asked, landed);
+  if (got === want) { pass += 1; console.log(`  ✓ ${why}`); }
+  else { fail += 1; console.log(`  ✗ ${why} — got ${got}, want ${want}`); }
+}
+
 console.log(`\n${fail ? "✗" : "✓"} ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

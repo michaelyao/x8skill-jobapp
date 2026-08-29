@@ -131,6 +131,21 @@ async function gotoWithRetry(page: Page, rawUrl: string, attempts = 3): Promise<
  * Shared by the fill run (runner.ts) and the approval poller (approvals.ts).
  * Never clicks submit unless the job is explicitly approved.
  */
+/**
+ * Did we ask for a posting and land somewhere else? Then the posting is gone.
+ *
+ * Pure so it can be tested without a browser: npm run test:ats.
+ *
+ * Only a NUMERIC job id is used, which in practice means Greenhouse — Lever, Ashby and Workable
+ * address a posting by uuid or slug, and Workday by a requisition path, so those are decided by the
+ * query flag alone and keep their existing behaviour.
+ */
+export function redirectedAwayFromPosting(applyUrl: string, landedUrl: string): boolean {
+  if (/[?&](error|not_found)=true/i.test(landedUrl)) return true;
+  const askedFor = applyUrl.match(/\/jobs\/(\d{4,})/)?.[1];
+  return Boolean(askedFor && !landedUrl.includes(askedFor));
+}
+
 export async function applyToJob(
   job: FilteredJob,
   identity: JobIdentity,
@@ -215,6 +230,27 @@ export async function applyToJob(
   try {
     await gotoWithRetry(jobPage, job.applyUrl);
     await jobPage.waitForTimeout(2500);
+
+    /**
+     * A withdrawn posting REDIRECTS, and the page it lands on says nothing about being closed.
+     *
+     * Greenhouse sends a dead job to the company's board index — job-boards.greenhouse.io/{co}/jobs/
+     * {id} becomes job-boards.greenhouse.io/{co}?error=true, titled "Jobs at … Careers page" — so
+     * the text test below finds no "no longer available" wording, the reader sees a list of other
+     * people's roles, and the run ends "0 field(s), submitReady=false / No next control". That is
+     * the signature of NOT BEING ON THE FORM, and it was being reported as a failure to fill.
+     * Measured on cssmerge/jobs/8687896002.
+     *
+     * The rule is the one Workable already has (`not_found=true`): compare where we ASKED to go
+     * with where we ended up. A posting whose own id is gone from the URL is gone.
+     */
+    const landed = jobPage.url();
+    if (redirectedAwayFromPosting(job.applyUrl, landed)) {
+      console.log(`  posting expired/closed — redirected to ${landed.slice(0, 90)}`);
+      await record("expired", { notes: [`posting expired/closed (redirected to ${landed.slice(0, 120)})`] });
+      await jobPage.close().catch(() => undefined);
+      return finish("expired", ["posting expired/closed"]);
+    }
 
     const pageText = (await jobPage.locator("body").innerText().catch(() => "")).toLowerCase();
     if (/doesn'?t exist|no longer (available|accepting|active)|posting (has )?closed|this job is not|job not found|job you requested was not found|position (is )?(no longer|has been) (open|filled|closed)|no jobs that fit|there are no jobs|0 jobs|page not found|n'existe pas|n'est plus|introuvable|no existe|ya no está/.test(pageText)) {
