@@ -651,14 +651,18 @@ export abstract class GenericDriver implements AtsDriver {
      * promptOption commits. menuItem precedes promptOption in DOM order, so a selector matching
      * both always clicked the dead one.
      *
-     * REVERTED, on measurement: asking the control for its own aria-controls listbox FIRST reads
-     * better — a control that names a listbox is telling us which popup is its own — and it made
-     * Uline's "How Did You Hear About Us?" strictly worse. The field had been captured with 44
-     * options: its own 42 plus two leaked country rows. Asking aria-controls first returned FOUR,
-     * and none of them belonged to it: "English", "Español", and the country code twice. The
-     * contamination this was meant to fix is handled where it happens instead — captureSelectOptions
-     * now VERIFIES the previous menu closed rather than pressing Escape once and hoping. Do not
-     * reorder these again without a live Workday capture to compare against.
+     * The ordering here is the ORIGINAL, and the case that was used to justify changing it does not
+     * support the change. Asking the control for its own aria-controls listbox first reads better —
+     * a control that names a listbox is telling us which popup is its own — and was reverted on the
+     * evidence that Uline's "How Did You Hear About Us?" went from 44 captured options to 4
+     * ("English", "Español", the country code twice). It did not: the 44-option captures are from
+     * 16 and 19 August, and BOTH of today's captures — before and after that change — read 4. The
+     * comparison was between rounds months apart, not between two versions of this code.
+     *
+     * So the ordering question is open, and this is the long-tested arrangement. What is NOT open:
+     * something about that Uline page changed between August and now, and its option list is being
+     * read from a language switcher. That needs a live capture behind the Workday login, and it is
+     * not a matching bug — do not "fix" it here.
      */
     const openMenu = root.locator('[data-automation-id="activeListContainer"] [data-automation-id="promptOption"]');
     if ((await openMenu.count().catch(() => 0)) > 0) return openMenu;
@@ -1118,17 +1122,26 @@ export abstract class GenericDriver implements AtsDriver {
     // "Python, Computer Science" means "the real answer, then a broader one": try each in turn
     // and keep the first the live list actually offers. A taxonomy that lacks the specific term
     // usually has the general one, and an empty skills box helps nobody.
-    if (value.includes(",")) {
-      const candidates = value
-        .split(",")
-        .map((v) => v.trim())
-        .filter((v) => v.length >= 2);
-      if (candidates.length > 1) {
-        for (const candidate of candidates) {
-          if (await this.fillReactSelectOne(root, control, candidate, keySelector)) return true;
-        }
-        return false;
+    /**
+     * A SLASH also means alternatives, and the whole string is not one of them. The answer store
+     * holds "Man/Male" for Gender because forms word it both ways; the list offers "Male", and
+     * asking for "Man/Male" matches nothing — measured on Uline, where a required EEO field was
+     * abandoned over it.
+     *
+     * Both parts must be real words: "N/A" is a value, not a choice between "N" and "A".
+     */
+    const slashed = value.split("/").map((v) => v.trim());
+    const alternatives =
+      slashed.length > 1 && slashed.every((v) => v.length >= 3)
+        ? slashed
+        : value.includes(",")
+          ? value.split(",").map((v) => v.trim()).filter((v) => v.length >= 2)
+          : [];
+    if (alternatives.length > 1) {
+      for (const candidate of alternatives) {
+        if (await this.fillReactSelectOne(root, control, candidate, keySelector)) return true;
       }
+      return false;
     }
     return this.fillReactSelectOne(root, control, value, keySelector);
   }

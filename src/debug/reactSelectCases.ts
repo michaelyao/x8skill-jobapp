@@ -40,6 +40,11 @@ check("a fragment that does NOT — \"Science\" is not \"Information Science\"",
 check("a control reading \"+1\" does not vouch for \"United States\" on its own", !optionMatches("+1", "united states"));
 check("but it does for the row that was clicked", "united states +1".includes("+1"));
 check("\"No\" must never vouch for \"November\"", !optionMatches("No", "november"));
+// The stored answer words a choice both ways; the list offers one of them.
+check("\"Man/Male\" is not a value the list holds", indexOfOption(["Male", "Female", "Decline To Self Identify"], "man/male") === -1);
+check("...so it must be tried as ALTERNATIVES", indexOfOption(["Male", "Female", "Decline To Self Identify"], "male") === 0);
+// "N/A" is a value, not a choice between "N" and "A" — the split needs both sides to be words.
+check("\"N/A\" is not two alternatives", "N/A".split("/").some((v) => v.trim().length < 3));
 
 console.log("\ndriving the real filler against the fixture");
 const browser = await chromium.launch({ headless: process.env.HEADED !== "1" });
