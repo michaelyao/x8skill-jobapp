@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import type { DocumentUploads } from "../agent/types.js";
 import path from "node:path";
 import { DATA_DIR } from "../config.js";
 import { writeJsonAtomic } from "../utils/atomicWrite.js";
@@ -57,6 +58,15 @@ export interface PendingEntry {
   resumeStandard?: boolean;
   jobDescription?: string;
   filledFields: string[];
+  /**
+   * What the form ASKED for and what went in. Recorded so the readiness check can see a required
+   * upload that never happened: read() excludes file inputs, so nothing else on the entry can.
+   *
+   * It was already being passed in by applyJob and silently dropped here, which is why every entry
+   * in the queue reads `undefined` and why two applications sat in "ready for review" with a
+   * required transcript missing.
+   */
+  documents?: DocumentUploads;
   answers?: FilledAnswer[]; // structured answers to replay on submit (== what was approved)
   reviewSentAt: string; // ISO
   updatedAt: string; // ISO

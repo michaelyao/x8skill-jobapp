@@ -101,7 +101,18 @@ export function judgeEntry(entry: PendingEntry, facts: ReturnType<typeof resumeF
       type: "text" as const,
     })) as FilledAnswer[],
     observedFields: newestFields(entry.code ?? entry.key),
-    resumeAttached: true,
+    /**
+     * What the run actually attached, when it recorded it.
+     *
+     * `resumeAttached: true` used to be hardcoded and `documents` was not passed at all, so the
+     * document checks could never fire — a required upload the form asked for and never got was
+     * invisible to the page that calls an application "ready for review". Two of them were.
+     *
+     * Absent stays lenient: entries filled before this was recorded cannot be judged on it, and
+     * inventing a fault for them would bury the real ones. Anything filled from now on can be.
+     */
+    documents: entry.documents,
+    resumeAttached: entry.documents ? entry.documents.attached.includes("resume") : true,
     facts,
   }).map((p) => p.message);
 
