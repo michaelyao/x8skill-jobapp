@@ -233,7 +233,8 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   the parent (`launchctl list` showed 82099) and kills that; the node process actually running the
   worker (82101) survived, so a restart on 2026-08-28 left TWO workers alive at once, the old one
   still holding Chrome and running the old code — the second time this has happened. After any
-  restart, `pgrep -fl "src/worker.ts"` must show the wrapper and ONE node child — matching on
+  restart, use `./worker-restart.sh` — it kills the survivor, clears an orphaned Chrome and
+  verifies the result. By hand, `pgrep -fl "src/worker.ts"` must show the wrapper and ONE node child — matching on
   `"tsx src/worker.ts"` finds only the wrapper, which is how the second occurrence survived a
   cleanup that was written to prevent it — and if an orphaned Chrome is
   still on the profile (`pgrep -f "user-data-dir=.*playwright/.auth"`) kill it and delete
