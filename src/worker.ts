@@ -477,9 +477,18 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
       if (outcome.summaryItem?.outcome === "expired") {
         return { ok: true, message: `[${command.code}] posting is closed — recorded as expired, will not be re-opened` };
       }
+      /**
+       * Say WHERE it stopped. "did not reach review" on its own is the failure this codebase keeps
+       * warning about: two Uline applications failed with that line and nothing else — no fields, no
+       * screenshot, an empty run directory — which is indistinguishable from a filling bug and is
+       * not one. applyJob already collects the reason in summaryItem.notes; it was simply never read.
+       */
+      const notes = (outcome.summaryItem?.notes ?? []).filter(Boolean);
       const why = outcome.blockedRequired?.length
         ? `still blocked on: ${outcome.blockedRequired.join("; ")}`
-        : "did not reach review";
+        : notes.length
+          ? `did not reach review — ${notes.slice(0, 3).join("; ")}`
+          : `did not reach review (outcome: ${outcome.summaryItem?.outcome ?? "unknown"}, no reason recorded)`;
       return { ok: false, message: `[${command.code}] ${why}` };
     }
 
