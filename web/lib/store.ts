@@ -2,6 +2,7 @@ import "server-only";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { loadApplications } from "@core/knowledge/applications.js";
+import { normalizeCompany } from "@core/utils/normalize.js";
 import { loadPendingQueue, type PendingEntry } from "@core/knowledge/approvalQueue.js";
 import { pendingCommands, recentCommands } from "@core/knowledge/commands.js";
 import { readWorkerStatus, isStale, type WorkerStatus } from "@core/knowledge/workerStatus.js";
@@ -114,6 +115,56 @@ export async function getQueueEntry(code: string): Promise<PendingEntry | null> 
 export async function getApplication(code: string): Promise<ApplicationRecord | null> {
   const apps = await loadApplications();
   return apps.find((a) => a.code === code || a.id === code) ?? null;
+}
+
+/**
+ * Every application at the SAME EMPLOYER, so a decision about one is made knowing the others.
+ *
+ * Chicago Trading Company runs two Greenhouse boards and posts "Software Engineer Intern" on both;
+ * The Nuclear Company had four roles open. Reviewing one at a time, there is no way to tell a second
+ * opening from a second application to the same opening — which is exactly the question a reviewer
+ * has to answer before approving, and the one the candidate had to answer from confirmation emails.
+ *
+ * Matched on the normalized company name, the same way the identity rules do, so "Chicago Trading
+ * Company (CTC)" and "Chicago Trading Company" are one employer.
+ */
+export interface SiblingApplication {
+  code: string;
+  title: string;
+  applyUrl: string;
+  /** The ATS's own id for the posting — two rows sharing one is the same job twice. */
+  jobId?: string;
+  ledgerStatus?: string;
+  queueStatus?: string;
+  at?: string;
+  isThisOne: boolean;
+}
+
+export async function getSiblingApplications(code: string): Promise<SiblingApplication[]> {
+  const [apps, queue] = await Promise.all([loadApplications(), loadPendingQueue()]);
+  const me = apps.find((a) => a.code === code || a.id === code);
+  const company = normalizeCompany(me?.company ?? (await getQueueEntry(code))?.company ?? "");
+  if (!company) return [];
+
+  const byCode = new Map(queue.map((e) => [e.code ?? e.key, e]));
+  const rows = apps
+    .filter((a) => normalizeCompany(a.company ?? "") === company)
+    .map((a) => {
+      const id = (a.applyUrl ?? "").match(/\/jobs?\/(\d{4,})/)?.[1] ?? a.externalJobId ?? a.companyReqId;
+      return {
+        code: a.code ?? a.id ?? "",
+        title: a.title ?? "",
+        applyUrl: a.applyUrl ?? "",
+        jobId: id ? String(id) : undefined,
+        ledgerStatus: a.status,
+        queueStatus: byCode.get(a.code ?? a.id ?? "")?.status,
+        at: a.updatedAt ?? a.firstSeenAt,
+        isThisOne: (a.code ?? a.id) === code,
+      } satisfies SiblingApplication;
+    })
+    .sort((x, y) => (y.at ?? "").localeCompare(x.at ?? ""));
+  // One row is just this application; there is nothing to compare it against.
+  return rows.length > 1 ? rows : [];
 }
 
 /**

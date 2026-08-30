@@ -1,6 +1,7 @@
-import { getApplication, getQueueEntry } from "@/lib/store";
+import { getApplication, getQueueEntry, getSiblingApplications } from "@/lib/store";
 import { ReviewPanel } from "@/components/ReviewPanel";
 import { FeedbackBox } from "@/components/FeedbackBox";
+import { SiblingApplications } from "@/components/SiblingApplications";
 import { currentUser } from "@/lib/session";
 import { fetchStoredJobDescription, loadX8NoteConfig } from "@core/knowledge/x8note.js";
 
@@ -8,7 +9,12 @@ export const dynamic = "force-dynamic";
 
 export default async function ReviewPage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = await params;
-  const [entry, app, user] = await Promise.all([getQueueEntry(code), getApplication(code), currentUser()]);
+  const [entry, app, user, siblings] = await Promise.all([
+    getQueueEntry(code),
+    getApplication(code),
+    currentUser(),
+    getSiblingApplications(code),
+  ]);
 
   if (!entry) {
     return (
@@ -30,6 +36,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ code: s
   return (
     <>
       <FeedbackBox code={code.toUpperCase()} company={entry.company} title={entry.title} />
+      <SiblingApplications rows={siblings} />
       <ReviewPanel
         entry={JSON.parse(JSON.stringify(entry))}
         description={description}
