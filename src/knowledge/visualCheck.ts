@@ -81,10 +81,26 @@ export async function ocrImage(imagePath: string, timeoutMs = 90_000): Promise<s
  * the caller carries on. A verifier that fails closed would stop every application the moment the
  * sidecar went down.
  */
+export interface LayoutResult {
+  blocks: ScreenBlock[];
+  capability?: ScreenCapability;
+  /**
+   * The SERVICE could not be reached or refused the request — as opposed to reading the page and
+   * finding nothing. The difference decides whether an application may continue: a page that
+   * genuinely has no text is not a reason to stop, and a checker that is down is.
+   */
+  unavailable?: string;
+}
+
 export async function ocrLayout(
   imagePath: string,
-  timeoutMs = 25_000,
-): Promise<{ blocks: ScreenBlock[]; capability?: ScreenCapability } | null> {
+  /**
+   * Generous on purpose. A full-page screenshot of a long form takes x8ocr around fifteen seconds
+   * and a dense one considerably more; the cost of waiting is minutes on an application, and the
+   * cost of not waiting is a required question submitted blank. Waiting is the cheaper mistake.
+   */
+  timeoutMs = 180_000,
+): Promise<LayoutResult | null> {
   if (!fs.existsSync(imagePath)) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -99,15 +115,17 @@ export async function ocrLayout(
       body,
       signal: controller.signal,
     });
-    if (!res.ok) return null;
+    if (!res.ok) return { blocks: [], unavailable: `x8ocr answered HTTP ${res.status}` };
     const json = (await res.json()) as {
       pages?: Array<{ blocks?: ScreenBlock[] }>;
       capability?: ScreenCapability;
     };
     const blocks = json.pages?.[0]?.blocks ?? [];
-    return blocks.length ? { blocks, capability: json.capability } : null;
-  } catch {
-    return null;
+    return { blocks, capability: json.capability };
+  } catch (error) {
+    // Unreachable, aborted, or unparseable — the checker is not working, and the caller must be
+    // able to tell that apart from a page it read and found nothing on.
+    return { blocks: [], unavailable: `x8ocr did not answer: ${(error as Error).message.slice(0, 90)}` };
   } finally {
     clearTimeout(timer);
   }

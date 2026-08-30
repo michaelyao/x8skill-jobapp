@@ -11,6 +11,7 @@ import { addLearnedAnswer, forgetLearnedAnswers, loadAnswers, syncAnswersMarkdow
 import { normalizeQuestion } from "./utils/normalize.js";
 import { hasSubmittedBefore, loadApplications, setApplicationStatus } from "./knowledge/applications.js";
 import { planSweep } from "./core/selectJobs.js";
+import { probeOcr, writeOcrHealth } from "./knowledge/ocrHealth.js";
 import {
   enqueueCommand,
   releaseOrphanedClaims,
@@ -172,7 +173,31 @@ async function closeBrowser(): Promise<void> {
 const findEntry = async (code: string): Promise<PendingEntry | undefined> =>
   (await loadPendingQueue()).find((e) => e.code === code || e.key === code);
 
+/**
+ * Commands that put answers into a live employer form. These are the ones that must not run while
+ * the visual checker is down — everything else (a skip, a status write, reading notes) is safe.
+ */
+const NEEDS_VERIFICATION = new Set(["apply", "retry", "change", "approve", "sweep"]);
+
 async function runCommand(command: Command): Promise<{ ok: boolean; message: string; defer?: boolean }> {
+  /**
+   * REFUSE TO FILL WITHOUT THE CHECKER.
+   *
+   * x8ocr is the only thing that can see a field the DOM reader missed, so filling without it
+   * produces applications nobody has verified — sitting in the queue looking exactly like verified
+   * ones, which is worse than not filling at all. Deferred rather than failed: the command stays
+   * queued and runs by itself when the service comes back, and the red flag on the website says why
+   * nothing is moving.
+   */
+  if (NEEDS_VERIFICATION.has(command.name) && process.env.PAGE_VERIFY !== "0") {
+    const health = await probeOcr();
+    await writeOcrHealth(health.ok, health.reason).catch(() => undefined);
+    if (!health.ok) {
+      console.log(`worker: ⛔ the visual checker is DOWN — ${health.reason}. Holding "${command.name}" until it is back.`);
+      return { ok: false, defer: true, message: `visual checker unavailable: ${health.reason}` };
+    }
+  }
+
   switch (command.name) {
     case "skip": {
       const entry = await findEntry(command.code);

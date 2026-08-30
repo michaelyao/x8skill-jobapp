@@ -1,8 +1,23 @@
 import path from "node:path";
 import { ocrLayout } from "../knowledge/visualCheck.js";
+import { writeOcrHealth } from "../knowledge/ocrHealth.js";
 import { boxesAreExact, textIsLiteral, unansweredOnScreen } from "../knowledge/screenBlocks.js";
 import type { Page } from "playwright";
 import type { DocumentUploads, HistoryOutcome, Agent, AgentContext, AtsDriver, FieldSpec, FilledAnswer } from "./types.js";
+
+
+/**
+ * The visual checker is down, so this run stopped rather than produce an application nobody has
+ * verified. Its own type so callers can tell it from a filling failure: nothing is wrong with the
+ * form or the answers, and the job should be retried once the checker is back.
+ */
+export class OcrUnavailableError extends Error {
+  readonly ocrUnavailable = true;
+  constructor(reason: string) {
+    super(`the visual checker is unavailable — refusing to fill unverified: ${reason}`);
+    this.name = "OcrUnavailableError";
+  }
+}
 
 export interface TurnLoopOptions {
   resumePath: string;
@@ -239,7 +254,8 @@ export async function runApplication(
   let pagesVerified = 0;
   const verifyThisPage = async (): Promise<void> => {
     if (!opts.runDir || process.env.PAGE_VERIFY === "0") return;
-    if (pagesVerified >= 6) return; // a long form should not pay for this on every one of many turns
+    // No cap. A long form is exactly the case this exists for, and an application that takes
+    // minutes longer but is right beats one that is quick and wrong.
     pagesVerified += 1;
     const shot = path.join(opts.runDir, `page-${pagesVerified}.png`);
     try {
@@ -248,7 +264,21 @@ export async function runApplication(
       return;
     }
     const layout = await ocrLayout(shot).catch(() => null);
-    if (!layout || !boxesAreExact(layout.capability) || !textIsLiteral(layout.capability)) return;
+    /**
+     * A CHECKER THAT IS DOWN STOPS THE RUN.
+     *
+     * Everything else here is best-effort, and that was right while this was a bonus check. It is
+     * wrong now: x8ocr is the only thing that can see a field the DOM reader missed, so filling
+     * without it is filling blind, and the result would be applications nobody has verified sitting
+     * in the queue looking exactly like verified ones.
+     */
+    if (!layout || layout.unavailable) {
+      const why = layout?.unavailable ?? "x8ocr returned nothing";
+      await writeOcrHealth(false, why).catch(() => undefined);
+      throw new OcrUnavailableError(why);
+    }
+    await writeOcrHealth(true).catch(() => undefined);
+    if (!boxesAreExact(layout.capability) || !textIsLiteral(layout.capability)) return;
 
     const missing = unansweredOnScreen(layout.blocks, answers().map((a) => ({ label: a.label, value: a.value })));
     if (!missing.length) return;
