@@ -1,4 +1,4 @@
-import { bandContains, checkFacts, degreeLevel, parseGpaBand } from "../core/factChecks.js";
+import { bandContains, bestBand, checkFacts, degreeLevel, parseGpaBand } from "../core/factChecks.js";
 
 /**
  * Cases for the fact checks.  npm run test:facts
@@ -104,6 +104,27 @@ check(`"3.5 or higher"`, codes([["What is your cumulative GPA?", "3.5 or higher"
 // A GPA field holding something unparseable is not evidence of a WRONG value; the blank/format
 // checks belong elsewhere. Guessing here would fire on free-text explanations.
 check(`an unparseable GPA answer is not called wrong`, codes([["GPA", "See transcript"]]).length === 0, codes([["GPA", "See transcript"]]));
+
+/**
+ * A THRESHOLD LADDER — the shape that produced a false statement.
+ *
+ * SpaceX offers "4.0 / 3.7 / 3.4 / 3.0 / Below 3.0 out of 4.0". None of the rungs parsed, so for a
+ * real 3.44 the only readable option was "Below 3.0", and the never-overstate rule picked it — on
+ * four questions in one application. Understating is meant to be a rounding a person would defend.
+ */
+console.log("\na ladder of thresholds");
+const LADDER = ["4.0 out of 4.0", "3.7 out of 4.0", "3.4 out of 4.0", "3.0 out of 4.0", "Below 3.0 out of 4.0", "Other/Not Applicable"];
+check(`a 3.44 is "3.4 out of 4.0", not "Below 3.0"`, bestBand(LADDER, 3.44) === "3.4 out of 4.0", bestBand(LADDER, 3.44));
+check(`a 2.8 really is below 3.0`, bestBand(LADDER, 2.8) === "Below 3.0 out of 4.0", bestBand(LADDER, 2.8));
+check(`a 4.0 takes the top rung`, bestBand(LADDER, 4.0) === "4.0 out of 4.0", bestBand(LADDER, 4.0));
+check(`a 3.65 does not claim 3.7`, bestBand(LADDER, 3.65) === "3.4 out of 4.0", bestBand(LADDER, 3.65));
+// Order must not decide the answer: the same ladder listed upwards gives the same rung.
+check(`the answer does not depend on the order the form lists them`,
+  bestBand([...LADDER].reverse(), 3.44) === "3.4 out of 4.0", bestBand([...LADDER].reverse(), 3.44));
+check(`"3.4 out of 4.0" reads as a floor`, JSON.stringify(parseGpaBand("3.4 out of 4.0")) === '{"min":3.4}', parseGpaBand("3.4 out of 4.0"));
+// The gap case this function was written for is unchanged.
+check(`a 3.53 against Verkada's bands still understates by one band`,
+  bestBand(["3.6 - 4.0", "3.1 - 3.5", "3.0 or under"], 3.53) === "3.1 - 3.5");
 
 console.log(`\n${fail ? "✗" : "✓"} ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -52,6 +52,21 @@ export function parseGpaBand(text: string): GpaBand | undefined {
   if (below) return { max: Number(below[1]) };
   const exact = t.match(/^(\d(?:\.\d+)?)(?:\s*\/\s*\d(?:\.\d+)?)?$/);
   if (exact) return { min: Number(exact[1]), max: Number(exact[1]) };
+  /**
+   * A THRESHOLD written as a plain figure on a scale: "3.4 out of 4.0".
+   *
+   * SpaceX offers `4.0 / 3.7 / 3.4 / 3.0 / Below 3.0 out of 4.0` — a descending ladder where each
+   * rung means "at least this". Not one of them parsed, so for a real 3.44 the only option this
+   * function could read at all was "Below 3.0 out of 4.0", and the never-overstate rule dutifully
+   * picked the one band it had: the answer went onto four questions in one application saying the
+   * candidate is below a 3.0. Understating is meant to be a rounding decision a person would
+   * defend, not a plainly false one.
+   *
+   * Read as a floor, which is what the ladder means and what keeps the choice honest: the highest
+   * rung at or below the real GPA.
+   */
+  const outOf = t.match(/^(\d(?:\.\d+)?)\s*(?:out of|of|\/)\s*\d(?:\.\d+)?$/);
+  if (outOf) return { min: Number(outOf[1]) };
   return undefined;
 }
 
@@ -73,8 +88,18 @@ export function bestBand(options: string[], gpa: number): string | undefined {
   const parsed = options
     .map((label) => ({ label, band: parseGpaBand(label) }))
     .filter((o): o is { label: string; band: GpaBand } => Boolean(o.band));
-  const exact = parsed.find((o) => bandContains(o.band, gpa));
-  if (exact) return exact.label;
+  /**
+   * Of the bands that DO contain the value, the tightest one — the highest floor.
+   *
+   * A ladder of thresholds has several containing bands at once: a 3.44 is "at least 3.4" and also
+   * "at least 3.0". Taking the first match makes the answer depend on the order the form happens to
+   * list them; taking the highest floor is the accurate bucket either way, and still never claims
+   * more than the real figure.
+   */
+  const containing = parsed
+    .filter((o) => bandContains(o.band, gpa))
+    .sort((a, b) => (b.band.min ?? -Infinity) - (a.band.min ?? -Infinity));
+  if (containing.length) return containing[0].label;
 
   // Nothing contains it. Take the nearest band that lies entirely BELOW the real value.
   const below = parsed
