@@ -848,7 +848,9 @@ export abstract class GenericDriver implements AtsDriver {
       await locator.fill("").catch(() => undefined);
       await locator.pressSequentially(fmt, { delay: 40 }).catch(() => undefined);
       await page.waitForTimeout(250);
-      await locator.press("Enter").catch(() => undefined);
+      // A date input takes Enter as "commit the typed date" — on a form with no picker open it is
+      // a submit keystroke instead. Blur commits the same value and cannot submit anything.
+      await locator.blur().catch(() => undefined);
       await page.waitForTimeout(200);
       if (await ok()) {
         await page.keyboard.press("Escape").catch(() => undefined); // close calendar if still open
@@ -900,8 +902,9 @@ export abstract class GenericDriver implements AtsDriver {
       await page.waitForTimeout(200);
       await control.fill("").catch(() => undefined);
       await control.pressSequentially(term, { delay: 15 }).catch(() => undefined);
-      // This prompt queries the server on ENTER, not on keystrokes.
-      await control.press("Enter").catch(() => undefined);
+      // This prompt queries the server on ENTER, not on keystrokes — but only when its menu is
+      // open. With nothing open the same keystroke submits the form.
+      await this.pressEnterIfMenuOpen(root, control);
       for (let wait = 0; wait < 16; wait += 1) {
         await page.waitForTimeout(250);
         const now = await firstLabel();
@@ -1154,6 +1157,48 @@ export abstract class GenericDriver implements AtsDriver {
    * gains `--has-value`. Reading the control's whole text instead would return the placeholder
    * ("Select…") for an empty field.
    */
+  /**
+   * Press Enter ONLY when a menu is open to swallow it.
+   *
+   * Enter in a form control with no listbox open SUBMITS THE FORM. On 29 August that sent three
+   * applications to The Nuclear Company, three minutes apart, with no approval and no record: the
+   * fill reached Greenhouse's EEO dropdowns, spent ninety seconds per field pressing Enter at a
+   * menu that never opened, and the page went to "Thank you for applying" while the run reported
+   * "No next control — stopping" and the ledger wrote `prefilled_pending_submit`.
+   *
+   * Nothing else in the system could catch it. SUBMIT_TEXT_BLOCKLIST guards CLICKS, and no click
+   * happened; the log said "never clicked" truthfully.
+   *
+   * The check is the widget's own state — aria-expanded, or options actually on screen. If neither
+   * says a menu is open, the keystroke has nowhere to go but the form, and we do not send it.
+   */
+  private async pressEnterIfMenuOpen(
+    root: Root,
+    control: Locator,
+    menu?: () => Promise<Locator>,
+  ): Promise<boolean> {
+    // The control says so itself (react-select), or its own options are on screen…
+    const expanded = await control.getAttribute("aria-expanded", { timeout: 500 }).catch(() => null);
+    let open = expanded === "true";
+    if (!open && menu) open = (await (await menu()).count().catch(() => 0)) > 0;
+    /**
+     * …or SOME menu is open on the page. Workday's taxonomy prompt is a bare input with no
+     * aria-expanded, and its list can be present but empty while the server search runs — the very
+     * moment Enter is needed. An open menu anywhere is enough for safety: the keystroke goes to the
+     * listbox rather than the form, which is the only thing this guard has to be sure of.
+     */
+    if (!open) {
+      open =
+        (await root
+          .locator('[data-automation-id="activeListContainer"], [role="listbox"], [class*="select__menu"]')
+          .count()
+          .catch(() => 0)) > 0;
+    }
+    if (!open) return false;
+    await control.press("Enter").catch(() => undefined);
+    return true;
+  }
+
   private async committedSelection(control: Locator): Promise<string> {
     const shell = control.locator('xpath=ancestor::*[contains(@class,"select__control")][1]');
     if (!(await shell.count().catch(() => 0))) return "";
@@ -1387,7 +1432,7 @@ export abstract class GenericDriver implements AtsDriver {
         // "Python" to "JavaScript" was matched against the same fourteen A-entries. Typing
         // "python" then Enter returns nineteen real rows: Python (Programming Language),
         // Python IDLE, Pandas Python Library, and so on.
-        await control.press("Enter").catch(() => undefined);
+        await this.pressEnterIfMenuOpen(root, control, menu);
         await page.waitForTimeout(400);
         /**
          * TYPE-AND-ENTER IS A COMPLETE SELECTION on react-select — check before doing anything
@@ -1412,7 +1457,12 @@ export abstract class GenericDriver implements AtsDriver {
         // of Study and Skills. Typing "information" then Enter is what surfaces "Computer
         // and Information Science" / "Information Technology" / "Management Information
         // Systems"; typing "python" then Enter surfaces the python skills.
-        await page.keyboard.press("Enter").catch(() => undefined);
+        /**
+         * A keyboard Enter goes wherever focus is, which on a page with no menu open is the form.
+         * Workday's remote-search prompt is the only widget that needs it, and it can be asked
+         * whether it is listening: if no menu is open, this keystroke would be a submit.
+         */
+        await this.pressEnterIfMenuOpen(root, control, menu);
         await page.waitForTimeout(400);
       }
       // Async option lists (Greenhouse's school/discipline typeahead re-fetches per
@@ -1685,7 +1735,7 @@ export abstract class GenericDriver implements AtsDriver {
       // leave "0 items selected", while ArrowDown + Enter commits ("1 item selected").
       await control.press("ArrowDown").catch(() => undefined);
       await page.waitForTimeout(300);
-      await control.press("Enter").catch(() => undefined);
+      await this.pressEnterIfMenuOpen(root, control, menu);
       await page.waitForTimeout(600);
       if (await this.committedIsWanted(root, keySelector, control, want, chosenRow)) return true;
       await page.keyboard.press("Escape").catch(() => undefined);

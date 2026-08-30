@@ -1,0 +1,38 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>fake ATS — a form that submits on Enter</title>
+<!--
+  What happened at The Nuclear Company on 29 August 2026.
+
+  A single-page Greenhouse application. The EEO dropdown never opens its menu (it is stubborn, as
+  the live ones were), so every Enter the filler sends goes to the FORM — and a form submits on
+  Enter in a text control. Three applications went in, three minutes apart, with no approval: the
+  run saw the page turn into "Thank you for applying", reported "No next control — stopping", and
+  the ledger recorded prefilled_pending_submit.
+
+  Nothing else could have caught it. SUBMIT_TEXT_BLOCKLIST guards CLICKS, and no click happened.
+-->
+<style>body { font: 14px system-ui; padding: 24px; } input { font: inherit; padding: 4px; }</style>
+
+<form id="app" onsubmit="submitted(event)">
+  <label for="name">First Name*</label>
+  <input id="name" type="text">
+
+  <!-- A combobox whose menu never opens. aria-expanded stays "false" and no listbox is rendered. -->
+  <label for="gender">Gender</label>
+  <input id="gender" class="select__input" role="combobox" aria-expanded="false" autocomplete="off">
+
+  <button type="submit">Submit Application</button>
+</form>
+
+<div id="done" hidden><h2>Thank you for applying</h2><p>Your application has been received.</p></div>
+
+<script>
+  window.__submitted = false;
+  function submitted(e) {
+    e.preventDefault();
+    window.__submitted = true;              // the thing that must never happen
+    document.getElementById("app").hidden = true;
+    document.getElementById("done").hidden = false;
+  }
+</script>

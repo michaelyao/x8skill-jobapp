@@ -38,7 +38,7 @@ services:
       WEB_PORT: 8088
       # The 8-hour tick, run in-process by web/instrumentation.ts. 8h paces how often we look
       # for new postings; the worker is what paces Chrome. SCHEDULE_EVERY_MS=0 disables it.
-      SCHEDULE_EVERY_MS: "28800000"
+      SCHEDULE_EVERY_MS: "0"   # HALTED 2026-08-29 after a triple submission — re-enable deliberately
       SCHEDULE_MAX_JOBS: "10"
     volumes:
       # Shared state. data/commands/ is how the website reaches the native worker: the
