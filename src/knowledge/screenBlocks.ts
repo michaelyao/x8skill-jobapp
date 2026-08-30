@@ -327,6 +327,51 @@ function judgeOne(
 }
 
 
+/**
+ * Questions the FORM asks that we have no answer for.
+ *
+ * verifyFields iterates OUR answers and asks whether each is on the screen. That can only ever
+ * confirm what we already believe: a question the reader never saw has no answer, so it was never
+ * examined. It catches drift and is structurally blind to OMISSION — which is how five REQUIRED
+ * questions on one Ashby form ("Do you currently reside in Houston, TX?", visa sponsorship, three
+ * about experience) reached the review page with nothing filled and nothing reported. The candidate
+ * found them by opening the form himself.
+ *
+ * So this reads the other way round: start from what is PRINTED and report a required question with
+ * no recorded answer. It needs no view of the widget's state — not knowing whether a Yes/No pair is
+ * pressed does not matter when we have no answer to that question at all.
+ *
+ * Only REQUIRED questions: an optional field left blank is not a fault, and a gap reported on every
+ * optional one would bury the real ones.
+ */
+export function unansweredOnScreen(
+  blocks: ScreenBlock[],
+  answers: Array<{ label: string; value: string }>,
+): string[] {
+  const answered = new Set(
+    answers.filter((a) => (a.value ?? "").trim()).map((a) => labelKey(a.label ?? "")).filter(Boolean),
+  );
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const block of blocks) {
+    const raw = (block.text ?? "").replace(/\s+/g, " ").trim();
+    // A required marker is the whole signal: the form is saying it will not go without this.
+    if (!/[*\u2731\uFE61\uFF0A]\s*$/.test(raw)) continue;
+    // A heading is not a question, and a merged region is several fields at once — neither can be
+    // attributed to one missing answer.
+    if (block.label === "title") continue;
+    const key = labelKey(raw);
+    if (!key || key.length < 8 || seen.has(key)) continue;
+    seen.add(key);
+    if (answered.has(key)) continue;
+    // A recorded label may be worded slightly differently; containment either way is enough here,
+    // because the cost of missing one is an application submitted with a required field blank.
+    if ([...answered].some((a) => a.length >= 8 && (a.includes(key) || key.includes(a)))) continue;
+    out.push(`the form marks "${raw.slice(0, 90)}" REQUIRED and nothing was recorded for it`);
+  }
+  return out;
+}
+
 export function describeVerdicts(verdicts: FieldVerdict[]): string[] {
   const out: string[] = [];
   for (const v of verdicts) {

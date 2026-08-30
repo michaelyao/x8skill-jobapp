@@ -1,4 +1,4 @@
-import { boxesAreExact, describeVerdicts, looksEmpty, textIsLiteral, valueBlockFor, verifyFields, type ScreenBlock } from "../knowledge/screenBlocks.js";
+import { boxesAreExact, describeVerdicts, looksEmpty, textIsLiteral, unansweredOnScreen, valueBlockFor, verifyFields, type ScreenBlock } from "../knowledge/screenBlocks.js";
 
 /**
  * Cases for field-level screen verification.  npm run test:blocks
@@ -238,6 +238,32 @@ check(
     { label: "Location", value: "Pittsburgh, PA" },
   ]),
 );
+
+/**
+ * OMISSION, which the other direction cannot see.
+ *
+ * verifyFields walks OUR answers, so a question the reader never found is never examined. Five
+ * REQUIRED questions on one Ashby form reached review that way with nothing filled and nothing
+ * reported. This reads from the SCREEN instead.
+ */
+const REQUIRED_ON_SCREEN: ScreenBlock[] = [
+  { label: "text", text: "Do you currently reside in Houston, TX?*", box: [532, 400, 900, 424], order: 1 },
+  { label: "text", text: "Yes No", box: [532, 430, 660, 460], order: 2 },
+  { label: "text", text: "Will you now or in the future require sponsorship for employment visa status?*", box: [532, 500, 1100, 524], order: 3 },
+  { label: "text", text: "Name*", box: [532, 600, 620, 624], order: 4 },
+  { label: "text", text: "Nathan Yao", box: [532, 630, 700, 654], order: 5 },
+  { label: "title", text: "ADDITIONAL QUESTIONS*", box: [532, 700, 800, 730], order: 6 },
+  { label: "text", text: "Twitter", box: [532, 760, 620, 784], order: 7 },
+];
+
+console.log("\nquestions the form REQUIRES that we never answered");
+const un = unansweredOnScreen(REQUIRED_ON_SCREEN, [{ label: "Name", value: "Nathan Yao" }]);
+check(`the Houston question is reported`, un.some((g) => /Houston/.test(g)), un);
+check(`so is the sponsorship question`, un.some((g) => /sponsorship/.test(g)), un);
+check(`a question we DID answer is not`, !un.some((g) => /"Name/.test(g)), un);
+check(`an optional field is not — no marker, no complaint`, !un.some((g) => /Twitter/.test(g)), un);
+check(`a section heading is not a question`, !un.some((g) => /ADDITIONAL/.test(g)), un);
+check(`exactly the two`, un.length === 2, un);
 
 console.log("\nthe fixes must not silence a real gap");
 // Same real blocks, a value that genuinely is not there. If these pass, the change has only

@@ -4,6 +4,7 @@ import {
   boxesAreExact,
   describeVerdicts,
   textIsLiteral,
+  unansweredOnScreen,
   verifyFields,
   type ScreenBlock,
   type ScreenCapability,
@@ -216,7 +217,13 @@ export function evaluateScreen(
    */
   const blocks = layout?.blocks ?? [];
   if (blocks.length && boxesAreExact(layout?.capability) && textIsLiteral(layout?.capability)) {
-    return describeVerdicts(verifyFields(blocks, answers));
+    /**
+     * Both directions. verifyFields asks "is what we recorded on the screen?" and can only confirm
+     * what we already believe; unansweredOnScreen asks "is what the screen REQUIRES recorded?" and
+     * is the only one of the two that can see a question the reader never found. Five required
+     * questions reached review unanswered because nothing asked the second question.
+     */
+    return [...describeVerdicts(verifyFields(blocks, answers)), ...unansweredOnScreen(blocks, answers)];
   }
 
   if (!screenText.trim()) return []; // no OCR result — say nothing rather than blame the application

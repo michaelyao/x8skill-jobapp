@@ -66,6 +66,12 @@ export interface PendingEntry {
    * in the queue reads `undefined` and why two applications sat in "ready for review" with a
    * required transcript missing.
    */
+  /**
+   * The visual check already handed this entry back to the filler once. A re-fill produces a new
+   * screenshot and a new verdict, so without this an application would re-open a live employer form
+   * on every check that still found something.
+   */
+  autoRefilled?: boolean;
   documents?: DocumentUploads;
   answers?: FilledAnswer[]; // structured answers to replay on submit (== what was approved)
   reviewSentAt: string; // ISO
@@ -176,7 +182,12 @@ export async function updatePendingStatus(
   status: PendingStatus,
   // `reapproval: null` CLEARS a recorded hold. `undefined` leaves it alone — an omitted field
   // must never silently wipe state, which is the difference between "no opinion" and "remove".
-  extra: { attempts?: number; lastError?: string; reapproval?: PendingEntry["reapproval"] | null } = {},
+  extra: {
+    attempts?: number;
+    lastError?: string;
+    reapproval?: PendingEntry["reapproval"] | null;
+    autoRefilled?: boolean;
+  } = {},
 ): Promise<void> {
   const entries = await readQueue();
   const idx = entries.findIndex((e) => e.key === key);
@@ -187,6 +198,7 @@ export async function updatePendingStatus(
     updatedAt: new Date().toISOString(),
     ...(extra.attempts != null ? { attempts: extra.attempts } : {}),
     ...(extra.lastError != null ? { lastError: extra.lastError } : {}),
+    ...(extra.autoRefilled != null ? { autoRefilled: extra.autoRefilled } : {}),
     ...(extra.reapproval === null ? { reapproval: undefined } : extra.reapproval !== undefined ? { reapproval: extra.reapproval } : {}),
   };
   await writeQueue(entries);

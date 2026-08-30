@@ -343,6 +343,38 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
       );
       if (gaps.length) {
         await setVisualCheck(entry.key, { state: "gaps", gaps, jobId: command.jobId, at });
+
+        /**
+         * HAND IT BACK TO THE FILLER instead of waiting to be noticed.
+         *
+         * A gap that says the form REQUIRES something we never recorded is not a judgement call —
+         * it is work the run did not finish, and the reviewer should not be the mechanism that
+         * discovers it. Re-fill once, telling the filler exactly which questions the screen says
+         * are missing; the reader has usually been taught to see them by then.
+         *
+         * ONCE. A re-fill produces a new screenshot and a new check, so retrying on every verdict
+         * would loop an application against a live employer form indefinitely. `autoRefilled` marks
+         * that this entry has already had its free attempt.
+         */
+        const missing = gaps.filter((g) => /REQUIRED and nothing was recorded/.test(g));
+        if (missing.length && !entry.autoRefilled) {
+          await updatePendingStatus(entry.key, entry.status, { autoRefilled: true });
+          await enqueueCommand({
+            name: "retry",
+            code: command.code,
+            instruction: `The review screenshot shows these REQUIRED questions with nothing recorded — answer them: ${missing
+              .map((m) => m.replace(/^the form marks "|" REQUIRED and nothing was recorded for it$/g, ""))
+              .join("; ")}`,
+            source: "visual-check",
+            actor: "auto",
+          });
+          return {
+            ok: true,
+            message: `[${command.code}] the screen shows ${missing.length} REQUIRED question(s) with no answer — re-filling once:\n${gaps
+              .map((g) => `     • ${g}`)
+              .join("\n")}`,
+          };
+        }
         return {
           ok: true,
           message: `[${command.code}] the screen does not match what was recorded — submit is blocked:\n${gaps.map((g) => `     • ${g}`).join("\n")}`,
