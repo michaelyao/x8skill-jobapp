@@ -402,12 +402,28 @@ export async function runApplication(
    * ASK THE PAGE whether we just applied, however the run ended.
    *
    * "No next control — stopping" and "Thank you for applying" look identical from inside the loop:
-   * both mean read() found no fields. Six applications went in that way and were recorded as
-   * pending. One read at the end tells them apart.
+   * both mean read() found no fields. Applications went in that way and were recorded as pending.
+   * One read at the end tells them apart.
+   *
+   * WHOSE SUBMISSION, though. The candidate applies by hand too — he did to SpaceX rather than wait
+   * for this system — and arriving at a page he already submitted also shows a confirmation.
+   * Blaming the run for that would be a false accusation, and excusing a real one is worse.
+   *
+   * The discriminator is whether we ever had a FORM. If this run read fields, the form was live when
+   * we arrived and something between then and now submitted it — us. If we never saw a field, the
+   * confirmation was there before we were, and that is `alreadyApplied`, which this system has
+   * always known how to record.
    */
-  const submittedUnexpectedly = (await driver.submissionConfirmed?.(root).catch(() => false)) ?? false;
+  const confirmation = (await driver.submissionConfirmed?.(root).catch(() => false)) ?? false;
+  const sawAForm = observed.size > 0;
+  const submittedUnexpectedly = confirmation && sawAForm;
   if (submittedUnexpectedly) {
-    console.log("  ⛔ THE PAGE IS A SUBMISSION CONFIRMATION — this application went in without approval.");
+    console.log(
+      `  ⛔ THE PAGE IS A SUBMISSION CONFIRMATION and this run read ${observed.size} field(s) on the way — ` +
+        "the form was live when we arrived, so this application went in DURING THIS RUN, without approval.",
+    );
+  } else if (confirmation) {
+    console.log("  ↳ the page is a confirmation and we never saw a form — already applied before this run.");
   }
 
   return {
@@ -419,7 +435,7 @@ export async function runApplication(
     failedToFill,
     observedFields: [...observed.values()],
     reachedReview,
-    alreadyApplied: false,
+    alreadyApplied: confirmation && !sawAForm,
     blockedRequired,
     submittedUnexpectedly,
     resumeAttached: resumeUploaded,
