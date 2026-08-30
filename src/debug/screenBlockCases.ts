@@ -284,6 +284,17 @@ console.log("\nnoise the check must not make");
 const CLIPPED_START: ScreenBlock[] = [
   { label: "text", text: "hat pronouns would you like our team to use when addressing you?*", box: [532, 400, 1100, 424], order: 1 },
 ];
+// The real block from Notion: clipped in front, "NY" misread as "IY", and three words dropped from
+// the middle. Openings, closings and a fixed middle window each fail on it — words survive.
+const MANGLED: ScreenBlock[] = [
+  { label: "text", text: "quires that you are willing to relocate to one of the following locations IY, USA or San Francisco, CA, USA. Please confirm that you are willing to this role?*", box: [532, 400, 1200, 460], order: 1 },
+];
+check(`a question damaged at both ends AND inside still counts as answered`,
+  unansweredOnScreen(MANGLED, [{ label: "This role requires that you are willing to relocate to one of the following locations New York, NY, USA or San Francisco, CA, USA. Please confirm that you are willing to relocate for this role", value: "Yes" }]).length === 0,
+  unansweredOnScreen(MANGLED, [{ label: "This role requires that you are willing to relocate to one of the following locations New York, NY, USA or San Francisco, CA, USA. Please confirm that you are willing to relocate for this role", value: "Yes" }]));
+check(`but a genuinely different question is still reported`,
+  unansweredOnScreen(MANGLED, [{ label: "What pronouns would you like our team to use when addressing you?", value: "He/Him" }]).length === 1);
+
 check(`a label OCR clipped at the START still counts as answered`,
   unansweredOnScreen(CLIPPED_START, [{ label: "What pronouns would you like our team to use when addressing you?", value: "He/Him" }]).length === 0,
   unansweredOnScreen(CLIPPED_START, [{ label: "What pronouns would you like our team to use when addressing you?", value: "He/Him" }]));

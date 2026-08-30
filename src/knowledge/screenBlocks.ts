@@ -395,18 +395,31 @@ export function unansweredOnScreen(
      * unanswered questions we had in fact answered, and three of five findings on one application
      * were exactly that.
      */
-    const opening = (t: string) => t.slice(0, 40);
-    const closing = (t: string) => t.slice(-40);
-    if (
-      [...answered].some(
-        (a) =>
-          (a.length >= 8 && (a.includes(key) || key.includes(a))) ||
-          (Math.min(a.length, key.length) >= 24 &&
-            (opening(a) === opening(key) || closing(a) === closing(key))),
-      )
-    ) {
-      continue;
-    }
+    /**
+     * SAME QUESTION? Compare word overlap, not edges.
+     *
+     * OCR damages a long question wherever the capture cuts it and misreads words inside it. One
+     * label on Notion came back as "quires that you are willing to relocate to one of the following
+     * locations IY, USA or San Francisco, CA, USA. Please confirm that you are willing to this
+     * role?*" — clipped in front, "NY" read as "IY", and three words dropped from the middle. It had
+     * been answered "Yes". Openings, closings and a fixed middle window each fail on that, because
+     * each assumes the damage is somewhere else; two of three findings on that application were
+     * this, and a check that reports answered questions as missing is one nobody reads.
+     *
+     * Words survive what edges do not. Most of a long question's words are still there and still in
+     * the label we answered, so ask what fraction of them are — high for the same question worded
+     * imperfectly, low for a different one.
+     */
+    const words = (t: string) => t.split(" ").filter((w) => w.length >= 3);
+    const sameQuestion = (recorded: string): boolean => {
+      if (recorded.includes(key) || key.includes(recorded)) return true;
+      const mine = words(key);
+      if (mine.length < 4) return false;
+      const theirs = new Set(words(recorded));
+      const shared = mine.filter((w) => theirs.has(w)).length;
+      return shared / mine.length >= 0.7;
+    };
+    if ([...answered].some(sameQuestion)) continue;
     out.push(`the form marks "${raw.slice(0, 90)}" REQUIRED and nothing was recorded for it`);
   }
   return out;
