@@ -65,6 +65,14 @@ export interface TurnLoopResult {
    *  be diffed against the form present at submit time — evidence, not recollection. */
   observedFields: FieldSpec[];
   reachedReview: boolean; // the Submit control was reached (we never click it)
+  /**
+   * The page is showing a submission confirmation and WE DID NOT MEAN TO SUBMIT.
+   *
+   * Never a normal outcome. It means something in the fill submitted the form — on 29 August, stray
+   * Enter keystrokes did it six times — and the only thing worse than that happening is it happening
+   * unnoticed. Callers must record the application as submitted, because the employer has it.
+   */
+  submittedUnexpectedly?: boolean;
   alreadyApplied: boolean;
   blockedRequired: string[]; // required fields still empty that blocked advancing
   /** Was the resume actually attached this run? Feeds the whole-application sanity check —
@@ -390,6 +398,18 @@ export async function runApplication(
     await page.waitForTimeout(1500);
   }
 
+  /**
+   * ASK THE PAGE whether we just applied, however the run ended.
+   *
+   * "No next control — stopping" and "Thank you for applying" look identical from inside the loop:
+   * both mean read() found no fields. Six applications went in that way and were recorded as
+   * pending. One read at the end tells them apart.
+   */
+  const submittedUnexpectedly = (await driver.submissionConfirmed?.(root).catch(() => false)) ?? false;
+  if (submittedUnexpectedly) {
+    console.log("  ⛔ THE PAGE IS A SUBMISSION CONFIRMATION — this application went in without approval.");
+  }
+
   return {
     turns,
     filled,
@@ -401,6 +421,7 @@ export async function runApplication(
     reachedReview,
     alreadyApplied: false,
     blockedRequired,
+    submittedUnexpectedly,
     resumeAttached: resumeUploaded,
     history,
     documents,

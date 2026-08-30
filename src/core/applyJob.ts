@@ -404,6 +404,32 @@ export async function applyToJob(
       }).catch(() => undefined);
     }
 
+    /**
+     * THE FORM WAS SUBMITTED AND WE DID NOT MEAN TO.
+     *
+     * Recorded before anything else, because the employer already has the application and every
+     * guard downstream keys off the ledger: leaving it `prefilled_pending_submit` is what let six
+     * of these sit in the approval queue afterwards, each one an Approve click away from being sent
+     * a SECOND time.
+     *
+     * Recorded as `submitted`, not as a failure, because that is what happened. The run is reported
+     * as a failure separately — an application going in without approval is the most serious thing
+     * this system can do, and it must be impossible to miss in the log.
+     */
+    if (result.submittedUnexpectedly) {
+      console.log(`  ⛔ [${job.id ?? ""}] ${job.company} — SUBMITTED WITHOUT APPROVAL. Recording it so it can never be sent again.`);
+      await record("submitted", {
+        filledFields: result.filled,
+        answers: result.answers,
+        resume,
+        notes: ["SUBMITTED WITHOUT APPROVAL — the page showed a confirmation at the end of a fill run"],
+      });
+      await jobPage.close().catch(() => undefined);
+      return finish("submitted", ["SUBMITTED WITHOUT APPROVAL — the page showed a confirmation at the end of a fill run"], {
+        submitted: true,
+      });
+    }
+
     if (result.alreadyApplied) {
       await record("already_applied_on_site", { filledFields: result.filled, resume, notes: ["already applied on site"] });
       await jobPage.close().catch(() => undefined);

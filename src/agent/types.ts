@@ -127,6 +127,8 @@ export interface AtsDriver {
   fill(root: Root, field: FieldSpec, answer: FieldAnswer): Promise<boolean>;
   /** Validation messages the form itself is showing (why it refuses to advance). */
   validationErrors?(root: Root): Promise<string[]>;
+  /** Is the page a submission confirmation? See GenericDriver.submissionConfirmed. */
+  submissionConfirmed?(root: Root): Promise<boolean>;
   /** Attach the resume; true only if a file was actually set this call. */
   /** Attach every document the form asks for. See DocumentUploads. */
   uploadDocuments(root: Root, resumePath: string): Promise<DocumentUploads>;

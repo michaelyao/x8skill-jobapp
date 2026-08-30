@@ -165,6 +165,32 @@ export abstract class GenericDriver implements AtsDriver {
     return (await root.evaluate(SCRIPT).catch(() => [])) as string[];
   }
 
+  /**
+   * Is the page a SUBMISSION CONFIRMATION? Then this application went in, whatever we meant to do.
+   *
+   * The last line of defence, and the one that would have mattered. On 29 August six applications
+   * were submitted by stray Enter keystrokes; every run afterwards reported "No next control —
+   * stopping" and wrote `prefilled_pending_submit`, while the debug screenshot sitting on disk said
+   * "Thank you for applying". Nobody looked at the page. The candidate found out from the
+   * employers' emails, seventeen hours later.
+   *
+   * Preventing the cause is not enough on its own — the next way to submit by accident will not be
+   * a keystroke this code knows about. Asking the page "did I just apply?" costs one read and turns
+   * a silent catastrophe into a recorded, visible one.
+   *
+   * Deliberately narrow: these are the words an ATS shows AFTER a submission, not words that appear
+   * on a form. "Submit application" as a button label must never match.
+   */
+  async submissionConfirmed(root: Root): Promise<boolean> {
+    const text = ((await root.locator("body").innerText({ timeout: 3_000 }).catch(() => "")) || "")
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+    if (!text) return false;
+    return /(thank you for applying|thanks for applying|your application has been received|application (was )?(successfully )?(submitted|received)|we have received your application|thank you for your interest in the)/.test(
+      text,
+    );
+  }
+
   /** Click the final Submit button. Only invoked after explicit user confirmation. */
   async submit(root: Root): Promise<boolean> {
     const btn = root.getByRole("button", { name: SUBMIT }).first();
