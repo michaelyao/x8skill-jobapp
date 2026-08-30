@@ -308,6 +308,21 @@ function judgeOne(
   if (found.merged || !found.value) return { label, recorded, onScreen: "", status: "value-not-located" };
 
   /**
+   * A YES/NO PAIR TELLS US NOTHING about which one is chosen, and must be settled BEFORE the
+   * containment search — "Yes No" contains "Yes", so the pair was reading as a MATCH and quietly
+   * vouching for a field that might have had "No" selected. A false pass is worse than a false
+   * alarm: it is the check saying it verified something it cannot see.
+   *
+   * The widget renders both words and marks the choice by colour, which this engine does not
+   * report. Unlocatable, like every other pairing we cannot resolve. (x8ocr R8, text colour, is
+   * what would turn this into a real answer.)
+   */
+  const nearest = (found.value.text ?? "").trim();
+  if (/^\W*(yes\W+no|no\W+yes)\W*$/i.test(nearest) && /^(yes|no)$/i.test(recorded)) {
+    return { label, recorded, onScreen: nearest, status: "value-not-located" };
+  }
+
+  /**
    * ANY block within reach may hold the value. A question is often followed by helper text and
    * then the control, so insisting on the nearest block reports the guidance as the answer.
    */
@@ -372,12 +387,22 @@ export function unansweredOnScreen(
      * form would raise a false gap, and a check that cries wolf on long questions is one nobody
      * will act on.
      */
+    /**
+     * Truncation happens at BOTH ends. OCR clips a long question where the box cuts it — the end
+     * for a wrapped line, the START when the capture begins mid-label: measured, "hat pronouns
+     * would you like our team to use…" for "What pronouns…", and "cate all of the locations…" for
+     * "Please indicate all of the locations…". Matching only the opening reports those as
+     * unanswered questions we had in fact answered, and three of five findings on one application
+     * were exactly that.
+     */
     const opening = (t: string) => t.slice(0, 40);
+    const closing = (t: string) => t.slice(-40);
     if (
       [...answered].some(
         (a) =>
           (a.length >= 8 && (a.includes(key) || key.includes(a))) ||
-          (Math.min(a.length, key.length) >= 24 && opening(a) === opening(key)),
+          (Math.min(a.length, key.length) >= 24 &&
+            (opening(a) === opening(key) || closing(a) === closing(key))),
       )
     ) {
       continue;

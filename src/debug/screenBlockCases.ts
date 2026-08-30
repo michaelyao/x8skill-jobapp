@@ -278,6 +278,29 @@ check(`a question OCR clipped mid-word still counts as answered`,
 check(`two questions with different openings are not confused`,
   unansweredOnScreen(CLIPPED, [{ label: "Do you currently reside in Houston, TX?", value: "No" }]).length === 1);
 
+// Measured on the queue: of twelve findings, eight were the checker's limits rather than the form's
+// faults — and a check that cries wolf is one nobody reads.
+console.log("\nnoise the check must not make");
+const CLIPPED_START: ScreenBlock[] = [
+  { label: "text", text: "hat pronouns would you like our team to use when addressing you?*", box: [532, 400, 1100, 424], order: 1 },
+];
+check(`a label OCR clipped at the START still counts as answered`,
+  unansweredOnScreen(CLIPPED_START, [{ label: "What pronouns would you like our team to use when addressing you?", value: "He/Him" }]).length === 0,
+  unansweredOnScreen(CLIPPED_START, [{ label: "What pronouns would you like our team to use when addressing you?", value: "He/Him" }]));
+// A yes/no pair renders BOTH words and marks the choice by colour, which this engine does not read.
+const YESNO_PAIR: ScreenBlock[] = [
+  { label: "text", text: "Are you legally authorized to work in the United States?", box: [532, 400, 1100, 424], order: 1 },
+  { label: "text", text: "Yes No", box: [532, 430, 640, 456], order: 2 },
+];
+check(`"Yes No" beside a field we answered "Yes" is not a finding`,
+  describeVerdicts(verifyFields(YESNO_PAIR, [{ label: "Are you legally authorized to work in the United States?", value: "Yes" }])).length === 0);
+check(`it reads as unlocated, which is the truth`,
+  verifyFields(YESNO_PAIR, [{ label: "Are you legally authorized to work in the United States?", value: "Yes" }])[0]?.status === "value-not-located");
+// But a real value beside the label is still compared.
+check(`a genuine mismatch is still reported`,
+  describeVerdicts(verifyFields([YESNO_PAIR[0], { label: "text", text: "Canada", box: [532, 430, 640, 456], order: 2 }],
+    [{ label: "Are you legally authorized to work in the United States?", value: "Yes" }])).length === 1);
+
 console.log("\nthe fixes must not silence a real gap");
 // Same real blocks, a value that genuinely is not there. If these pass, the change has only
 // removed findings that were never about the form.
