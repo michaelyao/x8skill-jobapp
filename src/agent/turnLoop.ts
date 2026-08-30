@@ -1,3 +1,6 @@
+import path from "node:path";
+import { ocrLayout } from "../knowledge/visualCheck.js";
+import { boxesAreExact, textIsLiteral, unansweredOnScreen } from "../knowledge/screenBlocks.js";
 import type { Page } from "playwright";
 import type { DocumentUploads, HistoryOutcome, Agent, AgentContext, AtsDriver, FieldSpec, FilledAnswer } from "./types.js";
 
@@ -8,6 +11,8 @@ export interface TurnLoopOptions {
   // Ask the user (in the terminal) for a field's value. Returns the value to
   // fill, or null to leave it for manual handling.
   onLearn?: (field: FieldSpec) => Promise<string | null>;
+  /** Where per-page verification screenshots go. Absent → the check is skipped. */
+  runDir?: string;
 }
 
 /**
@@ -225,6 +230,38 @@ export async function runApplication(
 
   let turns = 0;
   let resumeUploaded = false;
+  /**
+   * One OCR of the current page, then fill whatever it says is still required.
+   *
+   * Bounded on purpose: one screenshot, one OCR, one corrective pass. It is a second opinion, not a
+   * loop — and it is best-effort, so no service or a slow one costs the run nothing but the wait.
+   */
+  let pagesVerified = 0;
+  const verifyThisPage = async (): Promise<void> => {
+    if (!opts.runDir || process.env.PAGE_VERIFY === "0") return;
+    if (pagesVerified >= 6) return; // a long form should not pay for this on every one of many turns
+    pagesVerified += 1;
+    const shot = path.join(opts.runDir, `page-${pagesVerified}.png`);
+    try {
+      await page.screenshot({ path: shot, fullPage: true });
+    } catch {
+      return;
+    }
+    const layout = await ocrLayout(shot).catch(() => null);
+    if (!layout || !boxesAreExact(layout.capability) || !textIsLiteral(layout.capability)) return;
+
+    const missing = unansweredOnScreen(layout.blocks, answers().map((a) => ({ label: a.label, value: a.value })));
+    if (!missing.length) return;
+    console.log(`  👁 the page still requires ${missing.length} answer(s) — filling before moving on:`);
+    for (const m of missing) console.log(`     • ${m}`);
+
+    // Re-read and fill only what is still empty. The reader may now see the field the screen named;
+    // when it cannot, the required-field gate below reports it rather than the page being left.
+    const fresh = await driver.read(root);
+    const stillEmpty = [...stillMissing(fresh.fields), ...missingGroups(fresh.fields)];
+    if (stillEmpty.length) await fillFields(stillEmpty, false);
+  };
+
   let documentsDone = false;
   let documents: DocumentUploads = { attached: [], missing: [] };
   let historyDone = false;
@@ -390,6 +427,21 @@ export async function runApplication(
       noProgress = 0;
     }
     lastSignature = signature;
+
+    /**
+     * CHECK THE PAGE BEFORE LEAVING IT.
+     *
+     * The whole-application check runs on the review screenshot, at the end. On a single-page form
+     * that is the same moment; on a multi-page one it is far too late — the only remedy a late
+     * verdict allows is "go back to page three and try again", which is slower and less reliable
+     * than never advancing with a required question unanswered.
+     *
+     * This asks the SCREEN what it still requires, which is the one question our own reader cannot
+     * answer about itself: five required Ashby questions were invisible to read(), so nothing in
+     * the DOM path knew they existed. Anything it names is filled here, on the page where it was
+     * found, before the form moves on.
+     */
+    await verifyThisPage();
 
     if (!(await driver.next(root))) {
       console.log("  No next control — stopping.");

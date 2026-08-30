@@ -264,6 +264,19 @@ check(`a question we DID answer is not`, !un.some((g) => /"Name/.test(g)), un);
 check(`an optional field is not — no marker, no complaint`, !un.some((g) => /Twitter/.test(g)), un);
 check(`a section heading is not a question`, !un.some((g) => /ADDITIONAL/.test(g)), un);
 check(`exactly the two`, un.length === 2, un);
+// OCR clips a long question at the end and mangles the character it clips through, so neither
+// string contains the other. Every long question on a form would otherwise raise a false gap.
+const CLIPPED: ScreenBlock[] = [
+  { label: "text", text: "Will you now or in the future require sponsorship for employment visa stat H*", box: [532, 400, 1100, 424], order: 1 },
+];
+check(`a question OCR clipped mid-word still counts as answered`,
+  unansweredOnScreen(CLIPPED, [
+    { label: "Will you now or in the future require sponsorship for employment visa status (e.g., H-1B visa status)?", value: "No" },
+  ]).length === 0,
+  unansweredOnScreen(CLIPPED, [{ label: "Will you now or in the future require sponsorship for employment visa status (e.g., H-1B visa status)?", value: "No" }]));
+// But a genuinely different question that merely starts alike is still reported.
+check(`two questions with different openings are not confused`,
+  unansweredOnScreen(CLIPPED, [{ label: "Do you currently reside in Houston, TX?", value: "No" }]).length === 1);
 
 console.log("\nthe fixes must not silence a real gap");
 // Same real blocks, a value that genuinely is not there. If these pass, the change has only

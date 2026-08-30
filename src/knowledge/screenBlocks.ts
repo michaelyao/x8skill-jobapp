@@ -364,9 +364,24 @@ export function unansweredOnScreen(
     if (!key || key.length < 8 || seen.has(key)) continue;
     seen.add(key);
     if (answered.has(key)) continue;
-    // A recorded label may be worded slightly differently; containment either way is enough here,
-    // because the cost of missing one is an application submitted with a required field blank.
-    if ([...answered].some((a) => a.length >= 8 && (a.includes(key) || key.includes(a)))) continue;
+    /**
+     * Match on a PREFIX as well as containment. OCR clips a long question at the end and mangles
+     * the character it clips through — "…require sponsorship for employment visa stat H" for a
+     * label that continues "…visa status (e.g., H-1B visa status)?" — so neither string contains
+     * the other and a question we DID answer gets reported as missing. Every long question on a
+     * form would raise a false gap, and a check that cries wolf on long questions is one nobody
+     * will act on.
+     */
+    const opening = (t: string) => t.slice(0, 40);
+    if (
+      [...answered].some(
+        (a) =>
+          (a.length >= 8 && (a.includes(key) || key.includes(a))) ||
+          (Math.min(a.length, key.length) >= 24 && opening(a) === opening(key)),
+      )
+    ) {
+      continue;
+    }
     out.push(`the form marks "${raw.slice(0, 90)}" REQUIRED and nothing was recorded for it`);
   }
   return out;

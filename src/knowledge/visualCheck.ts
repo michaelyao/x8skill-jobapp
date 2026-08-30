@@ -68,6 +68,51 @@ export async function ocrImage(imagePath: string, timeoutMs = 90_000): Promise<s
   }
 }
 
+/**
+ * OCR with layout, SYNCHRONOUSLY, for a check that has to answer before the page changes.
+ *
+ * The whole-application check is asynchronous on purpose: it submits a job and lets the verdict
+ * arrive later, so a fill never waits on it. That is right for the review screenshot and wrong for
+ * a page about to be left behind — on a multi-page ATS the only remedy a late verdict allows is
+ * "go back to page 3 and try again", which is slower and less reliable than never advancing with a
+ * required question unanswered.
+ *
+ * Best-effort like everything else here: no service, a timeout, or an empty result returns null and
+ * the caller carries on. A verifier that fails closed would stop every application the moment the
+ * sidecar went down.
+ */
+export async function ocrLayout(
+  imagePath: string,
+  timeoutMs = 25_000,
+): Promise<{ blocks: ScreenBlock[]; capability?: ScreenCapability } | null> {
+  if (!fs.existsSync(imagePath)) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const body = new FormData();
+    const bytes = await fs.promises.readFile(imagePath);
+    body.append("file", new Blob([bytes], { type: "image/png" }), path.basename(imagePath));
+    body.append("includeLayout", "true");
+    const res = await fetch(`${endpoint().replace(/\/$/, "")}/v1/extract`, {
+      method: "POST",
+      headers: apiKeyHeader(),
+      body,
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const json = (await res.json()) as {
+      pages?: Array<{ blocks?: ScreenBlock[] }>;
+      capability?: ScreenCapability;
+    };
+    const blocks = json.pages?.[0]?.blocks ?? [];
+    return blocks.length ? { blocks, capability: json.capability } : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Fold everything that differs between a rendered glyph and a stored string. */
 function fold(text: string): string {
   return text

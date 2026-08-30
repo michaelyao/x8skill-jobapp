@@ -369,6 +369,8 @@ export async function applyToJob(
         resumePath: resume.path,
         interactive: opts.interactive,
         maxTurns: driver.type === "workday" ? 18 : 8,
+        // Where the per-page verification screenshots go. Without it that check is skipped.
+        runDir,
         onLearn: async (field) => {
           const value = await askUserForField(field, { company: job.company, title: job.title, url: jobPage.url() });
           if (value) {
