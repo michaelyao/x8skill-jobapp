@@ -1,6 +1,6 @@
 import type { Locator, Page } from "playwright";
 import { GenericDriver } from "./base.js";
-import type { FieldAnswer, FieldSpec, Root } from "../types.js";
+import type { FieldAnswer, FieldSpec, PageSnapshot, Root } from "../types.js";
 
 /**
  * Ashby driver — the application form renders inline on jobs.ashbyhq.com. Some
@@ -12,6 +12,102 @@ export class AshbyDriver extends GenericDriver {
 
   async detect(page: Page): Promise<boolean> {
     return page.url().toLowerCase().includes("ashbyhq.com");
+  }
+
+  /**
+   * Ashby's YES/NO widget is invisible to the generic reader, and five REQUIRED questions on one
+   * application went unanswered because of it — sponsorship, "Do you currently reside in Houston,
+   * TX?", and three experience questions. Not filled, not blocked by the required-field gate, not
+   * shown on the review page: the form asks eighteen questions and read() returned twelve.
+   *
+   * The markup is a pair of buttons over a hidden checkbox:
+   *
+   *   <label class="… _required_ …" for="UUID">Do you currently reside in Houston, TX?</label>
+   *   <div class="… ashby-application-form-input-yesno">
+   *     <button aria-pressed="false" data-option="yes">Yes</button>
+   *     <button aria-pressed="false" data-option="no">No</button>
+   *   </div>
+   *   <input type="checkbox" style="display:none" name="UUID">
+   *
+   * read() keeps only controls that are visible — rightly, or every hidden input on a page becomes
+   * a field — and the checkbox carrying the answer has `display: none`. The buttons are the control;
+   * the checkbox is just where the value lands.
+   *
+   * Required comes from a CLASS on the question label (`_required_…`), not from an attribute, which
+   * is separately why every Ashby question this driver DOES see has been recorded as optional.
+   */
+  private static readonly YESNO = '[class*="ashby-application-form-input-yesno"]';
+
+  async read(root: Root): Promise<PageSnapshot> {
+    const snapshot = await super.read(root);
+    const found = (await root
+      .evaluate(`(() => {
+        var out = [];
+        // The class prefix also appears on each option BUTTON, so matching it alone finds the
+        // container plus its two buttons — the same question three times over. A container is the
+        // one that HOLDS the buttons.
+        var all = document.querySelectorAll('[class*="ashby-application-form-input-yesno"]');
+        var groups = [];
+        for (var gi = 0; gi < all.length; gi += 1) {
+          if (all[gi].tagName !== "BUTTON" && all[gi].querySelector("button[data-option]")) groups.push(all[gi]);
+        }
+        for (var i = 0; i < groups.length; i += 1) {
+          var g = groups[i];
+          /**
+           * The checkbox carrying the answer is a SIBLING of the button group. Asking the parent
+           * for "an input[type=checkbox]" returns the first one in its subtree, which on a flatter
+           * tenant is the previous question's — every question would then resolve to one name and
+           * collapse into a single field. Walk forward from the group instead.
+           */
+          // Inside the group first — that one can only be its own. Tenants differ on whether the
+          // checkbox sits within the button container or beside it.
+          var hidden = g.querySelector('input[type="checkbox"]');
+          var sib = g.nextElementSibling;
+          while (sib && !hidden) {
+            if (sib.tagName === "INPUT" && sib.getAttribute("type") === "checkbox") hidden = sib;
+            else if (sib.querySelector) hidden = sib.querySelector('input[type="checkbox"]');
+            if (sib.tagName === "LABEL") break; // the next question has started
+            sib = sib.nextElementSibling;
+          }
+          var name = hidden ? hidden.getAttribute("name") : null;
+          // The question label points AT the field by id, which is the same uuid the input carries.
+          var label = name ? document.querySelector('label[for="' + name + '"]') : null;
+          if (!label) {
+            var prev = g.previousElementSibling;
+            label = prev && prev.tagName === "LABEL" ? prev : null;
+          }
+          var buttons = g.querySelectorAll("button[data-option]");
+          var chosen = "";
+          for (var b = 0; b < buttons.length; b += 1) {
+            if (buttons[b].getAttribute("aria-pressed") === "true") chosen = (buttons[b].textContent || "").trim();
+          }
+          out.push({
+            name: name || "",
+            label: label ? (label.textContent || "").replace(/\\s+/g, " ").trim() : "",
+            required: label ? /_required_/.test(String(label.className)) : false,
+            options: Array.prototype.map.call(buttons, function (b) { return (b.textContent || "").trim(); }),
+            filled: chosen !== "",
+          });
+        }
+        return out;
+      })()`)
+      .catch(() => [])) as Array<{ name: string; label: string; required: boolean; options: string[]; filled: boolean }>;
+
+    const known = new Set(snapshot.fields.map((f) => f.label));
+    for (const g of found) {
+      if (!g.label || !g.name || known.has(g.label)) continue;
+      snapshot.fields.push({
+        // The container is the question label's next sibling. The hidden checkbox is a sibling of
+        // the container, not a child, so a `:has(input…)` selector would match nothing.
+        key: `label[for="${g.name}"] + ${AshbyDriver.YESNO}`,
+        label: g.label,
+        type: "single_select",
+        required: g.required,
+        options: g.options.length ? g.options : ["Yes", "No"],
+        filled: g.filled,
+      });
+    }
+    return snapshot;
   }
 
   async openApplication(page: Page): Promise<void> {
@@ -49,6 +145,27 @@ export class AshbyDriver extends GenericDriver {
    * plain fill() leaves the widget with text and no selection. Verified by reading the input back.
    */
   async fill(root: Root, field: FieldSpec, answer: FieldAnswer): Promise<boolean> {
+    /**
+     * The yes/no widget is driven by CLICKING one of its buttons — the checkbox behind it is
+     * display:none, so check() has nothing to act on. Verified by reading `aria-pressed` back,
+     * because a click that dispatched without registering must never be reported as filled.
+     */
+    if (field.key.includes("ashby-application-form-input-yesno")) {
+      const wanted = (answer.value || "").trim().toLowerCase();
+      if (!wanted) return false;
+      const group = root.locator(field.key).first();
+      if (!(await group.count().catch(() => 0))) return false;
+      // Match the button by its own text first, then by the data-option Ashby stamps on it.
+      const byText = group.locator("button[data-option]").filter({ hasText: new RegExp(`^\\s*${wanted.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "i") });
+      const byOption = group.locator(`button[data-option="${/^y/.test(wanted) ? "yes" : "no"}"]`);
+      const target = (await byText.count().catch(() => 0)) > 0 ? byText.first() : byOption.first();
+      if (!(await target.count().catch(() => 0))) return false;
+      await target.scrollIntoViewIfNeeded().catch(() => undefined);
+      await target.click().catch(() => undefined);
+      await group.page().waitForTimeout(250);
+      return (await target.getAttribute("aria-pressed", { timeout: 2_000 }).catch(() => null)) === "true";
+    }
+
     const isTypeahead =
       /location|country/i.test(field.label ?? "") && (field.options?.length ?? 0) === 0;
     if (isTypeahead) {

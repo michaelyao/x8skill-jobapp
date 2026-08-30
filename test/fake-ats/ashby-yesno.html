@@ -1,0 +1,51 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>fake ATS — Ashby's yes/no widget</title>
+<!--
+  Verbatim shape from jobs.ashbyhq.com. A pair of buttons over a checkbox that is display:none —
+  so read()'s visibility test drops the only control carrying the answer, and the question vanishes
+  from the system entirely: not filled, not blocked by the required-field gate, not on the review
+  page. One Persona AI application asked eighteen questions and the reader returned twelve; five of
+  the six missing were REQUIRED.
+
+  Required is a CLASS on the question label, not an attribute, which is separately why every Ashby
+  question that WAS read came back optional.
+-->
+<style>
+  body { font: 14px system-ui; padding: 24px; }
+  .ashby-application-form-input-yesno button { font: inherit; padding: 6px 14px; margin-right: 6px; }
+  .ashby-application-form-input-yesno button[aria-pressed="true"] { background: #2f6fed; color: #fff; }
+  input[type=checkbox] { display: none; }
+</style>
+
+<label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title" for="q-houston">Do you currently reside in Houston, TX?</label>
+<div class="_container_1svni_28 _yesno_1e3gg_148 ashby-application-form-input-yesno">
+  <button class="_option_1svni_32 ashby-application-form-input-yesno-option" aria-pressed="false" data-option="yes">Yes</button>
+  <button class="_option_1svni_32 ashby-application-form-input-yesno-option" aria-pressed="false" data-option="no">No</button>
+</div>
+<input type="checkbox" name="q-houston">
+
+<!-- A second question, to prove the two are told apart rather than both driven by the first match. -->
+<label class="_heading_f7cvd_52 ashby-application-form-question-title" for="q-robotics">Do you have experience in robotics?</label>
+<div class="_container_1svni_28 _yesno_1e3gg_148 ashby-application-form-input-yesno">
+  <button class="_option_1svni_32 ashby-application-form-input-yesno-option" aria-pressed="false" data-option="yes">Yes</button>
+  <button class="_option_1svni_32 ashby-application-form-input-yesno-option" aria-pressed="false" data-option="no">No</button>
+</div>
+<input type="checkbox" name="q-robotics">
+
+<label class="_heading_f7cvd_52 _required_f7cvd_91 ashby-application-form-question-title" for="name">Name</label>
+<input id="name" name="name" type="text" required>
+
+<script>
+  for (const group of document.querySelectorAll(".ashby-application-form-input-yesno")) {
+    for (const btn of group.querySelectorAll("button[data-option]")) {
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        for (const b of group.querySelectorAll("button[data-option]")) b.setAttribute("aria-pressed", "false");
+        btn.setAttribute("aria-pressed", "true");
+        const box = group.nextElementSibling;
+        if (box) box.checked = btn.dataset.option === "yes";
+      });
+    }
+  }
+</script>
