@@ -312,6 +312,24 @@ check(`a genuine mismatch is still reported`,
   describeVerdicts(verifyFields([YESNO_PAIR[0], { label: "text", text: "Canada", box: [532, 430, 640, 456], order: 2 }],
     [{ label: "Are you legally authorized to work in the United States?", value: "Yes" }])).length === 1);
 
+// Two findings on the queue that were about our reader, not the form.
+console.log("\nblocks that cannot stand in for a value");
+const JUNK: ScreenBlock[] = [
+  { label: "text", text: "Email*", box: [532, 400, 620, 424], order: 1 },
+  { label: "text", text: "- α-Δ-ε", box: [532, 430, 700, 456], order: 2 },
+  { label: "text", text: "nyao2@andrew.cmu.edu", box: [532, 462, 800, 488], order: 3 },
+];
+check(`OCR garbage is skipped, and the real value below it is found`,
+  verifyFields(JUNK, [{ label: "Email", value: "nyao2@andrew.cmu.edu" }])[0]?.status === "match",
+  verifyFields(JUNK, [{ label: "Email", value: "nyao2@andrew.cmu.edu" }])[0]);
+const TABLE: ScreenBlock[] = [
+  { label: "text", text: "LinkedIn Profile", box: [532, 400, 700, 424], order: 1 },
+  { label: "table", text: "<table><tr><td>Yesserday</td></tr></table>", box: [532, 430, 900, 470], order: 2 },
+];
+check(`a merged table block is not this field's value`,
+  describeVerdicts(verifyFields(TABLE, [{ label: "LinkedIn Profile", value: "https://www.linkedin.com/in/nathandyao" }])).length === 0,
+  verifyFields(TABLE, [{ label: "LinkedIn Profile", value: "https://www.linkedin.com/in/nathandyao" }])[0]);
+
 console.log("\nthe fixes must not silence a real gap");
 // Same real blocks, a value that genuinely is not there. If these pass, the change has only
 // removed findings that were never about the form.

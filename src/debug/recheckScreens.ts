@@ -4,6 +4,7 @@ import { LOGS_DIR } from "../config.js";
 import { loadEnv } from "../utils/env.js";
 import { loadPendingQueue } from "../knowledge/approvalQueue.js";
 import { enqueueCommand } from "../knowledge/commands.js";
+import { ocrLayout } from "../knowledge/visualCheck.js";
 
 /**
  * Re-judge a saved review SCREENSHOT, without reopening the employer's form.
@@ -52,26 +53,21 @@ function newestScreenshot(code: string): { file: string; mtime: number } | undef
   return best;
 }
 
-interface OcrResult {
-  markdown?: string;
-  pages?: Array<{ blocks?: unknown[] }>;
-  capability?: Record<string, unknown>;
-}
-
-async function ocr(file: string): Promise<OcrResult | null> {
-  const body = new FormData();
-  body.append("file", new Blob([await fs.promises.readFile(file)], { type: "image/png" }), path.basename(file));
-  // The same flag submitOcrJob sends — without layout the result falls back to page-level
-  // containment, which is the check being replaced.
-  body.append("includeLayout", "true");
-  const key = (process.env.X8OCR_API_KEY || "").trim();
-  const res = await fetch(`${endpoint()}/v1/extract`, {
-    method: "POST",
-    headers: key ? { authorization: `Bearer ${key}` } : {},
-    body,
-  });
-  if (!res.ok) return null;
-  return (await res.json()) as OcrResult;
+/**
+ * Use the SHARED reader, not a private copy.
+ *
+ * This tool had its own fetch with the default timeout, and it silently skipped a 62-block
+ * screenshot that the live path reads fine — leaving a stale verdict in place and under-reporting
+ * the very improvement it was run to measure. A batch of forty-two would have done that quietly on
+ * whichever ones happened to be slow.
+ */
+async function ocr(file: string): Promise<{ blocks: unknown[]; capability?: unknown; markdown?: string } | null> {
+  const layout = await ocrLayout(file);
+  if (!layout || layout.unavailable) {
+    if (layout?.unavailable) console.log(`      (${layout.unavailable})`);
+    return null;
+  }
+  return { blocks: layout.blocks, capability: layout.capability };
 }
 
 async function main(): Promise<void> {
@@ -99,17 +95,17 @@ async function main(): Promise<void> {
       continue;
     }
     const result = await ocr(shot.file).catch(() => null);
-    if (!result?.markdown) {
+    if (!result) {
       console.log(`  ${code}  OCR produced nothing — left as it was`);
       continue;
     }
-    const blocks = result.pages?.[0]?.blocks;
+    const blocks = result.blocks;
     await enqueueCommand({
       name: "visual_check",
       code,
-      screenText: result.markdown,
+      screenText: "",
       blocks,
-      capability: result.capability,
+      capability: result.capability as Record<string, unknown> | undefined,
       source: "recheck-screens",
       actor: "recheck",
     });

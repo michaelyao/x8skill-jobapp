@@ -195,7 +195,24 @@ function locateFrom(
     )
     .sort((a, b) => (a.box![1] ?? 0) - (b.box![1] ?? 0))
     // A section heading is never a value, and neither is another field's label.
-    .filter((b) => b.label !== "title" && !others.has(labelKey(b.text)));
+    .filter((b) => b.label !== "title" && !others.has(labelKey(b.text)))
+    /**
+     * Nor is a TABLE. The engine merges a region it reads as tabular into one block of HTML, and
+     * pairing that with a label produced "LinkedIn Profile … but the screen shows
+     * <table><tr><td>Yesse" — a finding about our own reader, dressed as a finding about the form.
+     */
+    .filter((b) => b.label !== "table" && !/^\s*<table/i.test(b.text ?? ""))
+    /**
+     * Nor is GARBAGE. "- α-Δ-ε" was reported as what the screen showed for an email that was in
+     * fact filled correctly: a block with almost no letters is a rendering artefact, an icon or a
+     * rule, and it can neither confirm nor contradict a value.
+     */
+    .filter((b) => {
+      const t = (b.text ?? "").trim();
+      if (t.length < 3) return false;
+      const letters = (t.match(/[a-z0-9]/gi) ?? []).length;
+      return letters / t.length >= 0.4;
+    });
 
   return { label, value: candidates[0], candidates };
 }
