@@ -251,9 +251,15 @@ export async function runApplication(
    * Bounded on purpose: one screenshot, one OCR, one corrective pass. It is a second opinion, not a
    * loop — and it is best-effort, so no service or a slow one costs the run nothing but the wait.
    */
+  const verifiedPages = new Set<string>();
   let pagesVerified = 0;
   const verifyThisPage = async (): Promise<void> => {
     if (!opts.runDir || process.env.PAGE_VERIFY === "0") return;
+    // One check per page. The loop asks before deciding a page is done AND before advancing, which
+    // on a multi-page form is the same page twice.
+    const signature = (await driver.read(root).catch(() => null))?.fields.map((f) => f.label).sort().join("|") ?? "";
+    if (signature && verifiedPages.has(signature)) return;
+    if (signature) verifiedPages.add(signature);
     // No cap. A long form is exactly the case this exists for, and an application that takes
     // minutes longer but is right beats one that is quick and wrong.
     pagesVerified += 1;
@@ -377,6 +383,21 @@ export async function runApplication(
       console.log(`  ${missing.length} required field(s) still empty — retry pass ${attempt + 1}: ${missing.map((f) => f.label).join(" | ")}`);
       await fillFields(missing, attempt === 1); // enable learning on the final pass
       await page.waitForTimeout(500);
+      after = await driver.read(root);
+      missing = [...stillMissing(after.fields), ...missingGroups(after.fields)];
+    }
+
+    /**
+     * VERIFY BEFORE DECIDING THIS PAGE IS DONE, not only before advancing.
+     *
+     * A single-page form never advances — it breaks out here at submitReady — so the check that was
+     * wired in before `next()` never ran on one. Measured on a 42-application batch: 14 page
+     * screenshots across the whole run, all of them from the few multi-page forms, while every
+     * Greenhouse and Ashby application skipped it entirely. That is most of the queue, and exactly
+     * the forms the check was built for.
+     */
+    if (after.submitReady) {
+      await verifyThisPage();
       after = await driver.read(root);
       missing = [...stillMissing(after.fields), ...missingGroups(after.fields)];
     }
