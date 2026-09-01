@@ -933,7 +933,7 @@ export abstract class GenericDriver implements AtsDriver {
        * open. The scoped lookup is what makes that safe to ask: a page-wide check would say "yes"
        * because of some other field's open list, and the keystroke would reach the form instead.
        */
-      await this.pressEnterIfMenuOpen(root, control, () => this.scopedOptions(root, keySelector, control));
+      await this.pressEnterOnWorkdayPrompt(root, control, () => this.scopedOptions(root, keySelector, control));
       for (let wait = 0; wait < 16; wait += 1) {
         await page.waitForTimeout(250);
         const now = await firstLabel();
@@ -1201,27 +1201,47 @@ export abstract class GenericDriver implements AtsDriver {
    * The check is the widget's own state — aria-expanded, or options actually on screen. If neither
    * says a menu is open, the keystroke has nowhere to go but the form, and we do not send it.
    */
-  private async pressEnterIfMenuOpen(
+  /**
+   * Press Enter ONLY on a Workday taxonomy prompt, and only when that prompt's own list is there.
+   *
+   * The keystroke is not a tool this code should reach for. Every other widget can be driven by
+   * CLICKING the option, and a click lands on one element: it cannot submit a form by accident.
+   * Enter goes to whatever has focus, so on any single-page application form it is one missed
+   * condition away from filing the application — which it did, seven times, at The Nuclear Company,
+   * Chicago Trading and HP IQ. Two attempts to make it safe with a general guard both left a hole,
+   * the second one carrying a confident comment about why it could not.
+   *
+   * So it is no longer general. One widget genuinely needs it — Workday's prompt runs its search on
+   * ENTER rather than on keystrokes, measured live: typing "python" alone leaves the unfiltered
+   * A-page, typing it and pressing Enter returns nineteen real rows. That widget identifies itself
+   * in the DOM, and this refuses to fire without that identification. On Greenhouse, Ashby, Lever
+   * or Workable the answer is always no, whatever the page is doing.
+   */
+  private async pressEnterOnWorkdayPrompt(
     root: Root,
     control: Locator,
     menu?: () => Promise<Locator>,
   ): Promise<boolean> {
-    // The control says so itself (react-select), or its own options are on screen…
+    const isWorkdayPrompt =
+      (await control
+        .locator(
+          'xpath=ancestor::*[@data-automation-id="multiSelectContainer" or @data-automation-id="multiselectInputContainer" or starts-with(@data-automation-id,"promptOption") or starts-with(@data-automation-id,"formField")][1]',
+        )
+        .count()
+        .catch(() => 0)) > 0;
+    if (!isWorkdayPrompt) return false;
+
+    // And its own list must be present, so the keystroke has somewhere to go inside the widget.
     const expanded = await control.getAttribute("aria-expanded", { timeout: 500 }).catch(() => null);
     let open = expanded === "true";
     if (!open && menu) open = (await (await menu()).count().catch(() => 0)) > 0;
-    /**
-     * NOTHING PAGE-WIDE. This guard used to fall back to "is SOME menu open anywhere", with the
-     * reasoning that the keystroke would go to the listbox rather than the form. That reasoning is
-     * simply wrong: Enter goes to the FOCUSED element. On a Greenhouse page full of react-selects,
-     * one stale open menu from a previous field made the guard permit Enter on a different field,
-     * and it went straight into the form — four applications at HP IQ went out that way, hours
-     * after the guard was supposed to have closed this.
-     *
-     * Only THIS control's own state counts: it says its menu is open, or its own scoped options are
-     * on screen. A widget that reports neither cannot be given the keystroke, whatever else the page
-     * is doing.
-     */
+    if (!open) {
+      open =
+        (await root
+          .locator('[data-automation-id="activeListContainer"]')
+          .count()
+          .catch(() => 0)) > 0;
+    }
     if (!open) return false;
     await control.press("Enter").catch(() => undefined);
     return true;
@@ -1460,7 +1480,7 @@ export abstract class GenericDriver implements AtsDriver {
         // "Python" to "JavaScript" was matched against the same fourteen A-entries. Typing
         // "python" then Enter returns nineteen real rows: Python (Programming Language),
         // Python IDLE, Pandas Python Library, and so on.
-        await this.pressEnterIfMenuOpen(root, control, menu);
+        await this.pressEnterOnWorkdayPrompt(root, control, menu);
         await page.waitForTimeout(400);
         /**
          * TYPE-AND-ENTER IS A COMPLETE SELECTION on react-select — check before doing anything
@@ -1490,7 +1510,7 @@ export abstract class GenericDriver implements AtsDriver {
          * Workday's remote-search prompt is the only widget that needs it, and it can be asked
          * whether it is listening: if no menu is open, this keystroke would be a submit.
          */
-        await this.pressEnterIfMenuOpen(root, control, menu);
+        await this.pressEnterOnWorkdayPrompt(root, control, menu);
         await page.waitForTimeout(400);
       }
       // Async option lists (Greenhouse's school/discipline typeahead re-fetches per
@@ -1763,7 +1783,7 @@ export abstract class GenericDriver implements AtsDriver {
       // leave "0 items selected", while ArrowDown + Enter commits ("1 item selected").
       await control.press("ArrowDown").catch(() => undefined);
       await page.waitForTimeout(300);
-      await this.pressEnterIfMenuOpen(root, control, menu);
+      await this.pressEnterOnWorkdayPrompt(root, control, menu);
       await page.waitForTimeout(600);
       if (await this.committedIsWanted(root, keySelector, control, want, chosenRow)) return true;
       await page.keyboard.press("Escape").catch(() => undefined);

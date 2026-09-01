@@ -166,6 +166,28 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
 
 ## Key invariants — do not break these
 
+- **DRIVE FORMS BY CLICKING. The Enter key is banned except on a Workday prompt.** Enter goes to
+  whatever has focus, so on a single-page application form it is one missed condition away from
+  filing the application — which it did SEVEN times: three at The Nuclear Company (2026-08-29), two
+  at Chicago Trading, four at HP IQ (2026-09-01, hours after a guard was supposed to have closed
+  it). A click lands on one element and cannot submit a form by accident. Two attempts to make the
+  keystroke safe with a general guard both left a hole, and the second carried a confident comment
+  explaining why it could not — "an open menu anywhere is enough for safety: the keystroke goes to
+  the listbox rather than the form". It does not. `pressEnterOnWorkdayPrompt` now refuses unless the
+  control is inside a Workday `multiSelectContainer`/`formField` ancestor AND that widget's own list
+  is present; on Greenhouse, Ashby, Lever or Workable the answer is always no. The one real
+  exception is measured: Workday's taxonomy prompt runs its search on ENTER, not on keystrokes —
+  typing "python" alone leaves the unfiltered A-page. Everything else picks by clicking the option
+  row, and `npm run test:reactselect` passes without a single Enter. Cases: `npm run test:enter`,
+  whose fixture carries a second field with its menu deliberately left open.
+- **A fill run must ASK THE PAGE whether it just applied.** "No next control — stopping" and "Thank
+  you for applying" are indistinguishable from inside the turn loop: both mean `read()` found no
+  fields. `submissionConfirmed()` runs at the end of every run; a confirmation records `submitted`
+  in the ledger immediately (every dedupe guard reads it) and reports loudly. It is what turned the
+  HP IQ repeat from seventeen hours of silence into a log line at the moment it happened. Attribution
+  matters: a confirmation with NO fields read this run is `alreadyApplied` — the candidate applies by
+  hand too, and recording his own applications as ours would be a false statement in the store
+  everything reasons from.
 - **Never click submit.** `SUBMIT_TEXT_BLOCKLIST` in `config.ts` is the guard. Do not weaken it.
   (Exception: Option-B per-job submit only on the user's explicit typed "submit" confirmation in the terminal.)
 - **Keep automation stealthy.** Minimize the bot fingerprint to avoid ATS anti-bot blocks: launch with
