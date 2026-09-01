@@ -174,11 +174,28 @@ export async function getSiblingApplications(code: string): Promise<SiblingAppli
  */
 export async function findScreenshot(code: string): Promise<string | null> {
   const app = await getApplication(code);
-  const candidates: string[] = [];
-  if (app?.lastRunDir) candidates.push(app.lastRunDir);
-
   const logsDir = path.join(ROOT, "logs");
-  const runs = (await fs.readdir(logsDir).catch(() => [])).sort().reverse().slice(0, 40);
+  const candidates: string[] = [];
+
+  /**
+   * `lastRunDir` is stored as an ABSOLUTE HOST PATH — /Users/baibai/dev/git/x8skill-jobapp/logs/…
+   * — and the website runs in a container where that path does not exist; it sees /jobapp/logs/….
+   * So the best candidate always failed here, silently, and the fallback below was doing all the
+   * work. Take the run's NAME and rebuild the path from this process's own root.
+   */
+  if (app?.lastRunDir) candidates.push(path.join(logsDir, path.basename(app.lastRunDir)));
+
+  /**
+   * Then every run, newest first. It used to be the newest FORTY entries of a directory that now
+   * holds 789 — three of which are log files rather than runs — so any screenshot older than that
+   * window was unreachable. That is why "lots of pages have no screenshot": not a missing file, a
+   * search that stopped too early. A run directory is named for its timestamp; the existence check
+   * is cheap and stops at the first hit.
+   */
+  const runs = (await fs.readdir(logsDir).catch(() => []))
+    .filter((name) => /^\d{4}-\d{2}-\d{2}T/.test(name))
+    .sort()
+    .reverse();
   for (const r of runs) candidates.push(path.join(logsDir, r));
 
   for (const dir of candidates) {
