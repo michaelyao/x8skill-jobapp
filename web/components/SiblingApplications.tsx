@@ -1,4 +1,5 @@
 import type { SiblingApplication } from "@/lib/store";
+import { SkipRowButton } from "@/components/SkipRowButton";
 
 /**
  * Every application at this employer, so a decision about one is made knowing the others.
@@ -60,6 +61,7 @@ export function SiblingApplications({ rows }: { rows: SiblingApplication[] }) {
               <th>Recorded</th>
               <th>In the queue</th>
               <th className="right">Last touched</th>
+              <th />
             </tr>
           </thead>
           <tbody>
@@ -80,6 +82,16 @@ export function SiblingApplications({ rows }: { rows: SiblingApplication[] }) {
                 <td>{r.ledgerStatus ? (LEDGER_LABEL[r.ledgerStatus] ?? r.ledgerStatus) : "—"}</td>
                 <td>{r.queueStatus ? (QUEUE_LABEL[r.queueStatus] ?? r.queueStatus) : "—"}</td>
                 <td className="right muted nowrap">{(r.at ?? "").slice(0, 16).replace("T", " ")}</td>
+                <td className="right">
+                  {/*
+                    Only a row still waiting on a decision can be skipped, and never THIS one — the
+                    review panel below already has its own Skip, and two buttons for one action on
+                    one page is how the wrong row gets clicked.
+                  */}
+                  {!r.isThisOne && r.queueStatus === "awaiting_approval" ? (
+                    <SkipRowButton code={r.code} title={r.title} />
+                  ) : null}
+                </td>
               </tr>
             ))}
           </tbody>
