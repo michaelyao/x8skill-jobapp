@@ -1,4 +1,4 @@
-import { bandContains, bestBand, checkFacts, degreeLevel, parseGpaBand } from "../core/factChecks.js";
+import { bandContains, bestBand, checkFacts, contradictsResume, degreeLevel, parseGpaBand } from "../core/factChecks.js";
 
 /**
  * Cases for the fact checks.  npm run test:facts
@@ -125,6 +125,29 @@ check(`"3.4 out of 4.0" reads as a floor`, JSON.stringify(parseGpaBand("3.4 out 
 // The gap case this function was written for is unchanged.
 check(`a 3.53 against Verkada's bands still understates by one band`,
   bestBand(["3.6 - 4.0", "3.1 - 3.5", "3.0 or under"], 3.53) === "3.1 - 3.5");
+
+/**
+ * THE RESUME OVERRULES THE STORE — the guard that stops a stale stored answer reaching a form.
+ *
+ * "GPA: 3.53" outlived a resume corrected to 3.44 in all three files, and a learned answer claimed
+ * Nathan requires visa sponsorship. Both were handed out unchanged, because the store is rebuilt on
+ * every read and merged over, never checked against the resume.
+ */
+console.log("\na stored answer that contradicts the resume");
+const REAL = { degree: "Bachelor of Science", fieldOfStudy: "Information Systems", gpa: "3.44" };
+check(`a stale GPA is refused`, Boolean(contradictsResume("What is your GPA?", "3.53", REAL)), contradictsResume("What is your GPA?", "3.53", REAL));
+check(`the true GPA is not`, contradictsResume("What is your GPA?", "3.44", REAL) === undefined);
+// 3.44 IS inside "3.0 - 3.5", so that band is not a contradiction — my first attempt at this case
+// asserted otherwise and the code was right. A band that OVERSTATES is the real one to refuse.
+check(`a band that overstates is refused`, Boolean(contradictsResume("GPA range", "3.6 - 4.0", REAL)), contradictsResume("GPA range", "3.6 - 4.0", REAL));
+check(`a band that contains the real GPA is allowed`, contradictsResume("GPA range", "3.0 - 3.5", REAL) === undefined);
+check(`a band that does is allowed`, contradictsResume("GPA range", "3.4 out of 4.0", REAL) === undefined, contradictsResume("GPA range", "3.4 out of 4.0", REAL));
+check(`the wrong degree level is refused`, Boolean(contradictsResume("Degree", "Associate's Degree", REAL)));
+check(`the right one is allowed`, contradictsResume("Degree", "Bachelor's Degree", REAL) === undefined);
+// Everything the resume does NOT state must keep working — the store is the only source for these.
+check(`an address is not a resume fact`, contradictsResume("Home address", "318 Morse Ave, Sunnyvale, CA 94085", REAL) === undefined);
+check(`an EEO answer is not a resume fact`, contradictsResume("Veteran Status", "No", REAL) === undefined);
+check(`a sponsorship answer is not a resume fact`, contradictsResume("Will you require visa sponsorship?", "No", REAL) === undefined);
 
 console.log(`\n${fail ? "✗" : "✓"} ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

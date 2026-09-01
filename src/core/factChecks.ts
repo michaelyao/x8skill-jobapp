@@ -117,6 +117,31 @@ export function bandContains(band: GpaBand, gpa: number): boolean {
   return true;
 }
 
+/**
+ * Does a STORED answer contradict what the resume says?
+ *
+ * The resume is the latest and most accurate source of facts. The answer store is not: `Q&A.txt` is
+ * rebuilt on every read and a learned correction is merged on top of it, so a line written months
+ * ago is handed out unchanged no matter what the resume now says. That is not a theory — it is how
+ * "GPA: 3.53" survived a resume corrected to 3.44 in all three files, and how a learned answer came
+ * to claim Nathan requires visa sponsorship.
+ *
+ * So a stored answer that contradicts a resume fact is not used. Only facts the resume actually
+ * STATES are checked — GPA and degree level — because everything else in the store (address, EEO,
+ * preferences, motivations) is knowledge the resume does not contain and must keep working.
+ *
+ * Pure: npm run test:facts.
+ */
+export function contradictsResume(
+  label: string,
+  value: string,
+  facts: ResumeFacts,
+  options?: string[],
+): string | undefined {
+  const problems = checkFacts([{ label, value, options }], facts);
+  return problems[0]?.message;
+}
+
 export interface FactProblem {
   code: "degree-wrong" | "gpa-wrong" | "degree-not-a-degree";
   message: string;

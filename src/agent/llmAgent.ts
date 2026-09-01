@@ -1,6 +1,6 @@
 import { normalizeQuestion } from "../utils/normalize.js";
 import { parseResumeHistory } from "../knowledge/resumeHistory.js";
-import { bandContains, bestBand, degreeLevel, parseGpaBand } from "../core/factChecks.js";
+import { bandContains, bestBand, contradictsResume, degreeLevel, parseGpaBand } from "../core/factChecks.js";
 import type { Agent, AgentContext, FieldAnswer, FieldSpec, PageSnapshot } from "./types.js";
 
 // Legal / demographic / compensation fields we must never free-guess. The agent
@@ -123,6 +123,19 @@ function profileSummary(ctx: AgentContext): string {
 }
 
 /** Companies the candidate has worked for, from the resume's "### Company — ..." headings. */
+/**
+ * The facts the RESUME states, for checking a stored answer against.
+ *
+ * Derived from the resume text every time rather than cached: the resume is the authority, and a
+ * cached copy is one more place a corrected fact can fail to reach — which is the whole problem this
+ * guards against.
+ */
+function resumeFactsFor(ctx: AgentContext): { degree?: string; fieldOfStudy?: string; gpa?: string } {
+  const text = ctx.resumeText || "";
+  const edu = parseResumeHistory(text).education[0];
+  return { degree: edu?.degree, fieldOfStudy: edu?.fieldOfStudy, gpa: ctx.profile?.gpa ?? edu?.gpa };
+}
+
 export function extractEmployers(resumeText: string): string[] {
   const employers: string[] = [];
   for (const m of resumeText.matchAll(/^#{2,4}\s+(.+?)\s+[—–-]\s+/gm)) {
@@ -461,6 +474,22 @@ export class LlmAgent implements Agent {
         const lv = value.trim().toLowerCase();
         const lead = (o: string) => o.split(/[,(:—–-]/)[0].trim().toLowerCase();
         if (!field.options.some((o) => o.toLowerCase() === lv || lead(o) === lv)) continue;
+      }
+      /**
+       * THE RESUME OVERRULES THE STORE. The resume is the latest and most accurate source of facts;
+       * `Q&A.txt` and the learned corrections are not, and they are handed out unchanged however
+       * stale they are. "GPA: 3.53" outlived a resume corrected to 3.44 in all three files, and a
+       * learned answer claimed Nathan requires visa sponsorship — both reached real applications.
+       *
+       * So a stored answer that contradicts a fact the resume STATES is refused here, and the normal
+       * answering path — which derives from the resume — fills the field instead. Only facts the
+       * resume contains are checked; everything else in the store (the address, EEO answers,
+       * preferences, motivations) is knowledge the resume does not have and is untouched.
+       */
+      const conflict = contradictsResume(field.label, value, resumeFactsFor(ctx), field.options);
+      if (conflict) {
+        console.log(`  [agent] IGNORING your recorded answer for "${field.label.slice(0, 42)}" — ${conflict.slice(0, 92)}`);
+        continue;
       }
       console.log(`  [agent] using your recorded answer for "${field.label.slice(0, 52)}": ${JSON.stringify(value.slice(0, 60))}`);
       answer.value = value;
