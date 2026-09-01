@@ -33,6 +33,10 @@ const filled = await new GreenhouseDriver().fill(page as never, field, { key: fi
 const submitted = await page.evaluate("(() => window.__submitted)()");
 
 check("the value could not be set — the menu never opens", filled === false, filled);
+// The fixture has a SECOND field with its menu open. A guard that asks "is any menu open on the
+// page" is satisfied by that one and permits Enter on this one, which is how four applications went
+// out at HP IQ hours after the guard was supposed to have closed this.
+check("another field's open menu does not license Enter here", submitted === false, submitted);
 // THE POINT OF THIS FILE.
 check("and NOTHING was submitted", submitted === false, submitted);
 check("the form is still on screen", (await page.locator("#app").isHidden().catch(() => true)) === false);

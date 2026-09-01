@@ -22,6 +22,19 @@
   <label for="gender">Gender</label>
   <input id="gender" class="select__input" role="combobox" aria-expanded="false" autocomplete="off">
 
+  <!--
+    ANOTHER field, with its menu LEFT OPEN. This is what made the first guard useless: it asked "is
+    some menu open anywhere on the page" and this one satisfied it, so Enter was permitted on the
+    field above — whose menu is shut — and went into the form. Four applications at HP IQ went out
+    that way hours after the guard was supposed to have closed it.
+  -->
+  <label for="other">Discipline</label>
+  <input id="other" class="select__input" role="combobox" aria-expanded="true" aria-controls="other-menu" autocomplete="off">
+  <div id="other-menu" class="select__menu" role="listbox">
+    <div class="select__option" role="option">Computer Science</div>
+    <div class="select__option" role="option">Information Systems</div>
+  </div>
+
   <button type="submit">Submit Application</button>
 </form>
 

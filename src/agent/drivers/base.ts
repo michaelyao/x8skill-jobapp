@@ -928,9 +928,12 @@ export abstract class GenericDriver implements AtsDriver {
       await page.waitForTimeout(200);
       await control.fill("").catch(() => undefined);
       await control.pressSequentially(term, { delay: 15 }).catch(() => undefined);
-      // This prompt queries the server on ENTER, not on keystrokes — but only when its menu is
-      // open. With nothing open the same keystroke submits the form.
-      await this.pressEnterIfMenuOpen(root, control);
+      /**
+       * This prompt queries the server on ENTER, not on keystrokes — but only when its own menu is
+       * open. The scoped lookup is what makes that safe to ask: a page-wide check would say "yes"
+       * because of some other field's open list, and the keystroke would reach the form instead.
+       */
+      await this.pressEnterIfMenuOpen(root, control, () => this.scopedOptions(root, keySelector, control));
       for (let wait = 0; wait < 16; wait += 1) {
         await page.waitForTimeout(250);
         const now = await firstLabel();
@@ -1208,18 +1211,17 @@ export abstract class GenericDriver implements AtsDriver {
     let open = expanded === "true";
     if (!open && menu) open = (await (await menu()).count().catch(() => 0)) > 0;
     /**
-     * …or SOME menu is open on the page. Workday's taxonomy prompt is a bare input with no
-     * aria-expanded, and its list can be present but empty while the server search runs — the very
-     * moment Enter is needed. An open menu anywhere is enough for safety: the keystroke goes to the
-     * listbox rather than the form, which is the only thing this guard has to be sure of.
+     * NOTHING PAGE-WIDE. This guard used to fall back to "is SOME menu open anywhere", with the
+     * reasoning that the keystroke would go to the listbox rather than the form. That reasoning is
+     * simply wrong: Enter goes to the FOCUSED element. On a Greenhouse page full of react-selects,
+     * one stale open menu from a previous field made the guard permit Enter on a different field,
+     * and it went straight into the form — four applications at HP IQ went out that way, hours
+     * after the guard was supposed to have closed this.
+     *
+     * Only THIS control's own state counts: it says its menu is open, or its own scoped options are
+     * on screen. A widget that reports neither cannot be given the keystroke, whatever else the page
+     * is doing.
      */
-    if (!open) {
-      open =
-        (await root
-          .locator('[data-automation-id="activeListContainer"], [role="listbox"], [class*="select__menu"]')
-          .count()
-          .catch(() => 0)) > 0;
-    }
     if (!open) return false;
     await control.press("Enter").catch(() => undefined);
     return true;
