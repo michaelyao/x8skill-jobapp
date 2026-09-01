@@ -450,12 +450,13 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   they CONTRADICT the current sources on measurable things: the essays say the Alviso project
   "secured $30,000 from Silicon Valley Clean Energy" and "recruited 23 people and 5 mentors", while
   the answer store says "$2,000 in grants" and "200+ community members". Both cannot go on an
-  application. **THE LATER STORY WINS** — always, and for every source, not just this one. Recency
-  is the rule because it is the only one that keeps working: the current resume and `Q&A.txt` beat
-  these essays today, a document added next month would beat those, and nobody has to re-decide the
-  ranking each time. So this directory is for VOICE and MOTIVATION only, and nothing in it may be
-  copied into an answer as fact. Do not "correct" the resume from these essays; trust flows from
-  newest to oldest, never back.
+  application. **THE LATER STORY WINS, and the later story is the RESUME and `Q&A.txt`** — those two
+  are the current, curated sources of every number, date, title and claim; `college_app/` is the
+  older material. The grouping is by KIND, not by file date: a document dropped in tomorrow does
+  NOT outrank `Q&A.txt` just for being new, and being newer on disk is not what makes a source
+  authoritative. So this directory is for VOICE and MOTIVATION only, and nothing in it may be copied
+  into an answer as fact. Do not "correct" the resume from these essays — if the older figure is the
+  right one, the fix is to update `Q&A.txt`, which is what makes it the later story.
   What they are good for: what Nathan cares about and how he works — Sea Scouts guarding Alviso's
   pink lake, a mural design REJECTED by the county and redesigned four times over three months
   after interviewing environmentalists, historians and park rangers; founding Denali-Hacks for
