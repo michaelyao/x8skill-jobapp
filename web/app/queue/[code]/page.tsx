@@ -2,6 +2,7 @@ import { getApplication, getQueueEntry, getSiblingApplications } from "@/lib/sto
 import { ReviewPanel } from "@/components/ReviewPanel";
 import { FeedbackBox } from "@/components/FeedbackBox";
 import { SiblingApplications } from "@/components/SiblingApplications";
+import { RoleTermFlag } from "@/components/RoleTermFlag";
 import { currentUser } from "@/lib/session";
 import { fetchStoredJobDescription, loadX8NoteConfig } from "@core/knowledge/x8note.js";
 
@@ -36,6 +37,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ code: s
   return (
     <>
       <FeedbackBox code={code.toUpperCase()} company={entry.company} title={entry.title} />
+      <RoleTermFlag title={entry.title ?? ""} description={description} />
       <SiblingApplications rows={siblings} />
       <ReviewPanel
         entry={JSON.parse(JSON.stringify(entry))}

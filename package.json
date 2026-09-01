@@ -16,6 +16,7 @@
     "test:reactselect": "tsx src/debug/reactSelectCases.ts",
     "test:enter": "tsx src/debug/enterSubmitCases.ts",
     "test:ashby": "tsx src/debug/ashbyYesNoCases.ts",
+    "test:roleterm": "tsx src/debug/roleTermCases.ts",
     "test:upload": "tsx src/debug/uploadCases.ts",
     "test:sources": "node tools/build_internships.mjs --selftest",
     "test:ats": "tsx src/debug/atsDetectionCases.ts",

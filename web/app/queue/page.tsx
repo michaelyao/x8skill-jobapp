@@ -3,6 +3,7 @@ import { draftCount } from "@/lib/stats";
 import { WorkerBar } from "@/components/WorkerBar";
 import { splitQueue, type QueueSplit, type Readiness } from "@core/core/queueReadiness.js";
 import { readProfileSnapshot } from "@core/knowledge/profile.js";
+import { classifyRoleTerm } from "@core/core/roleTerm.js";
 
 export const dynamic = "force-dynamic";
 
@@ -162,6 +163,13 @@ export default async function QueuePage() {
                     <td>{e.company}</td>
                     <td>
                       <a href={`/queue/${e.code}`}>{e.title}</a>
+                      {/* Not the summer internship — a co-op or new-grad role is a different
+                          decision, and seeing it here saves opening the page to find out. */}
+                      {classifyRoleTerm(e.title ?? "").needsAThought ? (
+                        <span className="pill warn" style={{ marginLeft: 6, fontSize: 11 }}>
+                          {classifyRoleTerm(e.title ?? "").term.replace(/-/g, " ")}
+                        </span>
+                      ) : null}
                       {e.lastError ? (
                         <div className="muted" style={{ fontSize: 12 }}>
                           last attempt: {e.lastError.length > 90 ? `${e.lastError.slice(0, 89)}…` : e.lastError}
