@@ -52,3 +52,8 @@ data/learned-answers.json
 
 # Screenshots of live application forms — they show a real name, employer and education.
 screenshots/
+
+# Nathan's college application essays — personal writing, kept for background only. Never committed,
+# for the same reason the resume, Q&A.txt and the transcript are not: this is the candidate's data,
+# not the project's.
+college_app/

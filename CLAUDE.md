@@ -445,6 +445,22 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   for review in the website but never submits during the fill.
 - **Structured answers come from `TurnLoopResult.answers`** — that is what the website's review
   page, the replay and the queue all read. (It also fed the old HTML review email, which is gone.)
+- **`college_app/` is BACKGROUND, never a source of facts.** Five of Nathan's college-application
+  essays, added 2026-09-01, git-ignored like the resume and `Q&A.txt`. They are ~3 years old and
+  they CONTRADICT the current sources on measurable things: the essays say the Alviso project
+  "secured $30,000 from Silicon Valley Clean Energy" and "recruited 23 people and 5 mentors", while
+  the answer store says "$2,000 in grants" and "200+ community members". Both cannot go on an
+  application. Current resume and `Q&A.txt` win on every number, date, title and claim — this
+  directory is for VOICE and MOTIVATION only, and nothing in it may be copied into an answer as
+  fact. Do not "correct" the resume from these essays; the direction of trust runs the other way.
+  What they are good for: what Nathan cares about and how he works — Sea Scouts guarding Alviso's
+  pink lake, a mural design REJECTED by the county and redesigned four times over three months
+  after interviewing environmentalists, historians and park rangers; founding Denali-Hacks for
+  students with no programming experience and moving it to another school when his own shut down
+  mid-project; leading the Alviso environmental dashboard (Raspberry Pi + SparkFun SGP40, Azure,
+  Tableau) with a Santa Clara University professor as mentor. The through-line is technology in
+  service of a specific place, and organising through setbacks. Useful for a "tell us about a
+  project that failed" or "what motivates you" answer; useless and dangerous for a GPA.
 - **A FACT LIVES IN MORE THAN ONE PLACE. Changing it in the resume is not enough.** The GPA went
   from 3.53 to 3.44 and all three resume files were updated, but two other sources still held the
   old number and both outrank the resume for any question they match:
