@@ -1,0 +1,12 @@
+import { loadEnv } from "./src/utils/env.js";
+loadEnv();
+import { chromium } from "playwright";
+import { GreenhouseDriver } from "./src/agent/drivers/greenhouse.js";
+const b = await chromium.launch({ headless: true, ignoreDefaultArgs: ["--enable-automation"], args: ["--disable-blink-features=AutomationControlled"] });
+const p = await b.newPage();
+await p.goto("https://job-boards.greenhouse.io/verkada/jobs/5210813007", { waitUntil: "domcontentloaded", timeout: 60000 });
+await p.waitForTimeout(3500);
+const d = new GreenhouseDriver();
+await d.openApplication?.(p as never).catch(() => undefined);
+const root = (await d.resolveRoot?.(p as never)) ?? (p as never);
+console.log(JSON.stringify(await d.uploadDocuments(root as never, "2026 Nathan Yao's Resume - IS.pdf")));

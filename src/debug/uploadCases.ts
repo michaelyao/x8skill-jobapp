@@ -39,6 +39,11 @@ check(`no 30-second wait on the moved input (${seconds.toFixed(1)}s)`, seconds <
 // "Attach Attach". Skipping it left a REQUIRED transcript unattached with nothing in the log.
 check("an upload whose question is five levels up is still recognised",
   uploaded.some((u) => u.id === "transcript"), uploaded);
+// The fixture now asks for a GRADUATE transcript as well, as Verkada does.
+check("a graduate-transcript field gets NOTHING — there is no graduate record on file",
+  !uploaded.some((u) => u.id === "grad-transcript"), uploaded);
+check("and the undergraduate one still gets it", uploaded.some((u) => u.id === "transcript"), uploaded);
+check("the transcript is attached exactly once", uploaded.filter((u) => /transcript/.test(u.id)).length === 1, uploaded);
 check("the transcript input gets the transcript, not a second copy of the CV",
   uploaded.every((u) => (u.id === "resume") === u.name.toLowerCase().includes("resume")),
   uploaded);

@@ -1965,6 +1965,36 @@ export abstract class GenericDriver implements AtsDriver {
 
       const wantsTranscript = /transcript|academic record|grade report|marksheet|mark sheet/.test(spec.described);
       const wantsResume = /resume|cv\b|curriculum/.test(spec.described);
+      /**
+       * A GRADUATE transcript is not a transcript we have.
+       *
+       * Verkada asks twice — "any unofficial undergraduate transcripts (BS)" and "any graduate
+       * transcript (MS, PhD)" — and both match /transcript/, so the same undergraduate record went
+       * into both. Filing it under "graduate (MS, PhD)" is not a duplicate, it is a FALSE claim about
+       * a degree the candidate does not hold, and worse than leaving an optional field blank.
+       *
+       * There is exactly one transcript on file and it is the undergraduate record, so nothing can
+       * satisfy this field. Said out loud rather than skipped silently, in case a form ever makes it
+       * required — that would need a decision, not a guess.
+       */
+      const wantsGraduateOnly =
+        wantsTranscript &&
+        /\b(graduate|master'?s?|ms|m\.s|phd|ph\.d|doctoral)\b/i.test(spec.described) &&
+        !/\bundergraduate|\bbachelor|\bbs\b|\bb\.s/i.test(spec.described);
+      if (wantsGraduateOnly) {
+        const why = `${spec.question || "a graduate transcript"} — asks for a GRADUATE transcript; the only one on file is the undergraduate record`;
+        if (spec.required) out.missing.push(why);
+        console.log(`    – skipped: ${why.slice(0, 92)}`);
+        continue;
+      }
+      /**
+       * And one transcript per application. The duplicate guard below covers an UNLABELLED input;
+       * two inputs that both name a transcript walked straight past it.
+       */
+      if (wantsTranscript && out.attached.includes("transcript")) {
+        console.log(`    – skipped: a transcript is already attached (${spec.question.slice(0, 60)})`);
+        continue;
+      }
       const target = wantsTranscript ? TRANSCRIPT_PATH : resumePath;
       const kind = wantsTranscript ? "transcript" : "resume";
 
