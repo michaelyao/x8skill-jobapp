@@ -38,7 +38,7 @@ export default async function QueuePage() {
    */
   const profileSnapshot = await readProfileSnapshot();
   const split = profileSnapshot
-    ? splitQueue(queue.filter((e) => e.status === "awaiting_approval"), profileSnapshot)
+    ? splitQueue(queue.filter((e) => e.status === "awaiting_approval"), profileSnapshot, queue)
     : ({
         ready: queue
           .filter((e) => e.status === "awaiting_approval")

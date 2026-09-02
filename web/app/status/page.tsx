@@ -27,7 +27,7 @@ export default async function StatusPage() {
 
   const profile = await readProfileSnapshot();
   const awaiting = queue.filter((e) => e.status === "awaiting_approval");
-  const split = profile ? splitQueue(awaiting, profile) : { ready: [], needsWork: [] };
+  const split = profile ? splitQueue(awaiting, profile, queue) : { ready: [], needsWork: [] };
 
   const beingRefilled = awaiting.filter((e) => busy(e.code ?? e.key));
   const notReady = split.needsWork.filter((r) => !busy(r.entry.code ?? r.entry.key));

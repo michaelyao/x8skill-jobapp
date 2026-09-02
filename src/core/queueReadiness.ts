@@ -3,7 +3,8 @@ import path from "node:path";
 import { DATA_DIR } from "../config.js";
 import { reviewApplication } from "./applicationSanity.js";
 import { parseResumeHistory } from "../knowledge/resumeHistory.js";
-import type { PendingEntry } from "../knowledge/approvalQueue.js";
+import { isSubmittedStatus, type PendingEntry } from "../knowledge/approvalQueue.js";
+import { normalizeUrl } from "../utils/normalize.js";
 import type { FieldSpec, FilledAnswer } from "../agent/types.js";
 import type { ProfileData } from "../types.js";
 
@@ -152,12 +153,37 @@ export interface QueueSplit {
 export function splitQueue(
   entries: PendingEntry[],
   profile: ProfileData,
+  /**
+   * Every entry in the queue, not just the ones being split. A duplicate is only visible by
+   * comparing against entries that have ALREADY been decided, and those are not in this list.
+   */
+  all: PendingEntry[] = entries,
 ): QueueSplit {
   const facts = resumeFactsFrom(profile);
+  /**
+   * THE SAME POSTING UNDER TWO CODES.
+   *
+   * MERPVQ and NNSRWS are both verkada/jobs/5210813007. NNSRWS was submitted; MERPVQ sat in the
+   * queue as an ordinary item, so the page offered a decision on an application that had already
+   * been filed — and approving it would have sent a second one to the same posting. The candidate
+   * spotted it; nothing here did.
+   *
+   * Matched on the normalized apply URL, which is one of the four routes `sameJob()` already uses.
+   */
+  const submittedUrls = new Set(
+    all
+      .filter((e) => e.applyUrl && isSubmittedStatus(e.status))
+      .map((e) => normalizeUrl(e.applyUrl!)),
+  );
   const ready: Readiness[] = [];
   const needsWork: Readiness[] = [];
   for (const entry of entries) {
     const judged = judgeEntry(entry, facts);
+    if (entry.applyUrl && submittedUrls.has(normalizeUrl(entry.applyUrl))) {
+      judged.problems.unshift(
+        "this is the SAME POSTING as an application already submitted — approving it would send a second one",
+      );
+    }
     (judged.problems.length ? needsWork : ready).push(judged);
   }
   return { ready, needsWork };

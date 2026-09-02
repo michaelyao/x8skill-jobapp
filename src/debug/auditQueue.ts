@@ -24,8 +24,11 @@ import { splitQueue } from "../core/queueReadiness.js";
 async function main(): Promise<void> {
   const asJson = process.argv.includes("--json");
   const profile = await loadProfile();
-  const entries = (await loadPendingQueue()).filter((e) => e.status === "awaiting_approval");
-  const { ready, needsWork } = splitQueue(entries, profile);
+  // The WHOLE queue, because a duplicate of an already-submitted posting is only visible by
+  // comparing against entries that have already been decided.
+  const allEntries = await loadPendingQueue();
+  const entries = allEntries.filter((e) => e.status === "awaiting_approval");
+  const { ready, needsWork } = splitQueue(entries, profile, allEntries);
 
   if (asJson) {
     console.log(

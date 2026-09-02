@@ -28,6 +28,23 @@ function isLikelySoftwareEngineeringTitle(title: string): boolean {
     /\bdata\b(?!.*engineer)/,
     /\bmultiple teams\b/,
     /\bintelligence\b(?!.*engineer)/,
+    /**
+     * HARDWARE-ADJACENT ROLES. The candidate wants software and AI/ML; a title built around the
+     * hardware is not suitable however much software it involves — "Embedded Software Engineering
+     * Intern" reads as software and is a hardware role. Firmware was recorded as unsuitable weeks
+     * ago and never encoded here, so it kept being applied for: a preference that lives only in a
+     * note is a preference nothing honours.
+     */
+    /\bfirmware\b/,
+    /\bembedded\b/,
+    /\bhardware\b/,
+    /\bfpga\b/,
+    /\brtl\b/,
+    /\bvlsi\b/,
+    /\bsilicon\b/,
+    /\bpcb\b/,
+    /\bmechanical\b/,
+    /\belectrical\b/,
   ];
 
   return positivePatterns.some((pattern) => pattern.test(text)) && !negativePatterns.some((pattern) => pattern.test(text));
