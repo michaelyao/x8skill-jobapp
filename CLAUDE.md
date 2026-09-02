@@ -519,6 +519,21 @@ change here; do not duplicate its narrative back into this file. The rules that 
   employers print them only in the body. Every caller must work when it is `undefined`.
 - **`findCrossAtsDuplicate` hard-blocks** a different listing, already submitted, sharing the
   employer's requisition id.
+- **CHECK WHETHER THE POSTING RULES HIM OUT.** Every other guard asks whether the FORM was filled
+  correctly; none asked whether he is eligible at all. So a complete, correct, visually-verified
+  application sat in the queue for a Pony.ai role whose own text reads *"Currently pursuing a Masters
+  or PhD program in Computer Science, Machine Learning, Robotics, or similar field"* — and the
+  candidate found it by reading the description himself. `checkEligibility` reports it, quoting the
+  posting rather than paraphrasing, because employers do sometimes consider a strong undergraduate
+  and that is not a call this code should make silently.
+  **The whole difficulty is NOT flagging the inclusive phrasings, which are the majority.** A finding
+  needs a requirement phrase AND a graduate degree AND no undergraduate route in the same line — and
+  two of the first four findings on the real queue were still wrong: a posting that says "Open to
+  current undergraduate students, graduate students, and recent graduates" further up is inclusive
+  whatever one later line says, and "If you're enrolled or plan on enrolling in a Master's program,
+  use that program's expected graduation month/year" is FORM INSTRUCTIONS. Both are suppressed;
+  "Master: $7000/month" is a pay band, not a requirement. Result on 30 queued applications: 2 real,
+  0 false. Cases: `npm run test:eligibility`.
 - **Never hard-block on company + title.** RTX posts two distinct "Software Engineer Intern"
   requisitions. `classifyJobMatch` returns confidence + `needsHumanConfirmation`, and the review
   page in the website asks the user.

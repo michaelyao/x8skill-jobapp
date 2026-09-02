@@ -3,6 +3,9 @@ import { ReviewPanel } from "@/components/ReviewPanel";
 import { FeedbackBox } from "@/components/FeedbackBox";
 import { SiblingApplications } from "@/components/SiblingApplications";
 import { RoleTermFlag } from "@/components/RoleTermFlag";
+import { EligibilityFlag } from "@/components/EligibilityFlag";
+import { resumeFactsFrom } from "@core/core/queueReadiness.js";
+import { readProfileSnapshot } from "@core/knowledge/profile.js";
 import { currentUser } from "@/lib/session";
 import { fetchStoredJobDescription, loadX8NoteConfig } from "@core/knowledge/x8note.js";
 
@@ -28,6 +31,9 @@ export default async function ReviewPage({ params }: { params: Promise<{ code: s
 
   // The description lives in x8note (one store, see DESIGN.md §12); the queue copy is a
   // fallback for entries written before that move.
+  const profileSnapshot = await readProfileSnapshot();
+  const degree = profileSnapshot ? resumeFactsFrom(profileSnapshot).degree : undefined;
+
   let description = entry.jobDescription ?? "";
   if (!description && entry.code) {
     const cfg = await loadX8NoteConfig();
@@ -37,6 +43,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ code: s
   return (
     <>
       <FeedbackBox code={code.toUpperCase()} company={entry.company} title={entry.title} />
+      <EligibilityFlag description={description || entry.jobDescription} degree={degree} />
       <RoleTermFlag title={entry.title ?? ""} description={description} />
       <SiblingApplications rows={siblings} />
       <ReviewPanel

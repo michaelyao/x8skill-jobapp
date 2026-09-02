@@ -112,6 +112,9 @@ export function judgeEntry(entry: PendingEntry, facts: ReturnType<typeof resumeF
      * inventing a fault for them would bury the real ones. Anything filled from now on can be.
      */
     documents: entry.documents,
+    // The posting's own text, for the eligibility check — the only check here that is about the JOB
+    // rather than about how well the form was filled.
+    jobDescription: entry.jobDescription,
     resumeAttached: entry.documents ? entry.documents.attached.includes("resume") : true,
     facts,
   }).map((p) => p.message);

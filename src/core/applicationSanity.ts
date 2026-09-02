@@ -1,5 +1,6 @@
 import type { DocumentUploads, FieldSpec, FilledAnswer, HistoryOutcome } from "../agent/types.js";
 import { checkFacts, type FactProblem, type ResumeFacts } from "./factChecks.js";
+import { checkEligibility } from "./eligibility.js";
 
 /**
  * Is this application, AS A WHOLE, worth putting in front of a human — and worth submitting?
@@ -37,6 +38,8 @@ export interface SanityInput {
   history?: HistoryOutcome;
   /** Which documents went in, and which the form asked for and did not get. */
   documents?: DocumentUploads;
+  /** The posting's own text, for the eligibility check. */
+  jobDescription?: string;
   /** Facts from the resume, so stated answers can be checked against them. */
   facts?: ResumeFacts;
 }
@@ -51,6 +54,7 @@ export interface SanityProblem {
     | "education-incomplete"
     | "experience-incomplete"
     | "document-missing"
+    | "not-eligible"
     | "not-on-screen"
     | "required-unanswered"
     | FactProblem["code"];
@@ -115,7 +119,7 @@ function answersFor(answers: FilledAnswer[], fields: FieldSpec[]): FilledAnswer[
 
 export function reviewApplication(input: SanityInput): SanityProblem[] {
   const problems: SanityProblem[] = [];
-  const { answers, observedFields, resumeAttached, history, documents, facts } = input;
+  const { answers, observedFields, resumeAttached, history, documents, facts, jobDescription } = input;
 
   /**
    * Are the values TRUE? Every other rule here asks whether fields are filled. A wrong answer is
@@ -145,6 +149,16 @@ export function reviewApplication(input: SanityInput): SanityProblem[] {
    * invisible to every field-level check — a required transcript was simply never uploaded, and
    * nothing anywhere complained.
    */
+  /**
+   * DOES THE POSTING RULE HIM OUT? Nothing else here asks. Every other check is about whether the
+   * FORM was filled correctly, so a complete, correct, verified application was queued for a Pony.ai
+   * role whose own text says "Currently pursuing a Masters or PhD program" — and the candidate found
+   * it by reading the description himself.
+   */
+  for (const problem of checkEligibility(jobDescription ?? "", facts ?? {})) {
+    problems.push({ code: "not-eligible", message: problem.message });
+  }
+
   for (const m of documents?.missing ?? []) {
     problems.push({ code: "document-missing", message: `the form asks for a document it did not get: ${m}` });
   }
