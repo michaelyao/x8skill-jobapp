@@ -1,15 +1,10 @@
 import { getOverview } from "@/lib/store";
+import { ledgerStage } from "@core/core/statusVocabulary.js";
 
 export const dynamic = "force-dynamic";
 
-const TONE: Record<string, string> = {
-  submitted: "good",
-  manual_submitted: "good",
-  already_applied_on_site: "good",
-  prefilled_pending_submit: "accent",
-  expired: "",
-  error: "bad",
-};
+// Words and tone come from the shared vocabulary — see src/core/statusVocabulary.ts. Three
+// hand-written maps in this app is how "applied" ended up in one table and nowhere else.
 
 export default async function ApplicationsPage({ searchParams }: { searchParams: Promise<{ status?: string; ats?: string }> }) {
   const { status, ats } = await searchParams;
@@ -54,7 +49,7 @@ export default async function ApplicationsPage({ searchParams }: { searchParams:
                     ↗
                   </a>
                 </td>
-                <td><span className={`pill ${TONE[a.status] ?? ""}`}>{a.status}</span></td>
+                <td><span className={`pill ${(ledgerStage(a.status)?.tone ?? "") ?? ""}`}>{ledgerStage(a.status)?.label ?? a.status}</span></td>
                 <td className="code muted">{a.companyReqId ?? "—"}</td>
                 <td className="right muted nowrap">{(a.updatedAt ?? "").slice(0, 16).replace("T", " ")}</td>
               </tr>

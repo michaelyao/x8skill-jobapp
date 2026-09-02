@@ -278,6 +278,19 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
      (react-select clears the input) and may be SHORTER than the row chosen — "United States +1"
      commits as "+1" — so the check compares against the row that was clicked as well as the value
      that was wanted.
+- **THE STAGE WORDS LIVE IN ONE PLACE: `src/core/statusVocabulary.ts`.** Two stores each have their
+  own enum — the LEDGER (`ApplicationRecord.status`, one per job, permanent) and the QUEUE
+  (`PendingStatus`, one per decision in flight, dropped once decided) — and they overlap without
+  agreeing: `skipped` against `skipped_existing`, `error` meaning "the run failed" in one and
+  "approved but the submit failed three times" in the other. The website had THREE hand-written
+  label maps on top, which is how the word "applied" appeared in one table and nowhere else, reading
+  like a confirmed fact when all it meant was that a submit had been clicked. Labels, one-line
+  meanings and tone now come from that module; do not write a fourth map.
+  **`submitted` means WE CLICKED and the run reported success — not that the employer confirmed
+  anything.** The only status resting on the employer's word is `already_applied_on_site`.
+  `confirmed` is deliberately absent: nothing yet reads the acknowledgement email, and adding the
+  word before the mechanism repeats the "applied" mistake. When it exists it is its own stage, never
+  folded into `submitted`.
 - **`/queue` is for decisions; `/status` is for progress.** The split is by "is a human the next
   step", not by status. An application being re-filled, one mid-submit, and one that reached Review
   with something missing are all things the system moves on its own — they used to sit on the
