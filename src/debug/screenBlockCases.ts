@@ -379,6 +379,66 @@ check(`the mangled tail of our own essay is a match`,
   verifyFields(CLIPPED_ESSAY, [{ label: "What's something you worked on that you were proud of?", value: ESSAY }])[0]?.status === "match",
   verifyFields(CLIPPED_ESSAY, [{ label: "What's something you worked on that you were proud of?", value: ESSAY }])[0]);
 
+console.log("\na checkbox group is read from its GLYPHS, never the `checked` flag");
+/**
+ * Every string here is verbatim from the captures, re-OCR'd from the saved review screenshots.
+ * The engine's own capability note says it has no notion of checkbox state, and `checked` is true
+ * whenever ANYTHING in a merged region is ticked — which is how one Sierra application produced
+ * three findings claiming boxes were ticked that the capture plainly shows empty.
+ */
+const SIERRA_VISA: ScreenBlock[] = [
+  { label: "checkbox", text: "Will you now or in the future require visa sponsorship to work in the United States?*\n☐ Yes\n☑ No", box: [533, 2291, 1208, 2384], order: 11, checked: true },
+];
+check(`the tick is on "No" and we recorded No — a match, though the flag says checked`,
+  verifyFields(SIERRA_VISA, [{ label: "Will you now or in the future require visa sponsorship to work in the United States?", value: "No" }])[0]?.status === "match",
+  verifyFields(SIERRA_VISA, [{ label: "Will you now or in the future require visa sponsorship to work in the United States?", value: "No" }])[0]);
+
+const SIERRA_ORIENTATION: ScreenBlock[] = [
+  { label: "checkbox", text: "How do you identify your sexual orientation? Please select all that apply\n☐ Bisexual\n☐ Lesbian\n☐ Gay\n☐ Queer", box: [533, 5447, 1110, 5716], order: 26, checked: true },
+];
+check(`"☐ Bisexual" against a recorded No is a match, not a false claim`,
+  verifyFields(SIERRA_ORIENTATION, [{ label: "How do you identify your sexual orientation? Please select all that apply. — Bisexual", value: "No" }])[0]?.status === "match",
+  verifyFields(SIERRA_ORIENTATION, [{ label: "How do you identify your sexual orientation? Please select all that apply. — Bisexual", value: "No" }])[0]);
+
+// The capture's region [27] is a CONTINUATION with no question in it, so a recorded label can
+// never match it and it is never reported — correct, and not a finding. The ticked path is worth
+// testing on the shape that DOES carry its question, as regions [26] and [28] do.
+const SIERRA_RACE: ScreenBlock[] = [
+  { label: "checkbox", text: "What is your race or ethnicity? Please select all that apply.\n✓ Asian or Asian American\n☐ Black or African American\n☐ Hispanic or Latine", box: [533, 5758, 890, 6018], order: 27, checked: true },
+];
+check(`a row that IS ticked and was recorded Yes is a match`,
+  verifyFields(SIERRA_RACE, [{ label: "What is your race or ethnicity? Please select all that apply. — Asian or Asian American", value: "Yes" }])[0]?.status === "match",
+  verifyFields(SIERRA_RACE, [{ label: "What is your race or ethnicity? Please select all that apply. — Asian or Asian American", value: "Yes" }])[0]);
+check(`the same ticked row recorded as No IS a difference`,
+  verifyFields(SIERRA_RACE, [{ label: "What is your race or ethnicity? Please select all that apply. — Asian or Asian American", value: "No" }])[0]?.status === "different",
+  verifyFields(SIERRA_RACE, [{ label: "What is your race or ethnicity? Please select all that apply. — Asian or Asian American", value: "No" }])[0]);
+
+// N1: the Yes box is EMPTY and Yes is what we recorded. This one is real and must survive.
+const N1_RELOCATE: ScreenBlock[] = [
+  { label: "checkbox", text: "Are you willing to relocate to NYC (if not in NYC already)?*\n☐ Yes", box: [532, 4000, 1200, 4090], order: 30, checked: false },
+];
+check(`"☐ Yes" against a recorded Yes is a REAL difference`,
+  verifyFields(N1_RELOCATE, [{ label: "Are you willing to relocate to NYC (if not in NYC already)?", value: "Yes" }])[0]?.status === "different",
+  verifyFields(N1_RELOCATE, [{ label: "Are you willing to relocate to NYC (if not in NYC already)?", value: "Yes" }])[0]);
+check(`and it IS reported`,
+  gaps(N1_RELOCATE, [{ label: "Are you willing to relocate to NYC (if not in NYC already)?", value: "Yes" }]).length === 1);
+
+// Zip: a bare box with no option text beside it cannot say which option it is.
+const ZIP_AUTH: ScreenBlock[] = [
+  { label: "checkbox", text: "Are you currently authorized to work in the United States?*\n☐", box: [532, 3000, 1200, 3080], order: 24, checked: false },
+];
+check(`a bare "☐" with no option text is unreadable, not a fault`,
+  verifyFields(ZIP_AUTH, [{ label: "Are you currently authorized to work in the United States?", value: "Yes" }])[0]?.status === "value-not-located",
+  verifyFields(ZIP_AUTH, [{ label: "Are you currently authorized to work in the United States?", value: "Yes" }])[0]);
+
+// DV Trading: a graduation date paired with a checkbox region is a bad pairing, not a bad form.
+const DV_GRAD: ScreenBlock[] = [
+  { label: "checkbox", text: "Please re-confirm your expected graduation date*\n☐ I confirm", box: [532, 900, 1200, 980], order: 5, checked: true },
+];
+check(`a date recorded against a checkbox region is unreadable`,
+  verifyFields(DV_GRAD, [{ label: "Please re-confirm your expected graduation date", value: "January 2028 - July 2028" }])[0]?.status === "value-not-located",
+  verifyFields(DV_GRAD, [{ label: "Please re-confirm your expected graduation date", value: "January 2028 - July 2028" }])[0]);
+
 console.log("\nthe fixes must not silence a real gap");
 // The new rules must not swallow the cases they resemble.
 const OTHER_ESSAY: ScreenBlock[] = [

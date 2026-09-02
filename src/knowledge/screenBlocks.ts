@@ -323,6 +323,88 @@ export function verifyFields(
   return out;
 }
 
+/**
+ * A CHECKBOX GROUP's state, read from the GLYPHS IN ITS TEXT.
+ *
+ * x8ocr's own capability notes say it has "no notion of placeholder vs value, CHECKBOX STATE, or
+ * z-order", and the block-level `checked` flag bears that out: it goes true when ANYTHING in a
+ * merged region is ticked. Trusting it produced three findings on one Sierra application that said
+ * boxes were ticked claiming Nathan is bisexual and has a disability, when the capture reads
+ * "☐ Bisexual" and "☐ Person with disability" — the ticked box was elsewhere in the same region.
+ * Answers we never gave, reported as if we had given them, is the worst output this check has.
+ *
+ * The text does carry the truth, literally: "☐ Yes\n☑ No". So the rows are parsed out of it and the
+ * flag is not consulted at all.
+ */
+const TICKED = /[☑☒✓✔🗹]/u;
+const EMPTY_BOX = /[☐□○◯▢⃝]/u;
+
+export interface TickRow {
+  /** The option's text, with its glyph removed. */
+  row: string;
+  ticked: boolean;
+}
+
+export function tickRows(regionText: string): TickRow[] {
+  const out: TickRow[] = [];
+  for (const line of String(regionText ?? "").split(/[\n\r]+/)) {
+    const t = line.trim();
+    if (!t) continue;
+    const ticked = TICKED.test(t);
+    if (!ticked && !EMPTY_BOX.test(t)) continue; // not an option row
+    const row = t.replace(TICKED, " ").replace(EMPTY_BOX, " ").trim();
+    out.push({ row, ticked });
+  }
+  return out;
+}
+
+/**
+ * Which row a recorded answer is ABOUT, and whether that row is ticked.
+ *
+ * Two shapes reach this. A yes/no question records "Yes" and its rows ARE "Yes" and "No", so the
+ * row is found by the value. A "select all that apply" group records "No" against a label that
+ * names the option — "How do you identify your sexual orientation? … — Bisexual" — so the row is
+ * found by the LABEL'S TAIL and the value says whether it should be ticked.
+ *
+ * Anything else is unreadable rather than wrong: a bare "☐" with no option text next to it (seen on
+ * a required work-authorisation question) does not say which option it belongs to, and a recorded
+ * graduation date paired with a checkbox region is a bad pairing, not a bad form.
+ */
+export function tickVerdictFor(
+  regionText: string,
+  label: string,
+  recorded: string,
+): "match" | "different" | "unreadable" {
+  const rows = tickRows(regionText).filter((r) => r.row);
+  if (!rows.length) return "unreadable";
+  const same = (a: string, b: string) => {
+    const x = labelKey(a);
+    const y = labelKey(b);
+    return Boolean(x && y && (x === y || x.startsWith(y) || y.startsWith(x)));
+  };
+  const wantsTicked = /^(yes|true|checked|i agree|agree|on|selected)$/i.test(recorded.trim());
+  const isYesNo = /^(yes|no|true|false)$/i.test(recorded.trim());
+
+  /**
+   * The row this answer is about may be named by the label's TAIL ("… — Bisexual", one option of a
+   * group) or by the WHOLE label ("I currently work here", a checkbox standing on its own). Tail
+   * first: on a group the whole label also matches the region, and the tail is the specific option.
+   */
+  const tail = label.split(/\s+[—–-]\s+/).pop() ?? "";
+  for (const named of [tail, label]) {
+    if (!named) continue;
+    const byOption = rows.find((r) => same(r.row, named));
+    if (byOption) return byOption.ticked === wantsTicked ? "match" : "different";
+  }
+  if (isYesNo) {
+    const byValue = rows.find((r) => same(r.row, recorded));
+    if (byValue) return byValue.ticked ? "match" : "different";
+  }
+  const byValue = rows.find((r) => same(r.row, recorded));
+  if (byValue) return byValue.ticked ? "match" : "different";
+  return "unreadable";
+}
+
 function judgeOne(
   blocks: ScreenBlock[],
   place: ScreenBlock,
@@ -334,14 +416,17 @@ function judgeOne(
   const found = locateFrom(blocks, place, label, allLabels);
 
   if (found.label.label === "checkbox") {
-    const wantChecked = /^(yes|true|checked|i agree|agree|on)$/i.test(recorded);
-    const isChecked = found.label.checked === true;
-    return {
-      label,
-      recorded,
-      onScreen: isChecked ? "checked" : "unchecked",
-      status: wantChecked === isChecked ? "match" : "different",
-    };
+    /**
+     * Read the GLYPHS, never the `checked` flag — the engine says it has no notion of checkbox
+     * state, and the flag is true whenever anything in a merged region is ticked.
+     */
+    const verdict = tickVerdictFor(found.label.text ?? "", label, recorded);
+    const rows = tickRows(found.label.text ?? "").filter((r) => r.row);
+    const shown = rows.length
+      ? rows.map((r) => `${r.ticked ? "☑" : "☐"} ${r.row}`).join("  ")
+      : (found.label.text ?? "").trim();
+    if (verdict === "unreadable") return { label, recorded, onScreen: shown, status: "value-not-located" };
+    return { label, recorded, onScreen: shown, status: verdict };
   }
 
   const a = fold(recorded);
