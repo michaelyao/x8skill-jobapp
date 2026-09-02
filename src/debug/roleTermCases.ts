@@ -1,4 +1,5 @@
 import { classifyRoleTerm } from "../core/roleTerm.js";
+import { skipAsOptionalProse } from "../agent/llmAgent.js";
 
 /**
  * Which postings are not the summer internship.  npm run test:roleterm
@@ -41,6 +42,27 @@ console.log("\nwhat the DESCRIPTION must not decide");
 // An employer's boilerplate lists every programme it runs; the title is what this posting IS.
 check(`a summer internship whose body mentions co-ops is still a summer internship`,
   term("Software Engineer Intern, Summer 2027", "We hire interns and co-ops across all our teams.") === "summer-internship");
+
+/**
+ * OPTIONAL prose is left blank, on instruction: no cover letter and no summary unless the form
+ * requires one. A REQUIRED one is still answered, because the gate will not pass without it.
+ */
+console.log("\noptional cover letters and summaries");
+for (const [label, required, expected] of [
+  ["Cover letter (optional)", false, true],
+  ["Summary", false, true],
+  ["Personal statement", false, true],
+  ["Additional information", false, true],
+  ["Cover letter *", true, false],
+  ["Cover Letter", true, false],
+  // Not prose fields — these must keep being answered.
+  ["Why do you want to work here?", false, false],
+  ["What is something hard you built recently?", false, false],
+  ["LinkedIn Profile", false, false],
+] as Array<[string, boolean, boolean]>) {
+  check(`${required ? "required" : "optional"} "${label}" ${expected ? "left blank" : "answered"}`,
+    skipAsOptionalProse(label, required) === expected, skipAsOptionalProse(label, required));
+}
 
 console.log(`\n${fail ? "✗" : "✓"} ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

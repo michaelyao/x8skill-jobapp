@@ -282,7 +282,37 @@ export class WorkableDriver extends GenericDriver {
      * history, no fact check could see it, and compareToApproved had nothing to verify at submit.
      * A section nobody records is a section nobody can check.
      */
+    /**
+     * WHAT IS ALREADY THERE, read AFTER the resume upload.
+     *
+     * Uploading the resume makes Workable parse it and commit its own experience entries — the same
+     * behaviour that populates Skills from its own reading of the PDF. Nothing here looked, so ours
+     * went in on top of theirs and the form showed Bay Area Rapid Transit TWICE, in no sensible
+     * order. Caught by the candidate reading the review screenshot.
+     *
+     * A committed entry leaves the DOM as inputs and remains as TEXT, so the section's own text is
+     * the record of what the employer already has. An employer named there does not need adding
+     * again — and adding it anyway is worse than omitting it, because a duplicate on a work history
+     * reads as carelessness about one's own record.
+     */
+    const committedText = ((await page
+      .locator('[aria-label*="xperience" i], section, form')
+      .first()
+      .innerText({ timeout: 3_000 })
+      .catch(() => "")) || "").toLowerCase();
+    const alreadyListed = (company: string): boolean => {
+      const name = company.toLowerCase().replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, " ").trim();
+      if (name.length < 4) return false;
+      // The distinctive opening is enough: "Bay Area Rapid Transit (BART)" against a form showing
+      // "Bay Area Rapid Transit" is the same employer.
+      return committedText.includes(name) || committedText.includes(name.slice(0, 18));
+    };
+
     for (const [index, job] of [...history.experience].reverse().entries()) {
+      if (alreadyListed(job.company)) {
+        console.log(`    [workable] "${job.company.slice(0, 40)}" is already on the form — not adding it again.`);
+        continue;
+      }
       // expandSections already left the FIRST panel open, so "+ Add" is legitimately disabled at
       // that point — asking for a new entry there reported a failure that was not one. Only reach
       // for "+ Add" when no panel is open.

@@ -136,6 +136,23 @@ function resumeFactsFor(ctx: AgentContext): { degree?: string; fieldOfStudy?: st
   return { degree: edu?.degree, fieldOfStudy: edu?.fieldOfStudy, gpa: ctx.profile?.gpa ?? edu?.gpa };
 }
 
+/**
+ * An OPTIONAL cover letter or summary is left blank, deliberately.
+ *
+ * The candidate's instruction: no cover letter and no summary unless the form requires one. A
+ * drafted essay nobody asked for is not a neutral addition — it is several paragraphs of
+ * LLM-written prose going to an employer under his name, reviewed less carefully than the fields
+ * that matter, and it is where the stale "GPA 3.53" survived longest.
+ *
+ * REQUIRED ones are still answered: the required-field gate will not pass without them, and an
+ * application blocked on a mandatory essay is worse than one that contains it.
+ */
+const OPTIONAL_PROSE = /\b(cover letter|summary|personal statement|additional information|anything else)\b/i;
+
+export function skipAsOptionalProse(label: string, required: boolean): boolean {
+  return !required && OPTIONAL_PROSE.test(label ?? "");
+}
+
 export function extractEmployers(resumeText: string): string[] {
   const employers: string[] = [];
   for (const m of resumeText.matchAll(/^#{2,4}\s+(.+?)\s+[—–-]\s+/gm)) {
@@ -428,6 +445,17 @@ export class LlmAgent implements Agent {
         } else {
           value = match;
         }
+      }
+      /**
+       * An OPTIONAL cover letter or summary is left BLANK, on instruction. Several paragraphs of
+       * LLM prose going to an employer under the candidate's name, for a field nobody required, is
+       * not a neutral addition — and it is where the stale "GPA 3.53" survived longest. A REQUIRED
+       * one is still answered; the gate will not pass without it.
+       */
+      if (skipAsOptionalProse(field.label ?? "", Boolean(field.required))) {
+        console.log(`  [agent] leaving optional "${(field.label ?? "").slice(0, 44)}" blank — not required`);
+        answers.push({ key: field.key, value: "", confidence: 1, needsHuman: false, draft: false, blank: true, source: "curated" });
+        continue;
       }
       answers.push({ key: field.key, value, confidence, needsHuman, draft, blank, source: "llm", reasoning: item.reasoning });
     }
