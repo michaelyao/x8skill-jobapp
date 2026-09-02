@@ -92,15 +92,45 @@ export interface LayoutResult {
   unavailable?: string;
 }
 
+/**
+ * Only one OCR request at a time, from this process.
+ *
+ * x8ocr processes one image at a time, so two of our own requests do not run in parallel — they
+ * QUEUE, and each one's clock is our timeout. A 1440x10643 full-page screenshot takes it 66 seconds
+ * on its own; two stacked exceed three minutes and both abort. Measured: 102 aborts in one log,
+ * every single one our own AbortController rather than a service that was down, while a probe
+ * moments later answered fine.
+ *
+ * Serialising costs nothing we were getting anyway — the requests were already serial inside the
+ * service — and it stops us being the cause of our own timeouts.
+ */
+let ocrGate: Promise<unknown> = Promise.resolve();
+function serialise<T>(work: () => Promise<T>): Promise<T> {
+  const run = ocrGate.then(work, work);
+  // Keep the chain alive whatever this call does, or one rejection blocks every later request.
+  ocrGate = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 export async function ocrLayout(
   imagePath: string,
   /**
-   * Generous on purpose. A full-page screenshot of a long form takes x8ocr around fifteen seconds
-   * and a dense one considerably more; the cost of waiting is minutes on an application, and the
-   * cost of not waiting is a required question submitted blank. Waiting is the cheaper mistake.
+   * Generous on purpose, and MEASURED: a 1440x10643 full-page screenshot of a long Workday form
+   * takes x8ocr 66 seconds. Two of ours stacked exceeded the previous three-minute limit and both
+   * aborted — 102 times in one log — which fail-closed then turned into refused fills and refused
+   * submits. The cost of waiting is minutes on an application; the cost of not waiting is a required
+   * question submitted blank, or a correct application refused. Waiting is the cheaper mistake.
    */
-  timeoutMs = 180_000,
+  timeoutMs = 600_000,
 ): Promise<LayoutResult | null> {
+  if (!fs.existsSync(imagePath)) return null;
+  return serialise(() => ocrLayoutOnce(imagePath, timeoutMs));
+}
+
+async function ocrLayoutOnce(imagePath: string, timeoutMs: number): Promise<LayoutResult | null> {
   if (!fs.existsSync(imagePath)) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

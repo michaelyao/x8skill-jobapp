@@ -274,7 +274,9 @@ export async function submitApprovedEntry(
     ? "submit control not found"
     : drifted.length
       ? `${drifted.length} required question(s) have no approved answer: ${drifted.slice(0, 3).join("; ")}${drifted.length > 3 ? ` (+${drifted.length - 3})` : ""}.${evidence}`
-      : `did not reach review on replay${outcome.blockedRequired?.length ? ` (blocked: ${outcome.blockedRequired.join("; ")})` : ""}`;
+      : /visual checker is unavailable/i.test(outcome.summaryItem?.notes?.join(" ") ?? "")
+        ? "the visual checker did not answer, so the re-fill stopped rather than submit unverified — nothing was sent, and it will go through once the checker is back"
+        : `did not reach review on replay${outcome.blockedRequired?.length ? ` (blocked: ${outcome.blockedRequired.join("; ")})` : ""}`;
   const giveUp = attempts >= MAX_SUBMIT_ATTEMPTS;
   await updatePendingStatus(entry.key, giveUp ? "error" : "awaiting_approval", { attempts, lastError: why });
   return {
