@@ -103,10 +103,19 @@ export default async function QueuePage() {
 
       {gaveUp.length ? (
         <div className="card" style={{ borderColor: "var(--bad)", marginTop: 14 }}>
-          <h3 style={{ color: "var(--bad)" }}>Gave up after repeated attempts</h3>
+          {/*
+            TWO different failures wear this status, and the heading described only one of them.
+            Measured on a list of fifteen: ELEVEN had attempts=0 — they stopped after a single
+            incomplete FILL (a required field with no answer, a document the form did not get), not
+            after repeated submits. Telling someone their application "gave up after repeated
+            attempts" when it was never submitted at all sends them looking for the wrong problem.
+          */}
+          <h3 style={{ color: "var(--bad)" }}>Stopped — nothing was sent</h3>
           <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
-            Approved, but the submit failed three times, so it stopped trying. Nothing was submitted.
-            Re-fill it to get a fresh copy, then approve that.
+            Two kinds here, and the reason under each says which: an application whose FILL was
+            incomplete and stopped rather than reach review, and one you approved whose SUBMIT failed
+            three times and stopped trying. Neither reached the employer. Re-fill to get a fresh
+            copy — most of these stop over something since fixed.
           </p>
           {gaveUp.map((e) => (
             <div key={e.key} style={{ paddingBottom: 8 }}>
@@ -115,11 +124,16 @@ export default async function QueuePage() {
               <a href={e.applyUrl} target="_blank" rel="noreferrer">
                 open posting
               </a>
-              {e.lastError ? (
-                <div className="muted" style={{ fontSize: 12 }}>
-                  {e.lastError.length > 130 ? `${e.lastError.slice(0, 129)}…` : e.lastError}
-                </div>
-              ) : null}
+              <div className="muted" style={{ fontSize: 12 }}>
+                {e.attempts && e.attempts > 0
+                  ? `${e.attempts} submit attempt${e.attempts === 1 ? "" : "s"} — `
+                  : "never submitted — "}
+                {e.lastError
+                  ? e.lastError.length > 120
+                    ? `${e.lastError.slice(0, 119)}…`
+                    : e.lastError
+                  : "no reason recorded"}
+              </div>
             </div>
           ))}
         </div>
