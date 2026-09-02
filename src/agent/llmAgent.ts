@@ -540,7 +540,26 @@ export class LlmAgent implements Agent {
         answers.push(answer);
       }
       let value = Array.isArray(stored.answer) ? stored.answer.join(", ") : String(stored.answer ?? "");
-      if (!value.trim() || value.trim() === answer.value.trim()) continue;
+      if (!value.trim()) continue;
+      /**
+       * THE MODEL REACHING THE SAME VALUE IS NOT A REASON TO SKIP.
+       *
+       * This used to `continue` whenever the values matched, which left the model's own
+       * `needsHuman` flag standing — so a field the user HAS answered was reported by the turn loop
+       * as "no answer available, left for you". "Country Phone Code*" is the worst field in the
+       * log and this is the second reason for it: the value was right, and it was handed back for
+       * a human anyway. A recorded answer CONFIRMS a matching one.
+       */
+      if (value.trim() === answer.value.trim()) {
+        if (answer.needsHuman || answer.draft || answer.confidence < 1) {
+          console.log(`  [agent] your recorded answer for "${field.label.slice(0, 52)}" confirms what was filled`);
+        }
+        answer.needsHuman = false;
+        answer.draft = false;
+        answer.confidence = 1;
+        answer.source = "curated";
+        continue;
+      }
       // Some stored answers DESCRIBE having nothing to enter rather than being a value — the
       // seed for Phone Extension reads "(none — no extension; leave this field empty)". Typing
       // that into the form is worse than leaving it blank, which is what it actually means.
