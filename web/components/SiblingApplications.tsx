@@ -1,6 +1,6 @@
 import type { SiblingApplication } from "@/lib/store";
 import { SkipRowButton } from "@/components/SkipRowButton";
-import { ledgerStage, queueStage } from "@core/core/statusVocabulary.js";
+import { ledgerStage, queueStage, wasSent } from "@core/core/statusVocabulary.js";
 
 /**
  * Every application at this employer, so a decision about one is made knowing the others.
@@ -20,6 +20,15 @@ export function SiblingApplications({ rows }: { rows: SiblingApplication[] }) {
   const seen = new Map<string, number>();
   for (const r of rows) if (r.jobId) seen.set(r.jobId, (seen.get(r.jobId) ?? 0) + 1);
   const duplicated = [...seen.entries()].filter(([, n]) => n > 1).map(([id]) => id);
+  /**
+   * HOW MANY HAVE ALREADY BEEN SENT, said in the heading.
+   *
+   * The rows carried this all along, in a column, six of them — and the question a reviewer
+   * actually arrives with is "have we already applied to this employer?". Answering it meant
+   * reading every row, so a confirmation email from HP IQ read as a repeat when it was one of four
+   * DIFFERENT roles already sent, and the two still in the queue had never been submitted at all.
+   */
+  const sent = rows.filter((r) => wasSent(r.ledgerStatus) && !r.isThisOne).length;
 
   return (
     <div className="card" style={{ marginBottom: 14, borderColor: duplicated.length ? "var(--bad)" : undefined }}>
@@ -30,10 +39,18 @@ export function SiblingApplications({ rows }: { rows: SiblingApplication[] }) {
             same posting more than once
           </span>
         ) : null}
+        {sent ? (
+          <span className="pill warn" style={{ marginLeft: 8, fontSize: 12 }}>
+            {sent} already sent here
+          </span>
+        ) : null}
       </h3>
       <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
         Different job ids are different openings, however alike the titles look. The same id twice is
         the same posting — check before approving.
+        {sent
+          ? ` ${sent} application${sent === 1 ? " has" : "s have"} already been sent to this employer, to the role${sent === 1 ? "" : "s"} marked below — a confirmation email naming only the company could be any of them.`
+          : " Nothing has been sent to this employer yet."}
       </p>
       <div style={{ overflowX: "auto" }}>
         <table>

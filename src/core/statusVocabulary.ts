@@ -112,6 +112,18 @@ export const CHECK_STAGES: Record<string, StageWords> = {
   unavailable: { label: "not checked", meaning: "The checker could not be reached, so this application was never verified visually.", tone: "warn" },
 };
 
+/**
+ * Has this application been SENT? One question, asked in several places, and the answer must not be
+ * spelled out per caller — that is how "applied" came to mean two things.
+ *
+ * `submitted` means we clicked and the run reported success. `manual_submitted` means the candidate
+ * sent it by hand. `already_applied_on_site` is the employer's own word for it. Nothing else here
+ * has reached an employer, and `prefilled_pending_submit` in particular has NOT — the form was
+ * filled and left at the review step.
+ */
+export const SENT_STAGES: readonly string[] = ["submitted", "manual_submitted", "already_applied_on_site"];
+export const wasSent = (status?: string): boolean => Boolean(status && SENT_STAGES.includes(status));
+
 export const ledgerStage = (status?: string): StageWords | undefined => (status ? LEDGER_STAGES[status] : undefined);
 export const queueStage = (status?: string): StageWords | undefined => (status ? QUEUE_STAGES[status] : undefined);
 export const checkStage = (state?: string): StageWords | undefined => (state ? CHECK_STAGES[state] : undefined);
