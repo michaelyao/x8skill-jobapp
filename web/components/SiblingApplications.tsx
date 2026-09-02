@@ -12,10 +12,18 @@ import { SkipRowButton } from "@/components/SkipRowButton";
  * The job id is the column that settles it: two rows sharing one are the same posting twice, and
  * that is the case to stop. Different ids are different jobs, however alike the titles read.
  */
+/**
+ * Say what is known, not what it implies.
+ *
+ * These read "applied" until someone asked what that meant — twice. It is my word, not the system's,
+ * and it sounds like a confirmed fact when all `submitted` means is that the submit control was
+ * clicked and the run reported success. No confirmation from the employer is checked. The one status
+ * that DOES rest on the employer's word is `already_applied_on_site`, where the ATS itself said so.
+ */
 const LEDGER_LABEL: Record<string, string> = {
-  submitted: "applied",
-  manual_submitted: "applied by hand",
-  already_applied_on_site: "already applied",
+  submitted: "submitted",
+  manual_submitted: "submitted by hand",
+  already_applied_on_site: "the ATS says already applied",
   prefilled_pending_submit: "filled, not sent",
   expired: "posting closed",
   unsupported_ats: "cannot apply",
@@ -23,9 +31,9 @@ const LEDGER_LABEL: Record<string, string> = {
 const QUEUE_LABEL: Record<string, string> = {
   awaiting_approval: "waiting for you",
   submitting: "submitting",
-  submitted: "applied",
-  manual_submitted: "applied by hand",
-  error: "gave up",
+  submitted: "submitted",
+  manual_submitted: "submitted by hand",
+  error: "gave up — nothing sent",
   skipped: "skipped",
 };
 
