@@ -27,6 +27,7 @@ import { loadProfile } from "./knowledge/profile.js";
 import { loadX8NoteConfig, syncNoteStage } from "./knowledge/x8note.js";
 import { writeWorkerStatus } from "./knowledge/workerStatus.js";
 import { ensureDir, makeRunDir } from "./utils/log.js";
+import { normalizeUrl } from "./utils/normalize.js";
 import type { FilteredJob } from "./types.js";
 
 /**

@@ -2,6 +2,8 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import { BUILD_INTERNSHIPS_SCRIPT, INTERNSHIPS_CSV_PATH, ROOT_DIR } from "../config.js";
 import type { FilteredJob } from "../types.js";
+import { normalizeUrl } from "../utils/normalize.js";
+import { companyFromUrl, listRequests } from "../knowledge/requestedJobs.js";
 
 /**
  * Regenerate internships_summer2027.csv from every URL in job_sites.txt by
@@ -119,5 +121,39 @@ export async function loadInternshipList(): Promise<FilteredJob[]> {
       needsManualLocationReview: false,
     });
   }
+  /**
+   * AND THE URLS THE CANDIDATE HANDED OVER, as one more source.
+   *
+   * His framing, and the right one: a job he found himself is not a different KIND of job, just a
+   * different place it came from. So it joins the list here rather than getting its own path, and
+   * everything downstream — the sweep, the apply, every guard — treats it identically.
+   *
+   * Appended AFTER the tracker rows and skipped when the URL is already listed, so a posting the
+   * trackers already carry keeps its original code. Two codes for one posting is how MERPVQ and
+   * NNSRWS became the same Verkada job twice.
+   */
+  const listedUrls = new Set(jobs.map((j) => normalizeUrl(j.applyUrl)));
+  for (const request of await listRequests().catch(() => [])) {
+    if (listedUrls.has(normalizeUrl(request.url))) continue;
+    listedUrls.add(normalizeUrl(request.url));
+    jobs.push({
+      id: request.code,
+      region: "",
+      company: request.company?.trim() || companyFromUrl(request.url) || "Unknown",
+      // Unknown until the page is open. It must not read like a real title, because the discovery
+      // filters judge titles and this one carries no information.
+      title: request.title?.trim() || "(supplied by URL)",
+      location: "",
+      // Today, so the age filter keeps it: he asked for this one, and its posting date is not
+      // something he was sifting by.
+      age: "0d",
+      applyUrl: request.url,
+      source: "you",
+      sourceText: request.note ?? "",
+      usEligible: true,
+      needsManualLocationReview: false,
+    });
+  }
+
   return jobs;
 }
