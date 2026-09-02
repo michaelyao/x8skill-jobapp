@@ -745,11 +745,38 @@ export class LlmAgent implements Agent {
     // "How did you hear about us?" — prefer the campus channel when the list offers one, per the
     // standing preference (university > company site > job board > referral > social > other).
     for (const field of snapshot.fields) {
-      if (!/how did you (hear|find|learn)/i.test(field.label) || !field.options?.length) continue;
+      if (!/how did you (hear|find|learn)/i.test(field.label)) continue;
+      /**
+       * SAY WHEN THE LIST NEVER ARRIVED. Uline blocked two applications on this field — three
+       * answering passes and the required-field gate, all reporting "no answer available" — and
+       * the reason was not that we lack a preference. It is that `field.options` was empty, so the
+       * rule below could not choose from a list it never received. Option capture on this widget
+       * is known to be unreliable (44 options one round, 4 the next). Without this line the log
+       * cannot tell "we have no preference" from "we were handed no options".
+       */
+      if (!field.options?.length) {
+        console.log(`  [agent] "${field.label.slice(0, 40)}" arrived with NO options — cannot pick the campus channel`);
+        continue;
+      }
       const campus = field.options.find((o) => /campus|university|college|career (fair|center)|school/i.test(o));
-      if (!campus) continue;
-      const answer = answers.find((a) => a.key === field.key);
-      if (!answer || answer.value === campus) continue;
+      if (!campus) {
+        console.log(
+          `  [agent] "${field.label.slice(0, 40)}" offers no campus channel among ${field.options.length}: ` +
+            `${field.options.slice(0, 4).map((o) => o.slice(0, 20)).join(" | ")}`,
+        );
+        continue;
+      }
+      /**
+       * Walk the FIELDS, not the model's reply — the same lesson as the store override above. A
+       * field the model skipped has no answer object, and this rule used to `continue` on that,
+       * so the standing preference simply did not apply to the case that needed it most.
+       */
+      let answer = answers.find((a) => a.key === field.key);
+      if (!answer) {
+        answer = { key: field.key, value: "", confidence: 0, needsHuman: true, source: "curated" };
+        answers.push(answer);
+      }
+      if (answer.value === campus && !answer.needsHuman) continue;
       console.log(`  [agent] "how did you hear" → ${JSON.stringify(campus)} (campus is preferred over ${JSON.stringify(answer.value)})`);
       answer.value = campus;
       answer.source = "curated";
