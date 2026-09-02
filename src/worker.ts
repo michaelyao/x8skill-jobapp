@@ -364,7 +364,7 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
 
       const gaps = evaluateScreen(
         command.screenText,
-        (entry.answers ?? []).map((a) => ({ label: a.label, value: a.value })),
+        (entry.answers ?? []).map((a) => ({ label: a.label, value: a.value, type: a.type })),
         { blocks: command.blocks as never, capability: command.capability as never },
       );
       if (gaps.length) {

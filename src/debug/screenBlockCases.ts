@@ -121,7 +121,7 @@ const PROUDEST = "(Optionally) include a short description of the work you're pr
 const PROUDEST_VALUE =
   "At Gravitas Medical, I built an automated computer vision pipeline using OpenCV and Meta's Segment Anything model to measure precise millimeter distances between electrodes on medical feeding tubes—automating the analysis of monthly shipments and eliminating days of manual QA work. I'm also proud of the Alviso Environmental Monitoring Dashboard, where I integrated SparkFun sensors with Raspberry Pi devices and built a Python RESTful API for real-time air and noise quality tracking, reaching 200+ community members and helping secure $2,000 in grants.";
 
-const gaps = (blocks: ScreenBlock[], answers: Array<{ label: string; value: string }>): string[] =>
+const gaps = (blocks: ScreenBlock[], answers: Array<{ label: string; value: string; type?: string }>): string[] =>
   describeVerdicts(verifyFields(blocks, answers));
 
 console.log("\nthe next field's label is not this field's value (REEHHB)");
@@ -330,7 +330,72 @@ check(`a merged table block is not this field's value`,
   describeVerdicts(verifyFields(TABLE, [{ label: "LinkedIn Profile", value: "https://www.linkedin.com/in/nathandyao" }])).length === 0,
   verifyFields(TABLE, [{ label: "LinkedIn Profile", value: "https://www.linkedin.com/in/nathandyao" }])[0]);
 
+console.log("\na radio group renders EVERY option, so a nearby row is not the answer");
+/**
+ * JNBEPY on the real queue: "What is your current US work authorization?" was recorded as
+ * "US Citizen / Permanent Resident" and reported against the "H-1B" row sitting under the label.
+ * Every option of a radio group is on the screen and this engine reports no selection state, so
+ * the row is not evidence either way.
+ */
+const RADIO: ScreenBlock[] = [
+  { label: "text", text: "What is your current US work authorization?", box: [100, 200, 600, 230], order: 1 },
+  { label: "text", text: "H-1B", box: [120, 250, 220, 278], order: 2 },
+];
+const AUTH = "US Citizen / Permanent Resident";
+check(`a radio row that is not our answer is unlocatable, not a difference`,
+  verifyFields(RADIO, [{ label: "What is your current US work authorization?", value: AUTH, type: "radio" }])[0]?.status === "value-not-located",
+  verifyFields(RADIO, [{ label: "What is your current US work authorization?", value: AUTH, type: "radio" }])[0]);
+check(`and it is not reported`,
+  gaps(RADIO, [{ label: "What is your current US work authorization?", value: AUTH, type: "radio" }]).length === 0);
+// A SELECT commits its value into the control, which is how the false-success bug was caught.
+// Radio is the only widget that shows all of its options, so only radio gets the exemption.
+check(`a SELECT showing the wrong value is still a difference`,
+  verifyFields(RADIO, [{ label: "What is your current US work authorization?", value: AUTH, type: "select" }])[0]?.status === "different",
+  verifyFields(RADIO, [{ label: "What is your current US work authorization?", value: AUTH, type: "select" }])[0]);
+check(`an untyped answer is still judged`,
+  verifyFields(RADIO, [{ label: "What is your current US work authorization?", value: AUTH }])[0]?.status === "different");
+
+/** CKVKRC: the "○" makes the row a CONTROL, whatever the recorded type says. */
+const UNSET: ScreenBlock[] = [
+  { label: "text", text: "Veteran Status", box: [100, 200, 300, 230], order: 1 },
+  { label: "text", text: "\u25cb I identify as one or more of the classifications of protected veteran listed above", box: [120, 250, 900, 282], order: 2 },
+];
+check(`a row carrying an unselected glyph is never the value`,
+  verifyFields(UNSET, [{ label: "Veteran Status", value: "I am not a protected veteran" }])[0]?.status === "value-not-located",
+  verifyFields(UNSET, [{ label: "Veteran Status", value: "I am not a protected veteran" }])[0]);
+
+console.log("\na clipped essay with one OCR-mangled word is still our answer");
+/**
+ * RKEZBD and BFXCLX: the textarea was scrolled to the caret, so the box shows the TAIL, and OCR
+ * mangled the word it clipped through ("zero-direct" for "zero-defect"). Exact-substring tolerance
+ * failed on that one character and reported two correct essays as wrong.
+ */
+const ESSAY = "At Gravitas Medical, I built an automated computer vision pipeline using OpenCV and Meta's Segment Anything model to measure precise millimeter distances between electrodes on medical feeding tubes. It automated the analysis of monthly shipments of wires, eliminating days of manual QA work. Medical devices demand zero-defect precision, and building a system reliable enough to replace human judgment in that context was both technically demanding and genuinely meaningful.";
+const CLIPPED_ESSAY: ScreenBlock[] = [
+  { label: "text", text: "What's something you worked on that you were proud of?", box: [100, 200, 700, 230], order: 1 },
+  { label: "text", text: "QA work. Medical devices demand zero-direct precision, and building a system reliable enough to replace human judgment in that context was both technically demanding and genuinely meaningful.", box: [110, 250, 950, 400], order: 2 },
+];
+check(`the mangled tail of our own essay is a match`,
+  verifyFields(CLIPPED_ESSAY, [{ label: "What's something you worked on that you were proud of?", value: ESSAY }])[0]?.status === "match",
+  verifyFields(CLIPPED_ESSAY, [{ label: "What's something you worked on that you were proud of?", value: ESSAY }])[0]);
+
 console.log("\nthe fixes must not silence a real gap");
+// The new rules must not swallow the cases they resemble.
+const OTHER_ESSAY: ScreenBlock[] = [
+  { label: "text", text: "What's something you worked on that you were proud of?", box: [100, 200, 700, 230], order: 1 },
+  { label: "text", text: "I spent the summer rebuilding our warehouse routing service in Go, cutting median pick time by a third and writing the load tests that proved it before we shipped to the Dallas site.", box: [110, 250, 950, 400], order: 2 },
+];
+check(`a DIFFERENT long answer is still a difference`,
+  verifyFields(OTHER_ESSAY, [{ label: "What's something you worked on that you were proud of?", value: ESSAY }])[0]?.status === "different",
+  verifyFields(OTHER_ESSAY, [{ label: "What's something you worked on that you were proud of?", value: ESSAY }])[0]);
+const TICKED: ScreenBlock[] = [
+  { label: "text", text: "Which communities do you belong to?", box: [100, 200, 500, 230], order: 1 },
+  { label: "checkbox", text: "Person with disability", box: [110, 250, 400, 280], order: 2, checked: true },
+];
+check(`a box we recorded as No but the screen shows TICKED is still reported`,
+  gaps(TICKED, [{ label: "Which communities do you belong to?", value: "No" }]).length === 1,
+  gaps(TICKED, [{ label: "Which communities do you belong to?", value: "No" }]));
+
 // Same real blocks, a value that genuinely is not there. If these pass, the change has only
 // removed findings that were never about the form.
 check(`a wrong location is still a difference`, gaps(ASHBY, [{ label: "Current location", value: "Sunnyvale, CA" }]).length === 1, gaps(ASHBY, [{ label: "Current location", value: "Sunnyvale, CA" }]));

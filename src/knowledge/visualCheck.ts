@@ -198,7 +198,7 @@ export interface VisualGap {
  * finished application, so the bar is "definitely not on the screen", not "not where I expected".
  */
 export function missingFromScreen(
-  answers: Array<{ label: string; value: string }>,
+  answers: Array<{ label: string; value: string; type?: string }>,
   screenText: string,
 ): VisualGap[] {
   const screen = fold(screenText);
@@ -292,7 +292,7 @@ export async function submitOcrJob(
  */
 export function evaluateScreen(
   screenText: string,
-  answers: Array<{ label: string; value: string }>,
+  answers: Array<{ label: string; value: string; type?: string }>,
   /** Layout blocks and the engine's own trust statement, when the result carried them. */
   layout?: { blocks?: ScreenBlock[]; capability?: ScreenCapability },
 ): string[] {

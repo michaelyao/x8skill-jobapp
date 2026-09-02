@@ -87,6 +87,44 @@ const words = (text: string): number => fold(text).split(" ").filter(Boolean).le
 const looksLikeProse = (candidate: string, recorded: string): boolean =>
   words(candidate) >= 6 && words(recorded) <= 3;
 
+/**
+ * A block that VISIBLY CARRIES a radio or checkbox control renders one OPTION of a group, and this
+ * engine reports no selection state — so the row says nothing about which option is chosen.
+ * Unlocatable for exactly the reason a "Yes No" pair is: a verdict we cannot see is worse than no
+ * verdict. "○ I identify as one or more of the classifications of protected veteran" was quoted as
+ * the value of "Veteran Status" against a recorded "I am not a protected veteran"; the glyph is what
+ * gives it away as a control. A TICK is deliberately absent from the set — a visibly checked box
+ * does carry state, and the checkbox branch above is allowed to judge it.
+ */
+const UNSELECTED_GLYPH = /[○◯◦⃝☐□▢®©]/u;
+const carriesAnUnsetControl = (text: string): boolean => UNSELECTED_GLYPH.test(text);
+
+/**
+ * A RADIO GROUP puts every option on the screen at once, so whichever row lands nearest the label is
+ * not evidence of the answer. Comparing against it manufactured findings on four queued
+ * applications — "US Citizen / Permanent Resident" reported against the "H-1B" row, "None" against
+ * "Other". A row that MATCHES what we recorded is still a match, because that search runs first;
+ * this only turns a pairing we cannot resolve into "unlocatable" rather than a fault.
+ */
+const rendersEveryOption = (type?: string): boolean =>
+  /^(radio|radiogroup|checkbox-group|checkboxgroup)$/i.test((type ?? "").trim());
+
+/**
+ * A textarea scrolled to the caret shows a FRAGMENT of a long answer, and OCR mangles the character
+ * it clips through — "zero-direct" for "zero-defect", "redesigned" for "I designed" — which broke
+ * the exact-substring tolerance and reported two correct essays as wrong. So ask what fraction of
+ * the fragment's words appear in the value we recorded: a clipped copy of our own text is almost
+ * entirely contained, a different answer is not. Long values only, where a fragment is what we
+ * expect to be looking at.
+ */
+const mostlyOurWords = (shown: string, recorded: string): boolean => {
+  const mine = shown.split(" ").filter((w) => w.length >= 3);
+  const theirs = shown && recorded ? recorded.split(" ").filter((w) => w.length >= 3) : [];
+  if (mine.length < 8 || theirs.length < 20) return false;
+  const have = new Set(theirs);
+  return mine.filter((w) => have.has(w)).length / mine.length >= 0.7;
+};
+
 const overlapsX = (a: [number, number, number, number], b: [number, number, number, number]): boolean => {
   const width = Math.min(a[2], b[2]) - Math.max(a[0], b[0]);
   // A value box is indented relative to its label, so require real overlap rather than containment.
@@ -235,7 +273,7 @@ export interface FieldVerdict {
  */
 export function verifyFields(
   blocks: ScreenBlock[],
-  answers: Array<{ label: string; value: string }>,
+  answers: Array<{ label: string; value: string; type?: string }>,
 ): FieldVerdict[] {
   const out: FieldVerdict[] = [];
   const allLabels = answers.map((a) => a.label ?? "");
@@ -252,7 +290,7 @@ export function verifyFields(
     .sort((a, b) => a - b);
   const column = unambiguous.length ? unambiguous[Math.floor(unambiguous.length / 2)] : 0;
 
-  for (const { label, value } of answers) {
+  for (const { label, value, type } of answers) {
     const recorded = (value ?? "").trim();
     if (!recorded) continue;
     const places = labelBlocksFor(blocks, label ?? "");
@@ -273,7 +311,7 @@ export function verifyFields(
      * nearest that cluster is the one to quote.
      */
     const readings = places
-      .map((place) => ({ place, verdict: judgeOne(blocks, place, label, recorded, allLabels) }))
+      .map((place) => ({ place, verdict: judgeOne(blocks, place, label, recorded, allLabels, type) }))
       .sort((a, b) => {
         const rank = (v: FieldVerdict) => (v.status === "match" ? 0 : v.status === "value-not-located" ? 1 : 2);
         const byStatus = rank(a.verdict) - rank(b.verdict);
@@ -291,6 +329,7 @@ function judgeOne(
   label: string,
   recorded: string,
   allLabels: string[],
+  type?: string,
 ): FieldVerdict {
   const found = locateFrom(blocks, place, label, allLabels);
 
@@ -347,7 +386,7 @@ function judgeOne(
     const b = fold(text);
     if (!b) return false;
     const tail = b.split(" ").slice(1).join(" ");
-    return b.includes(head) || (tail.length >= 12 && a.includes(tail));
+    return b.includes(head) || (tail.length >= 12 && a.includes(tail)) || mostlyOurWords(b, a);
   };
   const hit = (found.candidates ?? [found.value]).find((c) => c && fits(c.text ?? ""));
   if (hit) return { label, recorded, onScreen: (hit.text ?? "").trim(), status: "match" };
@@ -355,6 +394,8 @@ function judgeOne(
   const shown = (found.value.text ?? "").trim();
   if (looksEmpty(shown)) return { label, recorded, onScreen: shown, status: "empty" };
   if (looksLikeProse(shown, recorded)) return { label, recorded, onScreen: shown, status: "value-not-located" };
+  if (carriesAnUnsetControl(shown)) return { label, recorded, onScreen: shown, status: "value-not-located" };
+  if (rendersEveryOption(type)) return { label, recorded, onScreen: shown, status: "value-not-located" };
   return { label, recorded, onScreen: shown, status: "different" };
 }
 
