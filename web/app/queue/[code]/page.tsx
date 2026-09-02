@@ -4,6 +4,7 @@ import { FeedbackBox } from "@/components/FeedbackBox";
 import { SiblingApplications } from "@/components/SiblingApplications";
 import { RoleTermFlag } from "@/components/RoleTermFlag";
 import { EligibilityFlag } from "@/components/EligibilityFlag";
+import { ledgerStage } from "@core/core/statusVocabulary.js";
 import { resumeFactsFrom } from "@core/core/queueReadiness.js";
 import { readProfileSnapshot } from "@core/knowledge/profile.js";
 import { currentUser } from "@/lib/session";
@@ -21,10 +22,52 @@ export default async function ReviewPage({ params }: { params: Promise<{ code: s
   ]);
 
   if (!entry) {
+    /**
+     * NOT "no such job" — a job with no QUEUE entry simply has not reached the review step, and
+     * saying only that it is absent is how eight postings added by hand read as lost. The ledger
+     * usually knows exactly what happened (an ATS we cannot drive, an authentication gate, a
+     * required field that blocked the run), so say that and link to where the detail lives.
+     */
+    const stage = ledgerStage(app?.status);
     return (
       <>
         <h1>{code}</h1>
-        <p className="empty">No queued application with this code.</p>
+        {app ? (
+          <div className="card">
+            <p style={{ marginTop: 0 }}>
+              <strong>{app.company ?? "This job"}</strong>
+              {app.title ? ` — ${app.title}` : ""}
+            </p>
+            <p>
+              <span className={`pill ${stage?.tone ?? "muted"}`}>{stage?.label ?? app.status}</span>
+            </p>
+            <p className="muted">
+              {stage?.meaning ??
+                "It has a record but never reached the review step, so there is nothing to approve here."}
+            </p>
+            <p>
+              <a href={`/applications/${code}`}>See everything recorded for it</a>
+              {app.applyUrl ? (
+                <>
+                  {" · "}
+                  <a href={app.applyUrl} target="_blank" rel="noreferrer">
+                    the posting
+                  </a>
+                </>
+              ) : null}
+            </p>
+          </div>
+        ) : (
+          <div className="card">
+            <p style={{ marginTop: 0 }} className="empty">
+              Nothing has been recorded for this code yet.
+            </p>
+            <p className="muted">
+              If you added it on <a href="/add">Add jobs</a>, it is on the list and the worker has not
+              opened it yet — that page shows what became of everything you have given me.
+            </p>
+          </div>
+        )}
       </>
     );
   }

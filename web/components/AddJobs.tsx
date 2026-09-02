@@ -15,6 +15,12 @@ interface Request {
   title?: string;
   note?: string;
   at: string;
+  /** What became of it — from the queue if it reached review, else the ledger. */
+  state?: string;
+  meaning?: string;
+  tone?: string;
+  href?: string;
+  lastError?: string;
 }
 
 /**
@@ -111,7 +117,7 @@ export function AddJobs() {
           {outcomes.map((o) => (
             <div key={o.url} style={{ paddingBottom: 8, fontSize: 13 }}>
               <span className={`pill ${TONE[o.state]}`} style={{ fontSize: 11 }}>{o.state.replace(/-/g, " ")}</span>{" "}
-              {o.code ? <a href={`/queue/${o.code}`} className="code">{o.code}</a> : null} {o.detail}
+              {o.code ? <span className="code">{o.code}</span> : null} {o.detail}
               <div className="muted" style={{ fontSize: 12, wordBreak: "break-all" }}>{o.url}</div>
             </div>
           ))}
@@ -126,17 +132,26 @@ export function AddJobs() {
           <div style={{ overflowX: "auto" }}>
             <table>
               <thead>
-                <tr><th>Code</th><th>Company</th><th>URL</th><th>Note</th><th className="right">Given</th></tr>
+                <tr><th>Code</th><th>Company</th><th>What became of it</th><th>URL</th><th className="right">Given</th></tr>
               </thead>
               <tbody>
                 {requests.map((r) => (
                   <tr key={`${r.code}-${r.at}`}>
-                    <td className="code"><a href={`/queue/${r.code}`}>{r.code}</a></td>
+                    <td className="code">
+                      {/* Only link where a page exists. A code with no queue entry and no ledger
+                          record has nothing to show, and a link to it reads as a broken promise. */}
+                      {r.href ? <a href={r.href}>{r.code}</a> : <span title="nothing recorded for it yet">{r.code}</span>}
+                    </td>
                     <td>{r.company ?? "—"}</td>
-                    <td style={{ maxWidth: 380, overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <td>
+                      <span className={`pill ${r.tone ?? "muted"}`} style={{ fontSize: 12 }}>{r.state ?? "not run yet"}</span>
+                      {r.meaning ? <div className="muted" style={{ fontSize: 12, marginTop: 3 }}>{r.meaning}</div> : null}
+                      {r.lastError ? <div className="muted" style={{ fontSize: 12, marginTop: 3 }}>{r.lastError.slice(0, 120)}</div> : null}
+                      {r.note ? <div className="muted" style={{ fontSize: 12, marginTop: 3 }}>{r.note}</div> : null}
+                    </td>
+                    <td style={{ maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis" }}>
                       <a href={r.url} target="_blank" rel="noreferrer">{r.url}</a>
                     </td>
-                    <td className="muted" style={{ fontSize: 12 }}>{r.note ?? ""}</td>
                     <td className="right muted nowrap">{r.at.slice(0, 16).replace("T", " ")}</td>
                   </tr>
                 ))}

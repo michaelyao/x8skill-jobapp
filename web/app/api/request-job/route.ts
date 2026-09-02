@@ -3,6 +3,7 @@ import { loadApplications } from "@core/knowledge/applications.js";
 import { loadPendingQueue } from "@core/knowledge/approvalQueue.js";
 import { loadInternshipList } from "@core/sources/internshipList.js";
 import { codeForUrl, companyFromUrl, listRequests, recordRequest } from "@core/knowledge/requestedJobs.js";
+import { ledgerStage, queueStage } from "@core/core/statusVocabulary.js";
 import { normalizeUrl } from "@core/utils/normalize.js";
 import { isResponse, requireUser } from "@/lib/session";
 
@@ -106,8 +107,34 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 /** What has been handed over, and the code each became. */
+/**
+ * The requests WITH WHAT BECAME OF THEM.
+ *
+ * The list used to be url + code + when, and every code linked to /queue/<code> — which only
+ * exists once an application reaches the review step. Eight postings added by hand produced eight
+ * dead links: three were an ATS this tool cannot drive at all, two stopped inside Oracle's
+ * authentication gate, one never ran. "Where are the jobs I added?" is the question this page is
+ * for, and it could not answer it.
+ */
 export async function GET(): Promise<Response> {
   const user = await requireUser();
   if (isResponse(user)) return user;
-  return Response.json({ requests: await listRequests() });
+  const [requests, queue, apps] = await Promise.all([listRequests(), loadPendingQueue(), loadApplications()]);
+  const byCode = new Map(queue.map((e) => [e.code ?? e.key, e]));
+  const ledger = new Map(apps.map((a) => [a.code ?? a.id, a]));
+  const rows = requests.map((r) => {
+    const q = byCode.get(r.code);
+    const l = ledger.get(r.code);
+    const stage = q ? queueStage(q.status) : ledgerStage(l?.status);
+    return {
+      ...r,
+      // Where the code should actually take you: the review page only exists for a queue entry.
+      href: q ? `/queue/${r.code}` : l ? `/applications/${r.code}` : undefined,
+      state: stage?.label ?? (l || q ? l?.status ?? q?.status : "not run yet"),
+      meaning: stage?.meaning ?? (l || q ? undefined : "It is on the list; the worker has not opened it yet."),
+      tone: stage?.tone ?? "muted",
+      lastError: q?.lastError ?? undefined,
+    };
+  });
+  return Response.json({ requests: rows });
 }
