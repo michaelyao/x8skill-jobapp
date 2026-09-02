@@ -30,7 +30,8 @@
     "test:visual": "tsx src/debug/visualCheckCases.ts",
     "test:blocks": "tsx src/debug/screenBlockCases.ts",
     "audit:queue": "tsx src/debug/auditQueue.ts",
-    "recheck:screens": "tsx src/debug/recheckScreens.ts"
+    "recheck:screens": "tsx src/debug/recheckScreens.ts",
+    "test:options": "tsx src/debug/optionMatchCases.ts"
   },
   "repository": {
     "type": "git",

@@ -1,51 +1,47 @@
+import { optionForRecorded } from "../agent/llmAgent.js";
+
 /**
- * Cases for option-label matching.
+ * Cases for matching a RECORDED answer to a closed list's own wording.  npm run test:options
  *
- * The bug these exist for: General Matter (Greenhouse) offered "Bachelor’s Degree" with a
- * typographic apostrophe while the model answered "Bachelor's Degree" with a straight one. The
- * option was on screen, in a list we had already read, and all four match strategies missed it.
- * The field then burned its full 90s deadline and was reported as "would not take it".
- *
- * Run: npx tsx src/debug/optionMatchCases.ts
+ * The field these exist for is "Country Phone Code*", which reported "no answer available" 130
+ * times in one log while "United States of America (+1)" sat in the answer store: the guard that
+ * stops us writing a value the widget cannot take refused every wording that was not identical,
+ * and it refused in silence.
  */
-import { normaliseOption } from "../agent/drivers/base.js";
-
-let failures = 0;
-const same = (a: string, b: string, name: string): void => {
-  const ok = normaliseOption(a) === normaliseOption(b);
-  if (ok) console.log(`  ✓ ${name}`);
-  else {
-    failures += 1;
-    console.log(`  ✗ ${name}\n      ${JSON.stringify(normaliseOption(a))} !== ${JSON.stringify(normaliseOption(b))}`);
-  }
+let pass = 0;
+let fail = 0;
+const check = (name: string, cond: boolean, got?: unknown) => {
+  if (cond) { pass += 1; console.log(`  ✓ ${name}`); }
+  else { fail += 1; console.log(`  ✗ ${name}${got === undefined ? "" : ` — got ${JSON.stringify(got)}`}`); }
 };
-const differ = (a: string, b: string, name: string): void => {
-  const ok = normaliseOption(a) !== normaliseOption(b);
-  if (ok) console.log(`  ✓ ${name}`);
-  else {
-    failures += 1;
-    console.log(`  ✗ ${name} — collapsed two DIFFERENT options to the same string`);
-  }
-};
+const m = (options: string[], value: string) => optionForRecorded(options, value);
 
-console.log("\nMust match — the same option, typed differently");
-same("Bachelor's Degree", "Bachelor’s Degree", "straight vs typographic apostrophe (the live bug)");
-same("Associate's Degree", "Associate’s Degree", "the option above it in the same list");
-same("Master's Degree", "MASTER’S DEGREE", "apostrophe + case");
-same("Bachelor's  Degree", "Bachelor’s Degree", "collapsed double space");
-same("Full-time", "Full‑time", "hyphen vs non-breaking hyphen");
-same("2026 - 2027", "2026 – 2027", "hyphen vs en dash");
-same("United States", "United States", "non-breaking space");
-same(" Yes ", "Yes", "surrounding whitespace");
-same('He said "yes"', 'He said “yes”', "curly double quotes");
+const DIALLING = ["Afghanistan (+93)", "United States of America (+1)", "United Kingdom (+44)"];
 
-console.log("\nMust STAY different — normalising must not merge real options");
-differ("Bachelor's Degree", "Master's Degree", "two real degrees");
-differ("Associate's Degree", "Bachelor's Degree", "adjacent options in the live list");
-differ("Yes", "No", "yes vs no");
-differ("Full-time", "Part-time", "full vs part time");
-differ("2026", "2027", "adjacent years");
-differ("Computer Science", "Computer Engineering", "adjacent disciplines");
+console.log("the answer is on the menu");
+check(`identical wording`, m(DIALLING, "United States of America (+1)").kind === "exact");
+check(`the option's lead segment`, m(DIALLING, "United States of America").kind === "exact", m(DIALLING, "United States of America"));
+check(`case and spacing do not matter`, m(DIALLING, "united states of america (+1)").kind === "exact");
 
-console.log(failures === 0 ? `\n✓ all cases pass\n` : `\n✗ ${failures} case(s) failed\n`);
-process.exit(failures === 0 ? 0 : 1);
+console.log("\nthe same choice printed differently");
+const CODES = ["+93", "+1", "+44"];
+const one = m(CODES, "United States of America (+1)");
+check(`a bare code list takes the code out of our answer`, one.kind === "reworded" && one.option === "+1", one);
+const spelled = m(["United States of America (+1)"], "United States");
+check(`an option that spells our answer out is adopted`, spelled.kind === "reworded" && spelled.option === "United States of America (+1)", spelled);
+
+console.log("\nwhat it must refuse");
+// A guess is worse than leaving the field: the turn loop reports it and the reviewer sees it.
+check(`"+1" must not match "+12"`, m(["+12", "+13"], "Somewhere (+1)").kind === "absent", m(["+12", "+13"], "Somewhere (+1)"));
+const amb = m(["United States of America (+1)", "United States Minor Outlying Islands (+1)"], "United States");
+check(`two options our answer could name is ambiguous, not a pick`, amb.kind === "ambiguous", amb);
+// The infix trap: adopting "Formal Verification" for a recorded "Verification" would upgrade the
+// claim. Only a PREFIX counts, which is the same discipline the skills pruning uses in reverse.
+check(`a recorded "Verification" does not become "Formal Verification"`, m(["Formal Verification"], "Verification").kind === "absent", m(["Formal Verification"], "Verification"));
+// The word trap: a stored answer that MEANS empty must not tick "No" off a yes/no list.
+check(`"none — no extension" does not become "No"`, m(["Yes", "No"], "none — no extension; leave this field empty").kind === "absent", m(["Yes", "No"], "none — no extension; leave this field empty"));
+check(`an answer nothing offers`, m(DIALLING, "Narnia (+99)").kind === "absent");
+check(`an empty recorded answer`, m(DIALLING, "   ").kind === "absent");
+
+console.log(`\n${fail ? "✗" : "✓"} ${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);

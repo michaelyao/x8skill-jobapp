@@ -149,6 +149,68 @@ function resumeFactsFor(ctx: AgentContext): { degree?: string; fieldOfStudy?: st
  */
 const OPTIONAL_PROSE = /\b(cover letter|summary|personal statement|additional information|anything else)\b/i;
 
+/**
+ * WHICH OPTION a recorded answer names, in the FORM'S OWN WORDS.
+ *
+ * A closed list must never be given a value it does not offer — that writes nothing and reports
+ * success. But refusing every answer whose wording differs is how "Country Phone Code*" reported
+ * "no answer available" 130 times while "United States of America (+1)" sat in the store: the same
+ * choice is printed differently from tenant to tenant.
+ *
+ * So an option the recorded answer UNIQUELY names is adopted, in the option's wording. Uniqueness is
+ * the guard — two candidates and it refuses, because picking one would be a guess. Comparison is by
+ * whole TOKENS, never raw substring, so "+1" cannot match "+12" and "Verification" cannot match
+ * "Formal Verification".
+ *
+ * The two directions are not symmetrical, and neither is loose.
+ *
+ * An option may SPELL OUR ANSWER OUT — "United States of America" -> "United States of America
+ * (+1)" — but only as a PREFIX. An arbitrary infix would let a recorded "Verification" adopt an
+ * offered "Formal Verification", quietly upgrading the claim, which is the same mistake the skills
+ * rule refuses to make in the other direction.
+ *
+ * The reverse — our answer CONTAINING the option — is allowed only when the option carries a digit
+ * or a "+", i.e. it is a code and not a word. Otherwise a stored "none — no extension" would adopt
+ * the "No" row of a yes/no list.
+ */
+export type OptionMatch =
+  | { kind: "exact"; option: string }
+  | { kind: "reworded"; option: string }
+  | { kind: "ambiguous"; among: number }
+  | { kind: "absent" };
+
+export function optionForRecorded(options: string[], value: string): OptionMatch {
+  const foldOpt = (t: string) => t.toLowerCase().replace(/[^a-z0-9+]+/g, " ").replace(/\s+/g, " ").trim();
+  const toks = (t: string) => foldOpt(t).split(" ").filter(Boolean);
+  /** The option begins with our answer, token for token. */
+  const spellsOut = (option: string, answer: string) => {
+    const a = toks(option);
+    const b = toks(answer);
+    return b.length > 0 && b.length <= a.length && b.every((w, i) => a[i] === w);
+  };
+  /** Our answer contains the option as a run of whole tokens. */
+  const holdsRun = (answer: string, option: string) => {
+    const a = toks(answer);
+    const b = toks(option);
+    if (!b.length || b.length > a.length) return false;
+    return a.some((_, i) => b.every((w, j) => a[i + j] === w));
+  };
+  const lv = value.trim().toLowerCase();
+  const lead = (o: string) => o.split(/[,(:—–-]/)[0].trim().toLowerCase();
+
+  const exact = options.find((o) => o.toLowerCase() === lv || lead(o) === lv);
+  if (exact) return { kind: "exact", option: exact };
+  if (!foldOpt(value)) return { kind: "absent" };
+
+  const isCode = (o: string) => /[0-9+]/.test(o);
+  const near = options.filter(
+    (o) => foldOpt(o) && (spellsOut(o, value) || (isCode(o) && holdsRun(value, o))),
+  );
+  if (near.length === 1) return { kind: "reworded", option: near[0] };
+  if (near.length > 1) return { kind: "ambiguous", among: near.length };
+  return { kind: "absent" };
+}
+
 export function skipAsOptionalProse(label: string, required: boolean): boolean {
   return !required && OPTIONAL_PROSE.test(label ?? "");
 }
@@ -477,7 +539,7 @@ export class LlmAgent implements Agent {
         answer = { key: field.key, value: "", confidence: 0, needsHuman: true, source: "curated" };
         answers.push(answer);
       }
-      const value = Array.isArray(stored.answer) ? stored.answer.join(", ") : String(stored.answer ?? "");
+      let value = Array.isArray(stored.answer) ? stored.answer.join(", ") : String(stored.answer ?? "");
       if (!value.trim() || value.trim() === answer.value.trim()) continue;
       // Some stored answers DESCRIBE having nothing to enter rather than being a value — the
       // seed for Phone Extension reads "(none — no extension; leave this field empty)". Typing
@@ -499,9 +561,27 @@ export class LlmAgent implements Agent {
       // For a closed list the stored wording may not be one of the options; leave those alone
       // rather than writing a value the widget cannot take.
       if (field.options?.length && !field.searchable) {
-        const lv = value.trim().toLowerCase();
-        const lead = (o: string) => o.split(/[,(:—–-]/)[0].trim().toLowerCase();
-        if (!field.options.some((o) => o.toLowerCase() === lv || lead(o) === lv)) continue;
+        const match = optionForRecorded(field.options, value);
+        if (match.kind === "reworded") {
+          console.log(
+            `  [agent] your recorded ${JSON.stringify(value.slice(0, 40))} is offered as ` +
+              `${JSON.stringify(match.option.slice(0, 40))} — using the form's wording`,
+          );
+          value = match.option;
+        } else if (match.kind !== "exact") {
+          /**
+           * SAY WHY. This branch used to `continue` in silence, so the turn loop's
+           * "no answer available" was the only trace — which read as "we have no answer" when the
+           * truth was "the answer is not on the menu". 130 of those went undiagnosed.
+           */
+          const why = match.kind === "ambiguous" ? `matches ${match.among} of them` : "is not one of them";
+          console.log(
+            `  [agent] your recorded answer for "${field.label.slice(0, 42)}" ` +
+              `(${JSON.stringify(value.slice(0, 40))}) ${why} — the form offers ${field.options.length}: ` +
+              `${field.options.slice(0, 3).map((o) => o.slice(0, 22)).join(" | ")}${field.options.length > 3 ? " …" : ""}`,
+          );
+          continue;
+        }
       }
       /**
        * THE RESUME OVERRULES THE STORE. The resume is the latest and most accurate source of facts;
