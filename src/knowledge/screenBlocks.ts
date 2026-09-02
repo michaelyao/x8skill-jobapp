@@ -381,6 +381,7 @@ export function tickVerdictFor(
   regionText: string,
   label: string,
   recorded: string,
+  type?: string,
 ): "match" | "different" | "unreadable" {
   const rows = tickRows(regionText).filter((r) => r.row);
   if (!rows.length) return "unreadable";
@@ -405,11 +406,30 @@ export function tickVerdictFor(
    * first: on a group the whole label also matches the region, and the tail is the specific option.
    */
   const tail = label.split(/\s+[—–-]\s+/).pop() ?? "";
-  for (const named of [tail, label]) {
-    if (!named) continue;
-    const byOption = rows.find((r) => same(r.row, named));
-    if (byOption) return byOption.ticked === wantsTicked ? "match" : "different";
+  const named = [tail, label].filter(Boolean);
+  const byOption = rows.find((r) => named.some((n) => same(r.row, n)));
+  /**
+   * An option row is only evidence when the group's state is readable at all — see the tick check
+   * below. "☐ Bisexual" in a region with no tick anywhere says nothing about whether it is chosen.
+   */
+  if (byOption && (rows.some((r) => r.ticked) || !rendersEveryOption(type))) {
+    return byOption.ticked === wantsTicked ? "match" : "different";
   }
+  /**
+   * FOR A RADIO GROUP, NOTHING TICKED MEANS NOT READABLE — not "nothing is selected".
+   *
+   * Scoped to radio deliberately. A lone checkbox renders "☐" when it really is empty, which is how
+   * an unticked required consent box gets caught, and that detection is kept.
+   *
+   * Ashby styles a radio as a colour-filled circle, and this engine renders every row as "☐"
+   * whatever is chosen. Circleback's capture shows four options all "☐" on an application that
+   * REACHED REVIEW — which it cannot do unless the required-field gate saw the field filled and the
+   * driver's re-read confirmed it. So the empty boxes were the reader's blindness, not the form's.
+   *
+   * When SOME row carries a tick the engine has demonstrated it can read this widget, and a
+   * different row being ticked is then real evidence. That is the only case this judges.
+   */
+  if (rendersEveryOption(type) && !rows.some((r) => r.ticked)) return "unreadable";
   const byValue = rows.find((r) => (isYesNo ? exactly(r.row, recorded) : same(r.row, recorded)));
   if (byValue) return byValue.ticked ? "match" : "different";
   return "unreadable";
@@ -430,7 +450,7 @@ function judgeOne(
      * Read the GLYPHS, never the `checked` flag — the engine says it has no notion of checkbox
      * state, and the flag is true whenever anything in a merged region is ticked.
      */
-    const verdict = tickVerdictFor(found.label.text ?? "", label, recorded);
+    const verdict = tickVerdictFor(found.label.text ?? "", label, recorded, type);
     const rows = tickRows(found.label.text ?? "").filter((r) => r.row);
     const shown = rows.length
       ? rows.map((r) => `${r.ticked ? "☑" : "☐"} ${r.row}`).join("  ")

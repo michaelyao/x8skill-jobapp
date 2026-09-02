@@ -417,11 +417,22 @@ check(`the same ticked row recorded as No IS a difference`,
 const N1_RELOCATE: ScreenBlock[] = [
   { label: "checkbox", text: "Are you willing to relocate to NYC (if not in NYC already)?*\n☐ Yes", box: [532, 4000, 1200, 4090], order: 30, checked: false },
 ];
-check(`"☐ Yes" against a recorded Yes is a REAL difference`,
-  verifyFields(N1_RELOCATE, [{ label: "Are you willing to relocate to NYC (if not in NYC already)?", value: "Yes" }])[0]?.status === "different",
-  verifyFields(N1_RELOCATE, [{ label: "Are you willing to relocate to NYC (if not in NYC already)?", value: "Yes" }])[0]);
-check(`and it IS reported`,
-  gaps(N1_RELOCATE, [{ label: "Are you willing to relocate to NYC (if not in NYC already)?", value: "Yes" }]).length === 1);
+const RELOCATE = "Are you willing to relocate to NYC (if not in NYC already)?";
+/**
+ * This was reported as a real difference and it is NOT one. The entry records type=radio, its
+ * `filledFields` includes this question, and it REACHED REVIEW — which cannot happen unless the
+ * required-field gate saw the field filled and the driver's re-read confirmed the value. Ashby
+ * draws a radio as a colour-filled circle, so every row reads "☐" whatever is chosen.
+ */
+check(`an Ashby radio with no tick anywhere is unreadable, not a difference`,
+  verifyFields(N1_RELOCATE, [{ label: RELOCATE, value: "Yes", type: "radio" }])[0]?.status === "value-not-located",
+  verifyFields(N1_RELOCATE, [{ label: RELOCATE, value: "Yes", type: "radio" }])[0]);
+check(`and it is NOT reported`,
+  gaps(N1_RELOCATE, [{ label: RELOCATE, value: "Yes", type: "radio" }]).length === 0);
+// The detection that is KEPT: a lone checkbox renders "☐" when it really is empty.
+check(`a lone unticked checkbox IS still reported`,
+  gaps(N1_RELOCATE, [{ label: RELOCATE, value: "Yes", type: "checkbox" }]).length === 1,
+  gaps(N1_RELOCATE, [{ label: RELOCATE, value: "Yes", type: "checkbox" }]));
 
 // Zip: a bare box with no option text beside it cannot say which option it is.
 const ZIP_AUTH: ScreenBlock[] = [
@@ -464,6 +475,25 @@ const CIRCLEBACK: ScreenBlock[] = [
 check(`a bare "Yes" does not match the "Yes, but…" row`,
   verifyFields(CIRCLEBACK, [{ label: "Are you authorized to work in the United States? We can transfer work visas and we will sponsor visas.", value: "Yes" }])[0]?.status === "value-not-located",
   verifyFields(CIRCLEBACK, [{ label: "Are you authorized to work in the United States? We can transfer work visas and we will sponsor visas.", value: "Yes" }])[0]);
+
+/** Circleback, verbatim: FOUR options, every one "☐", on an application that reached review. */
+const CIRCLEBACK_FULL: ScreenBlock[] = [
+  { label: "checkbox", text: "Are you authorized to work in the United States?*\nWe can transfer work visas and we will sponsor visas.\n☐ Yes, but I will need visa sponsorship in the future\n☐ Yes, but I will need a visa transfer\n☐ Yes\n☐ No, I can't legally work in the US yet", box: [531, 1730, 950, 1921], order: 32, checked: false },
+];
+const AUTHQ = "Are you authorized to work in the United States? We can transfer work visas and we will sponsor visas.";
+check(`four options and not one tick is unreadable`,
+  verifyFields(CIRCLEBACK_FULL, [{ label: AUTHQ, value: "Yes", type: "radio" }])[0]?.status === "value-not-located",
+  verifyFields(CIRCLEBACK_FULL, [{ label: AUTHQ, value: "Yes", type: "radio" }])[0]);
+// But when the engine DOES render a tick it has shown it can read this widget, so judge it.
+const CIRCLEBACK_TICKED: ScreenBlock[] = [
+  { label: "checkbox", text: "Are you authorized to work in the United States?*\n☐ Yes, but I will need visa sponsorship in the future\n☑ Yes\n☐ No, I can't legally work in the US yet", box: [531, 1730, 950, 1921], order: 32, checked: true },
+];
+check(`a tick in the group makes it readable — and this one matches`,
+  verifyFields(CIRCLEBACK_TICKED, [{ label: "Are you authorized to work in the United States?", value: "Yes", type: "radio" }])[0]?.status === "match",
+  verifyFields(CIRCLEBACK_TICKED, [{ label: "Are you authorized to work in the United States?", value: "Yes", type: "radio" }])[0]);
+check(`and the WRONG row ticked is still a difference`,
+  verifyFields(CIRCLEBACK_TICKED, [{ label: "Are you authorized to work in the United States?", value: "No, I can't legally work in the US yet", type: "radio" }])[0]?.status === "different",
+  verifyFields(CIRCLEBACK_TICKED, [{ label: "Are you authorized to work in the United States?", value: "No, I can't legally work in the US yet", type: "radio" }])[0]);
 
 console.log("\na posting heading is not a form field");
 /** HP IQ, verbatim: "Why HP IQ?" is a heading in the DESCRIPTION column, blurb underneath. */
