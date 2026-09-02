@@ -357,13 +357,19 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
       }
       const at = new Date().toISOString();
 
-      if (command.failed || !command.screenText?.trim()) {
+      /**
+       * Blocks alone ARE an OCR result. The guard reads "no text" as "the engine gave us nothing",
+       * but field-level judging works from the BLOCKS, so a caller that sends those and no joined
+       * text was being answered "unavailable" — which is indistinguishable from x8ocr being down.
+       */
+      const hasBlocks = Array.isArray(command.blocks) && command.blocks.length > 0;
+      if (command.failed || (!command.screenText?.trim() && !hasBlocks)) {
         await setVisualCheck(entry.key, { state: "unavailable", jobId: command.jobId, at });
         return { ok: true, message: `[${command.code}] visual cross-check unavailable (${command.failed ?? "no text"}) — not blocking` };
       }
 
       const gaps = evaluateScreen(
-        command.screenText,
+        command.screenText ?? "",
         (entry.answers ?? []).map((a) => ({ label: a.label, value: a.value, type: a.type })),
         { blocks: command.blocks as never, capability: command.capability as never },
       );

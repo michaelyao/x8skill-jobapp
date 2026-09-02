@@ -100,10 +100,22 @@ async function main(): Promise<void> {
       continue;
     }
     const blocks = result.blocks;
+    /**
+     * SEND THE TEXT AS WELL AS THE BLOCKS. An empty screenText is how the worker recognises "OCR
+     * gave us nothing", so leaving it blank made every re-judge age straight out to "unavailable"
+     * without the new judging ever running — the tool reported ten queued re-judges and changed
+     * ten verdicts to "we could not check", which reads like a downed service rather than a bug
+     * here. The blocks carry the text already, so joining them costs nothing and also feeds the
+     * page-level fallback when the engine's boxes are not exact.
+     */
+    const screenText = (blocks ?? [])
+      .map((b) => String((b as { text?: unknown }).text ?? ""))
+      .filter((t) => t.trim())
+      .join("\n");
     await enqueueCommand({
       name: "visual_check",
       code,
-      screenText: "",
+      screenText,
       blocks,
       capability: result.capability as Record<string, unknown> | undefined,
       source: "recheck-screens",
