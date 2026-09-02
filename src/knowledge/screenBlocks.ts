@@ -247,6 +247,13 @@ function locateFrom(
      */
     .filter((b) => {
       const t = (b.text ?? "").trim();
+      /**
+       * "No" IS TWO CHARACTERS AND IS NOT GARBAGE. The length floor below exists for icons, rules
+       * and OCR artefacts, but it silently discarded every bare "No" on the page — which is how a
+       * Yes/No button pair only ever reached the judge as "Yes", and four applications were
+       * reported as answering the opposite of what was recorded.
+       */
+      if (/^(yes|no)$/i.test(t)) return true;
       if (t.length < 3) return false;
       const letters = (t.match(/[a-z0-9]/gi) ?? []).length;
       return letters / t.length >= 0.4;
@@ -382,6 +389,13 @@ export function tickVerdictFor(
     const y = labelKey(b);
     return Boolean(x && y && (x === y || x.startsWith(y) || y.startsWith(x)));
   };
+  /**
+   * A BARE "Yes" must match a row EXACTLY. Circleback offers "Yes, but I will need sponsorship"
+   * alongside a plain "Yes", and prefix tolerance made our recorded "Yes" match the sponsorship
+   * row — then reported the application as wrong because that row was not ticked. Two different
+   * answers, one of them a claim Nathan never made.
+   */
+  const exactly = (row: string, value: string) => labelKey(row) === labelKey(value);
   const wantsTicked = /^(yes|true|checked|i agree|agree|on|selected)$/i.test(recorded.trim());
   const isYesNo = /^(yes|no|true|false)$/i.test(recorded.trim());
 
@@ -396,11 +410,7 @@ export function tickVerdictFor(
     const byOption = rows.find((r) => same(r.row, named));
     if (byOption) return byOption.ticked === wantsTicked ? "match" : "different";
   }
-  if (isYesNo) {
-    const byValue = rows.find((r) => same(r.row, recorded));
-    if (byValue) return byValue.ticked ? "match" : "different";
-  }
-  const byValue = rows.find((r) => same(r.row, recorded));
+  const byValue = rows.find((r) => (isYesNo ? exactly(r.row, recorded) : same(r.row, recorded)));
   if (byValue) return byValue.ticked ? "match" : "different";
   return "unreadable";
 }
@@ -462,6 +472,22 @@ function judgeOne(
   if (/^\W*(yes\W+no|no\W+yes)\W*$/i.test(nearest) && /^(yes|no)$/i.test(recorded)) {
     return { label, recorded, onScreen: nearest, status: "value-not-located" };
   }
+  /**
+   * THE PAIR IS OFTEN TWO BLOCKS, NOT ONE. Ashby renders Yes and No as separate buttons side by
+   * side, so OCR reports them as separate regions and the rule above — which needs both words in
+   * one block — never fired. The checker then quoted whichever sat nearer the label and reported
+   * four applications as answering the OPPOSITE of what was recorded, including "requires visa
+   * sponsorship" on a US citizen. Selection is marked by colour, which this engine does not report,
+   * so the pair is unreadable however it is split.
+   */
+  if (/^(yes|no)$/i.test(recorded)) {
+    const words = (found.candidates ?? [found.value])
+      .map((c) => labelKey(c?.text ?? ""))
+      .filter((t) => t === "yes" || t === "no");
+    if (new Set(words).size === 2) {
+      return { label, recorded, onScreen: "Yes / No (which one is marked is not readable)", status: "value-not-located" };
+    }
+  }
 
   /**
    * ANY block within reach may hold the value. A question is often followed by helper text and
@@ -480,6 +506,16 @@ function judgeOne(
   if (looksEmpty(shown)) return { label, recorded, onScreen: shown, status: "empty" };
   if (looksLikeProse(shown, recorded)) return { label, recorded, onScreen: shown, status: "value-not-located" };
   if (carriesAnUnsetControl(shown)) return { label, recorded, onScreen: shown, status: "value-not-located" };
+  /**
+   * A `title` BLOCK IS A DOCUMENT HEADING, and a heading that matches a long written answer is
+   * almost always the POSTING'S own section, not the form's field label. Both HP IQ applications
+   * were reported as wrong because "Why HP IQ?" was found as a heading in the job description
+   * column and the paragraph under it — the employer's blurb about themselves — was quoted as our
+   * answer. A form labels a textarea; it does not head a section with the question.
+   */
+  if (found.label.label === "title" && words(recorded) > 12) {
+    return { label, recorded, onScreen: shown, status: "value-not-located" };
+  }
   if (rendersEveryOption(type)) return { label, recorded, onScreen: shown, status: "value-not-located" };
   return { label, recorded, onScreen: shown, status: "different" };
 }

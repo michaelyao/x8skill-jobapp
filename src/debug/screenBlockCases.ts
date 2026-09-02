@@ -439,6 +439,52 @@ check(`a date recorded against a checkbox region is unreadable`,
   verifyFields(DV_GRAD, [{ label: "Please re-confirm your expected graduation date", value: "January 2028 - July 2028" }])[0]?.status === "value-not-located",
   verifyFields(DV_GRAD, [{ label: "Please re-confirm your expected graduation date", value: "January 2028 - July 2028" }])[0]);
 
+console.log("\nthe yes/no pair, however OCR splits it");
+/**
+ * Pylon (Ashby), verbatim: the two buttons are SEPARATE blocks at the same y. The rule that
+ * already existed needed both words in one block, so this went unhandled and the checker quoted
+ * whichever was nearer — reporting a US citizen as requiring visa sponsorship on four
+ * applications.
+ */
+const ASHBY_PAIR: ScreenBlock[] = [
+  { label: "text", text: "Will you now or in the future require sponsorship for employment visa status (e.g., H-1B visa status)? $ ^{*} $", box: [532, 1354, 1195, 1398], order: 35 },
+  { label: "text", text: "Yes", box: [559, 1426, 593, 1447], order: 36 },
+  { label: "text", text: "No", box: [640, 1425, 669, 1449], order: 37 },
+];
+const SPONSOR = "Will you now or in the future require sponsorship for employment visa status (e.g., H-1B visa status)?";
+check(`Yes and No as two blocks is unreadable, not the opposite answer`,
+  verifyFields(ASHBY_PAIR, [{ label: SPONSOR, value: "No" }])[0]?.status === "value-not-located",
+  verifyFields(ASHBY_PAIR, [{ label: SPONSOR, value: "No" }])[0]);
+check(`and nothing is reported`, gaps(ASHBY_PAIR, [{ label: SPONSOR, value: "No" }]).length === 0);
+
+/** Circleback: "Yes" must not prefix-match "Yes, but I will need sponsorship". */
+const CIRCLEBACK: ScreenBlock[] = [
+  { label: "checkbox", text: "Are you authorized to work in the United States?*\nWe can transfer work visas and we will sponsor visas.\n○ Yes, but I will need sponsorship\n○ No", box: [531, 1730, 950, 1921], order: 32, checked: false },
+];
+check(`a bare "Yes" does not match the "Yes, but…" row`,
+  verifyFields(CIRCLEBACK, [{ label: "Are you authorized to work in the United States? We can transfer work visas and we will sponsor visas.", value: "Yes" }])[0]?.status === "value-not-located",
+  verifyFields(CIRCLEBACK, [{ label: "Are you authorized to work in the United States? We can transfer work visas and we will sponsor visas.", value: "Yes" }])[0]);
+
+console.log("\na posting heading is not a form field");
+/** HP IQ, verbatim: "Why HP IQ?" is a heading in the DESCRIPTION column, blurb underneath. */
+const HP_POSTING: ScreenBlock[] = [
+  { label: "title", text: "Why HP IQ?", box: [292, 2382, 390, 2422], order: 25 },
+  { label: "text", text: "HP IQ is HP's new AI innovation lab, building the intelligence to empower humanity—reimagining how we work, create, and connect to shape the future of work.", box: [294, 2420, 1116, 2478], order: 26 },
+];
+const ESSAY_HP = "HP IQ sits at the intersection of AI and real hardware — exactly where I want to build. My work at Gravitas Medical processing binary sensor logs from medical feeding tubes and building computer-vision pipelines taught me that the most impactful software runs close to the metal.";
+check(`the employer's own blurb is not quoted as our answer`,
+  verifyFields(HP_POSTING, [{ label: "Why HP IQ?", value: ESSAY_HP }])[0]?.status === "value-not-located",
+  verifyFields(HP_POSTING, [{ label: "Why HP IQ?", value: ESSAY_HP }])[0]);
+// The exemption is for WRITTEN answers only: a heading with a short value and a short box under
+// it is still judged. (A long blurb against a short value is caught earlier, by the prose rule.)
+const HEADING_SHORT: ScreenBlock[] = [
+  { label: "title", text: "Current location", box: [292, 400, 460, 430], order: 4 },
+  { label: "text", text: "New York City", box: [294, 445, 430, 470], order: 5 },
+];
+check(`a short answer under a heading is still judged`,
+  verifyFields(HEADING_SHORT, [{ label: "Current location", value: "Sunnyvale, CA" }])[0]?.status === "different",
+  verifyFields(HEADING_SHORT, [{ label: "Current location", value: "Sunnyvale, CA" }])[0]);
+
 console.log("\nthe fixes must not silence a real gap");
 // The new rules must not swallow the cases they resemble.
 const OTHER_ESSAY: ScreenBlock[] = [
