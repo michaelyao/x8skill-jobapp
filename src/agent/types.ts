@@ -33,6 +33,17 @@ export interface FieldSpec {
   groupLabel?: string;
   groupRequired?: boolean;
   filled?: boolean; // does the control currently hold a value? (undefined = couldn't tell)
+  /**
+   * WHAT it currently holds, when the control will say.
+   *
+   * `filled` alone was not enough. A prefilled field is left as it is — right, for a dialling code
+   * the tenant derived — but nothing was then RECORDED for it, and the readiness gate builds its
+   * "answered" set from the recorded answers. So Michelin reached Review and was refused with "3
+   * field(s) the form marks REQUIRED have no answer: How Did You Hear About Us?, Degree, Do you
+   * have friends or relatives…" — two of which the form was holding correctly. The review the
+   * candidate reads should show what the form says, not what this run happened to type.
+   */
+  value?: string;
 }
 
 /** What the reader returns each turn — the state the agent reasons over. */

@@ -277,7 +277,25 @@ export async function runApplication(
             );
             continue;
           }
-          console.log(`    ↳ already has a value, leaving it: ${field.label.slice(0, 60)}`);
+          /**
+           * RECORD WHAT THE FORM HOLDS. Leaving it alone is right; recording nothing is not. The
+           * readiness gate builds its "answered" set from these, so a correctly prefilled required
+           * field was refused at Review as having no answer — and the review the candidate reads
+           * showed a blank where the form had a value.
+           */
+          if (field.value?.trim()) {
+            answersByLabel.set(field.label, {
+              label: field.label,
+              type: field.type,
+              value: field.value.trim(),
+              widget: field.widget,
+            });
+            filledLabels.add(field.label);
+          }
+          console.log(
+            `    ↳ already has a value, leaving it: ${field.label.slice(0, 48)}` +
+              `${field.value?.trim() ? ` = ${JSON.stringify(field.value.trim().slice(0, 30))}` : ""}`,
+          );
           continue;
         }
         if (!unknown.includes(field.label)) unknown.push(field.label);

@@ -693,10 +693,10 @@ export class WorkdayDriver extends GenericDriver {
           .slice(0, 160);
         // The button text is the current value, so it doubles as the "is it answered?" signal —
         // and it must be reported, or a WRONG value reads as an empty field and is never fixed.
-        if (label) out.push({ section, key, label, required, filled: !placeholder });
+        if (label) out.push({ section, key, label, required, filled: !placeholder, value: placeholder ? '' : txt });
       }
       return out;
-    })()`)) as Array<{ section?: string; key: string; label: string; required: boolean; filled: boolean }>;
+    })()`)) as Array<{ section?: string; key: string; label: string; required: boolean; filled: boolean; value?: string }>;
 
     // Capture each combobox's real options (open → read → close) so the agent
     // picks an exact option rather than us guessing with fuzzy matching.
@@ -848,6 +848,7 @@ export class WorkdayDriver extends GenericDriver {
       snapshot.fields.push({
         key: sel,
         section: combo.section,
+        value: combo.value,
         label: combo.label,
         type: "single_select",
         required: combo.required,
@@ -895,15 +896,15 @@ export class WorkdayDriver extends GenericDriver {
           }
         }
         const section = [h3, h4].filter(Boolean).join(' / ');
-        out.push({ section, key, label, required, type: inp.tagName.toLowerCase() === 'textarea' ? 'textarea' : 'text', filled: !!inp.value });
+        out.push({ section, key, label, required, type: inp.tagName.toLowerCase() === 'textarea' ? 'textarea' : 'text', filled: !!inp.value, value: String(inp.value || '').slice(0, 300) });
       }
       return out;
-    })()`)) as Array<{ section?: string; key: string; label: string; required: boolean; type: string; filled: boolean }>;
+    })()`)) as Array<{ section?: string; key: string; label: string; required: boolean; type: string; filled: boolean; value?: string }>;
 
     for (const t of texts) {
       if (t.filled || !t.label) continue;
       if (snapshot.fields.some((f) => f.key === t.key || f.label === t.label)) continue;
-      snapshot.fields.push({ key: t.key, section: t.section, label: t.label, type: t.type as FieldSpec["type"], required: t.required, sensitive: isSensitive(t.label), filled: false });
+      snapshot.fields.push({ key: t.key, section: t.section, value: t.value, label: t.label, type: t.type as FieldSpec["type"], required: t.required, sensitive: isSensitive(t.label), filled: false });
     }
     return snapshot;
   }
