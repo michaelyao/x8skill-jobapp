@@ -10,6 +10,7 @@ import {
   type ScreenCapability,
 } from "./screenBlocks.js";
 import { recordOcrOutcome } from "./ocrHealth.js";
+import { mergeTileBlocks, planTiles, type Tile } from "./tiles.js";
 
 /**
  * What the page LOOKS like, via OCR of the review screenshot — the one source of truth the DOM
@@ -114,6 +115,50 @@ function serialise<T>(work: () => Promise<T>): Promise<T> {
     () => undefined,
   );
   return run;
+}
+
+/**
+ * READ A PAGE IN SLICES, and return one result in the page's own coordinates.
+ *
+ * A full-page capture of a long form cannot be read at all — measured, with paddleocr unreachable:
+ * 1761px in 9-16s, 3080px and 12206px both dead after 301s. So the shot is taken in overlapping
+ * slices no taller than MAX_TILE_HEIGHT and the blocks are put back together.
+ *
+ * A tile that fails does NOT sink the page. Its region is simply unread, which is the same
+ * situation as a value OCR did not detect, and the field-level rules already treat an
+ * unattributable field as unlocatable rather than as a fault. Only ALL tiles failing means the
+ * checker could not read this page.
+ */
+export async function ocrLayoutTiled(
+  shoot: (tile: Tile, index: number) => Promise<string | null>,
+  pageHeight: number,
+): Promise<LayoutResult | null> {
+  const tiles = planTiles(pageHeight);
+  const perTile: Array<{ tile: Tile; blocks: ScreenBlock[] }> = [];
+  const texts: string[] = [];
+  let capability: ScreenCapability | undefined;
+  let lastFailure = "";
+  for (const [i, tile] of tiles.entries()) {
+    const file = await shoot(tile, i);
+    if (!file) { lastFailure = "the slice could not be captured"; continue; }
+    const one = await ocrLayout(file).catch(() => null);
+    if (!one || one.unavailable) {
+      lastFailure = one?.unavailable ?? "x8ocr returned nothing";
+      console.log(`  [ocr] slice ${i + 1}/${tiles.length} (y=${tile.offsetY}) failed: ${lastFailure}`);
+      continue;
+    }
+    capability ??= one.capability;
+    perTile.push({ tile, blocks: (one.blocks ?? []) as ScreenBlock[] });
+    for (const b of (one.blocks ?? []) as ScreenBlock[]) if (String(b.text ?? "").trim()) texts.push(String(b.text));
+  }
+  if (!perTile.length) return { unavailable: lastFailure || "no slice could be read" } as LayoutResult;
+  if (perTile.length < tiles.length) {
+    console.log(`  [ocr] read ${perTile.length} of ${tiles.length} slice(s) — the rest of the page is unread, not wrong`);
+  }
+  // The callers that want plain text join the blocks themselves; `texts` is kept only to report
+  // how much was read.
+  void texts;
+  return { blocks: mergeTileBlocks(perTile), capability };
 }
 
 export async function ocrLayout(

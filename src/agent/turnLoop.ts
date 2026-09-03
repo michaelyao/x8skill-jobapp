@@ -3,6 +3,8 @@ import { ocrLayout } from "../knowledge/visualCheck.js";
 import { boxesAreExact, textIsLiteral, unansweredOnScreen } from "../knowledge/screenBlocks.js";
 import type { Page } from "playwright";
 import type { DocumentUploads, HistoryOutcome, Agent, AgentContext, AtsDriver, FieldSpec, FilledAnswer } from "./types.js";
+import { ocrLayoutTiled } from "../knowledge/visualCheck.js";
+import { planTiles } from "../knowledge/tiles.js";
 
 
 /**
@@ -262,13 +264,47 @@ export async function runApplication(
     // No cap. A long form is exactly the case this exists for, and an application that takes
     // minutes longer but is right beats one that is quick and wrong.
     pagesVerified += 1;
+    /**
+     * SLICED, because a full-page capture of a long form cannot be read.
+     *
+     * Measured with paddleocr unreachable: 1761px read in 9-16s, 3080px and 12206px both dead
+     * after 301s. It is the pixel height, not the byte size. This check therefore passed on short
+     * pages and failed on exactly the long ones it matters most for, which is what refused every
+     * approved application and sent it back to be approved again.
+     *
+     * The full-page shot is still written, because the website shows it and recheck:screens
+     * re-judges it. Only the OCR is sliced.
+     */
     const shot = path.join(opts.runDir, `page-${pagesVerified}.png`);
+    let pageHeight = 0;
     try {
       await page.screenshot({ path: shot, fullPage: true });
+      pageHeight = Number(
+        await page.evaluate(
+          "(() => Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0))()",
+        ),
+      );
     } catch {
       return;
     }
-    const layout = await ocrLayout(shot).catch(() => null);
+    const width = Number(
+      await page
+        .evaluate("(() => document.documentElement.clientWidth || window.innerWidth)()")
+        .catch(() => 1440),
+    );
+    const layout = await ocrLayoutTiled(async (tile, i) => {
+      if (planTiles(pageHeight).length === 1) return shot; // already readable; do not re-shoot
+      const file = path.join(opts.runDir!, `page-${pagesVerified}-slice${i + 1}.png`);
+      try {
+        await page.screenshot({
+          path: file,
+          clip: { x: 0, y: tile.offsetY, width: width || 1440, height: tile.height },
+        });
+        return file;
+      } catch {
+        return null;
+      }
+    }, pageHeight || 1).catch(() => null);
     /**
      * A CHECKER THAT IS DOWN STOPS THE RUN.
      *
