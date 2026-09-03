@@ -47,6 +47,35 @@ import type {
 } from "../types.js";
 
 /** The queue entry for this job, if a previous fill left one. */
+/**
+ * SCROLL EVERYTHING TO THE TOP BEFORE CAPTURING.
+ *
+ * `fullPage: true` captures the whole DOCUMENT, which is not the whole PAGE when the content sits
+ * in a scrollable container: Workday's Review screen does, and the capture came out 6109px tall
+ * STARTING AT "Education" — My Information and all three Work Experience rows simply absent. The
+ * candidate said the screenshot only showed one experience; I checked the height, saw fullPage,
+ * and told him scrolling would add nothing. He then asked "for the screenshot, you can scroll up
+ * and take screenshot, right?", which is the fix.
+ *
+ * A review nobody can see the top of is not a review, and this is the artefact an approval is
+ * given against.
+ */
+async function scrollToTop(page: Page): Promise<void> {
+  await page
+    .evaluate(`(() => {
+      window.scrollTo(0, 0);
+      document.documentElement.scrollTop = 0;
+      if (document.body) document.body.scrollTop = 0;
+      // Any ancestor that scrolls its own content — the review panel is one of these.
+      for (const el of Array.from(document.querySelectorAll("*"))) {
+        if (el.scrollTop > 0 && el.scrollHeight > el.clientHeight + 4) el.scrollTop = 0;
+      }
+      return true;
+    })()`)
+    .catch(() => undefined);
+  await page.waitForTimeout(250);
+}
+
 async function findPendingEntry(key: string) {
   return (await loadPendingQueue()).find((e) => e.key === key || e.code === key);
 }
@@ -444,6 +473,7 @@ export async function applyToJob(
 
     if (!result.reachedReview) {
       const dbg = path.join(runDir, `debug-${job.id ?? "job"}.png`);
+      await scrollToTop(jobPage);
       await jobPage.screenshot({ path: dbg, fullPage: true }).catch(() => undefined);
       console.log(`  ⚠ stopped before review (${result.filled.length} filled) — debug: ${dbg}`);
       if (result.blockedRequired.length) {
@@ -473,6 +503,7 @@ export async function applyToJob(
     // the old "review payload" existed only to be rendered into an email — every field of it
     // is already on the queue entry written below.
     const shotPath = path.join(runDir, `review-${job.id ?? "job"}.png`);
+    await scrollToTop(jobPage);
     await jobPage.screenshot({ path: shotPath, fullPage: true }).catch(() => undefined);
     console.log(`  Review screenshot: ${shotPath}`);
 

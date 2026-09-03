@@ -474,6 +474,21 @@ export async function runApplication(
     const shot = path.join(opts.runDir, `page-${pagesVerified}.png`);
     let pageHeight = 0;
     try {
+      // The same reason as applyJob's scrollToTop: fullPage is the whole DOCUMENT, and Workday's
+      // content sits in a scrollable container, so a capture taken mid-scroll silently loses
+      // everything above the fold — the review screenshot came out starting at "Education".
+      await page
+        .evaluate(`(() => {
+          window.scrollTo(0, 0);
+          document.documentElement.scrollTop = 0;
+          if (document.body) document.body.scrollTop = 0;
+          for (const el of Array.from(document.querySelectorAll("*"))) {
+            if (el.scrollTop > 0 && el.scrollHeight > el.clientHeight + 4) el.scrollTop = 0;
+          }
+          return true;
+        })()`)
+        .catch(() => undefined);
+      await page.waitForTimeout(250);
       await page.screenshot({ path: shot, fullPage: true });
       pageHeight = Number(
         await page.evaluate(
