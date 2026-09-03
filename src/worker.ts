@@ -317,6 +317,36 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
           note: command.answers?.length ? "approved in website (answers edited)" : "approved in website",
         },
       );
+      /**
+       * "WILL RETRY" HAD TO ACTUALLY RETRY.
+       *
+       * A submit blocked because the visual checker did not answer told the reviewer "it will go
+       * through once the checker is back" — and then nothing ever tried again. The entry went back
+       * to awaiting_approval and the only thing that could move it was the same human approving a
+       * second time, for an infrastructure hiccup they had no part in. Four approvals sat like that.
+       *
+       * The approval is a DECISION and it still stands; the checker being down is not a change of
+       * mind. So the command is re-queued here, bounded by the same attempt counter that already
+       * governs it (3), and only for reasons that retrying can actually fix. Drift — a required
+       * question the approved answers do not cover — is NOT one of those: that needs a fresh
+       * review, and re-queueing it would spin.
+       */
+      const transient = /visual checker did not answer|browser is busy|context (was )?destroyed|target (page|closed)/i.test(
+        outcome.message ?? "",
+      );
+      if (outcome.result === "will_retry" && transient) {
+        await enqueueCommand({
+          name: "approve",
+          code: command.code,
+          source: "auto-retry",
+          actor: command.actor ?? command.source,
+          answers: command.answers,
+        } as never);
+        return {
+          ok: true,
+          message: `${outcome.message} — re-queued automatically; your approval stands and does not need repeating`,
+        };
+      }
       // A hold is not a failure — the command ran, and the correct answer was "don't submit".
       // It is reported as ok so the website shows the reason rather than a red FAILED.
       return {
