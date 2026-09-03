@@ -1,7 +1,7 @@
 import { loadEnv } from "../utils/env.js";
 loadEnv();
 import { loadAnswers } from "../knowledge/answerStore.js";
-import { mustComeFromRecords, storedAnswerFor } from "../agent/llmAgent.js";
+import { isAreasOfInterest, mustComeFromRecords, softwareInterests, storedAnswerFor } from "../agent/llmAgent.js";
 
 /**
  * Cases for finding a recorded answer despite the prefix our own reader adds.
@@ -53,6 +53,39 @@ for (const yes of ["Degree", "Education — Degree", "Field of Study", "Undergra
   check(`"${yes}" must come from records`, mustComeFromRecords(yes), yes);
 for (const no of ["Degree of confidence in your answer", "First Name", "School or University", "Start Date", "Why us?"])
   check(`"${no}" is not one of them`, !mustComeFromRecords(no) || no === "Degree of confidence in your answer", no);
+
+
+console.log("\nareas of interest — software-related, and R&D counts");
+// The kind of list these forms actually offer.
+const OFFERED = [
+  "Software Engineering", "Research and Development", "Data Science", "Cybersecurity",
+  "Hardware Engineering", "Mechanical Engineering", "Marketing", "Finance", "Human Resources",
+  "Supply Chain", "Information Technology",
+];
+const picked = softwareInterests(OFFERED);
+check(`Software Engineering is picked`, picked.includes("Software Engineering"), picked);
+check(`Research and Development counts, as instructed`, picked.includes("Research and Development"), picked);
+check(`Data Science is picked`, picked.includes("Data Science"));
+check(`Cybersecurity is picked`, picked.includes("Cybersecurity"));
+check(`Information Technology is picked`, picked.includes("Information Technology"));
+check(`Hardware Engineering is NOT — the standing guardrail`, !picked.includes("Hardware Engineering"), picked);
+check(`Mechanical Engineering is NOT`, !picked.includes("Mechanical Engineering"));
+check(`Marketing, Finance, HR and Supply Chain are NOT`,
+  !picked.some((p) => /marketing|finance|human resource|supply chain/i.test(p)), picked);
+
+console.log("\nrecognising that question, and not others");
+for (const yes of [
+  "What areas are you interested in for a co-op or internship? Select all that apply.",
+  "Which fields are you interested in?",
+  "Areas of interest",
+  "What teams are you interested in?",
+]) check(`"${yes.slice(0, 44)}" is the interests question`, isAreasOfInterest(yes), yes);
+for (const no of [
+  "Are you interested in relocating?",
+  "What is your area of study?",
+  "Why are you interested in this role?",
+  "First Name",
+]) check(`"${no}" is NOT`, !isAreasOfInterest(no), no);
 
 console.log(`\n${fail ? "✗" : "✓"} ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -276,6 +276,34 @@ export function mustComeFromRecords(label: string): boolean {
   return RECORDED_FACT_ONLY.test(label);
 }
 
+/**
+ * Which "areas of interest" to tick, when a form offers a list and says select all that apply.
+ *
+ * The candidate's rule: software-engineering related, and RESEARCH AND DEVELOPMENT counts. He is
+ * applying for software internships, so the answer is not a judgement the model should be making
+ * fresh on each tenant — one form's "Software Engineering / Data Science / R&D / Marketing /
+ * Finance" is the same question as the next one's, worded differently.
+ *
+ * Hardware is deliberately NOT included, and that is the same standing guardrail that keeps
+ * firmware and embedded roles out of the job list: those are not suitable, so ticking them here
+ * would invite exactly the interview this system is supposed to avoid.
+ */
+const SOFTWARE_INTEREST =
+  /software|computer scien|computer engineer|information technolog|\bIT\b|web|cloud|data (scien|engineer|analyt)|machine learning|artificial intelligence|\bAI\b|cyber ?security|research and development|\bR&D\b|application develop|programming/i;
+
+const NOT_SOFTWARE_INTEREST =
+  /hardware|firmware|embedded|mechanic|electric|civil|chemical|industrial design|manufactur|supply chain|marketing|sales|finance|accounting|human resource|legal|communications|graphic design/i;
+
+export function softwareInterests(options: readonly string[]): string[] {
+  return options.filter((o) => SOFTWARE_INTEREST.test(o) && !NOT_SOFTWARE_INTEREST.test(o));
+}
+
+/** Is this the "what are you interested in" question? */
+export function isAreasOfInterest(label: string): boolean {
+  return /\b(area|areas|field|fields|discipline|function|department|team)s?\b/i.test(label) &&
+    /\binterest(ed|s)?\b/i.test(label);
+}
+
 export function isPhoneCountryCode(label: string): boolean {
   const l = label.toLowerCase();
   if (!/\bcode\b/.test(l)) return false;
@@ -917,6 +945,35 @@ export class LlmAgent implements Agent {
       answer.needsHuman = true;
       answer.draft = false;
       answer.source = "curated";
+    }
+
+    /**
+     * "What areas are you interested in… select all that apply" — tick the software-engineering
+     * ones, counting research and development, and leave hardware alone. Only when the form has
+     * told us what it offers; guessing at option wording is what put a dialling code in a country
+     * field.
+     */
+    for (const field of snapshot.fields) {
+      if (!isAreasOfInterest(field.label) || !field.options?.length) continue;
+      const wanted = softwareInterests(field.options);
+      if (!wanted.length) {
+        console.log(
+          `  [agent] "${field.label.slice(0, 40)}" offers nothing software-related among ` +
+            `${field.options.length}: ${field.options.slice(0, 4).map((o) => o.slice(0, 18)).join(" | ")}`,
+        );
+        continue;
+      }
+      let answer = answers.find((a) => a.key === field.key);
+      if (!answer) {
+        answer = { key: field.key, value: "", confidence: 0, needsHuman: true, source: "curated" };
+        answers.push(answer);
+      }
+      answer.value = wanted.join(", ");
+      answer.source = "curated";
+      answer.confidence = 1;
+      answer.needsHuman = false;
+      answer.draft = false;
+      console.log(`  [agent] areas of interest → ${wanted.join(", ")}`);
     }
 
     // "How did you hear about us?" — prefer the campus channel when the list offers one, per the
