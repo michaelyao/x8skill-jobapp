@@ -757,14 +757,40 @@ export class WorkdayDriver extends GenericDriver {
               `rather than reading someone else's`,
           );
         }
+        /**
+         * THE POPUP LIVES INSIDE THE FIELD'S OWN CONTAINER on some tenants.
+         *
+         * The fill path has always known this — scopedOptions climbs from the control to its
+         * formField ancestor and reads the option rows there — while the read path only ever
+         * looked for aria-controls or a global activeListContainer. Michelin has neither, so
+         * "How Did You Hear About Us?" was read with NO options, the campus rule could not fire,
+         * the model guessed "LinkedIn", and the fill then discovered the real list too late:
+         *
+         *     · select[LinkedIn] 7 option(s): Campus Campaign | Career Websites | Employee
+         *       Referral | Job Board
+         *
+         * There is no LinkedIn among them. The answer was decided before anyone knew what was on
+         * offer. Same locator in both places, so the agent chooses from the list the filler will
+         * actually be looking at.
+         */
+        const nearby = root
+          .locator(sel)
+          .locator(
+            'xpath=ancestor::*[@data-automation-id="multiSelectContainer" or starts-with(@data-automation-id,"formField")][1]',
+          )
+          .locator(
+            'xpath=.//*[@data-automation-id="promptOption" or @role="option"][not(ancestor::*[@data-automation-id="selectedItemList" or @data-automation-id="selectedItem"])]',
+          );
         const opt = owns
           ? root.locator("#" + esc(owns) + ' [role="option"], #' + esc(owns) + ' [data-automation-id="promptOption"]')
-          : opened
-            ? root.locator(
-                '[data-automation-id="activeListContainer"] [role="option"], ' +
-                  '[data-automation-id="activeListContainer"] [data-automation-id="promptOption"]',
-              )
-            : root.locator("#__never_matches__");
+          : (await nearby.count().catch(() => 0)) > 0
+            ? nearby
+            : opened
+              ? root.locator(
+                  '[data-automation-id="activeListContainer"] [role="option"], ' +
+                    '[data-automation-id="activeListContainer"] [data-automation-id="promptOption"]',
+                )
+              : root.locator("#__never_matches__");
         const n = await opt.count().catch(() => 0);
         const list: string[] = [];
         for (let k = 0; k < n; k += 1) {
