@@ -9,6 +9,7 @@ import {
   type ScreenBlock,
   type ScreenCapability,
 } from "./screenBlocks.js";
+import { recordOcrOutcome } from "./ocrHealth.js";
 
 /**
  * What the page LOOKS like, via OCR of the review screenshot — the one source of truth the DOM
@@ -127,7 +128,16 @@ export async function ocrLayout(
   timeoutMs = 600_000,
 ): Promise<LayoutResult | null> {
   if (!fs.existsSync(imagePath)) return null;
-  return serialise(() => ocrLayoutOnce(imagePath, timeoutMs));
+  const result = await serialise(() => ocrLayoutOnce(imagePath, timeoutMs));
+  /**
+   * TELL THE HEALTH FILE WHAT ACTUALLY HAPPENED. probeOcr posts no image, so it reports a
+   * reachable service as healthy while every real check fails — which is exactly what happened
+   * when both of x8ocr's engines were down and the red flag never lit.
+   */
+  await recordOcrOutcome(Boolean(result) && !result?.unavailable, result?.unavailable ?? "no result").catch(
+    () => undefined,
+  );
+  return result;
 }
 
 async function ocrLayoutOnce(imagePath: string, timeoutMs: number): Promise<LayoutResult | null> {

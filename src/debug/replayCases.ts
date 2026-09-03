@@ -1,6 +1,6 @@
 import { HybridAgent } from "../agent/hybridAgent.js";
 import type { Agent, AgentContext, FieldAnswer, FieldSpec, PageSnapshot } from "../agent/types.js";
-import type { FilledAnswer } from "../types.js";
+import type { FilledAnswer } from "../agent/types.js";
 
 /**
  * Cases for replaying an APPROVED set onto a live form.  npm run test:replay

@@ -26,6 +26,8 @@ export interface OcrHealth {
   reason?: string;
   /** When it last worked, so the page can say how long it has been out. */
   lastOkAt?: string;
+  /** Real checks that have failed in a row. A probe cannot see this; only the checks can. */
+  consecutiveFailures?: number;
 }
 
 const HEALTH_PATH = path.join(DATA_DIR, "ocr-health.json");
@@ -47,6 +49,41 @@ export async function writeOcrHealth(ok: boolean, reason?: string): Promise<void
     checkedAt: now,
     ...(ok ? {} : { reason }),
     lastOkAt: ok ? now : previous?.lastOkAt,
+  };
+  const tmp = `${HEALTH_PATH}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(health, null, 2), "utf8");
+  await fs.rename(tmp, HEALTH_PATH);
+}
+
+/**
+ * WHAT THE REAL CALLS FOUND — which is not the same question as "does the service answer".
+ *
+ * `probeOcr` posts no image, so a reachable x8ocr answers it whatever state its engines are in.
+ * On 2026-09-02 both engines were failing — paddleocr "fetch failed" on every call, and the
+ * gemini fallback returning no text for a 1.5MB full-page capture — and the probe went on
+ * reporting ok. So the red flag never lit, the worker never stopped, and four approvals were
+ * ground through one at a time, each waiting 300 seconds for a checker that could not answer and
+ * each landing back in the queue asking the candidate to approve again.
+ *
+ * A verdict about the checker has to come from the checks. Consecutive real failures mark it
+ * down; one success clears it. The threshold is above one because a single timeout on a huge
+ * screenshot is not an outage.
+ */
+const CONSECUTIVE_FAILURES_MEAN_DOWN = 3;
+
+export async function recordOcrOutcome(ok: boolean, reason?: string): Promise<void> {
+  const previous = await readOcrHealth();
+  const failures = ok ? 0 : (previous?.consecutiveFailures ?? 0) + 1;
+  const down = failures >= CONSECUTIVE_FAILURES_MEAN_DOWN;
+  const now = new Date().toISOString();
+  const health: OcrHealth = {
+    ok: !down,
+    checkedAt: now,
+    ...(down
+      ? { reason: `${failures} consecutive checks failed — ${reason ?? "no reason given"}` }
+      : {}),
+    lastOkAt: ok ? now : previous?.lastOkAt,
+    consecutiveFailures: failures,
   };
   const tmp = `${HEALTH_PATH}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(health, null, 2), "utf8");
