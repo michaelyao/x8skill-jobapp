@@ -106,7 +106,23 @@ export function normaliseOption(text: string): string {
     .toLowerCase();
 }
 
-export const SUBMIT = /submit application|^submit$/i;
+/**
+ * RECOGNISING the submit control — never clicking it. Reaching it with every required field
+ * filled is what "reached review" MEANS, so a wording this misses turns a finished application
+ * into "did not reach review".
+ *
+ * Waymo's button reads "Submit my application". The old pattern wanted the two words adjacent or
+ * the whole name to be exactly "submit", so a complete 19-field application — every required
+ * question answered, resume attached — was recorded as a failure and never queued for approval.
+ *
+ * Clicking is guarded elsewhere and independently: SUBMIT_TEXT_BLOCKLIST is a substring test, so
+ * "submit my application" was already blocked by "submit", and NEXT never matched it either.
+ * Widening what we RECOGNISE cannot make anything clickable.
+ */
+export const SUBMIT =
+  /^submit$|\bsubmit (my |your |the )?application\b|\bsend (my |your |the )?application\b|\bcomplete application\b/i;
+// ^submit$ stays EXACT. Loosening it to /^submit\b/ matched "Submit a question to the recruiter",
+// which is not this form's submit control — the case below was written for that and caught it.
 export const APPLY = /^(apply|apply now|apply for this (job|role|position)|apply to this job|i'?m interested)\b/i;
 export const NEXT = /^(next|continue|save and continue|review|save|proceed)\b/i;
 

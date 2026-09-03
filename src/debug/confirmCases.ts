@@ -1,4 +1,5 @@
 import { confirmsSubmission } from "../agent/drivers/base.js";
+import { SUBMIT } from "../agent/drivers/base.js";
 
 /**
  * Cases for "has this application already been submitted?".  npm run test:confirm
@@ -44,6 +45,24 @@ check(`an empty page`, confirmsSubmission("") === false);
 check(`a form still asking for things`,
   confirmsSubmission("Apply for this job. First name. Last name. Resume. Submit application") === false,
   confirmsSubmission("Apply for this job. First name. Last name. Resume. Submit application"));
+
+/**
+ * RECOGNISING a submit control. Waymo's says "Submit my application" and the old pattern missed
+ * it, so a complete application with every required field answered was recorded as "did not reach
+ * review" and never queued. Clicking is blocked separately and independently.
+ */
+console.log("\nthe submit control's wording");
+const submits = (name: string) => SUBMIT.test(name);
+check(`"Submit my application" is a submit control`, submits("Submit my application"));
+check(`"Submit application" is`, submits("Submit application"));
+check(`"Submit your application" is`, submits("Submit your application"));
+check(`"Submit" is`, submits("Submit"));
+check(`"Send my application" is`, submits("Send my application"));
+check(`"Complete application" is`, submits("Complete application"));
+check(`"Save and Continue" is NOT`, !submits("Save and Continue"));
+check(`"Next" is NOT`, !submits("Next"));
+check(`"Submit a question to the recruiter" is NOT an application submit`,
+  !submits("Submit a question to the recruiter"), SUBMIT.exec("Submit a question to the recruiter"));
 
 console.log(`\n${fail ? "✗" : "✓"} ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
