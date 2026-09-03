@@ -88,5 +88,40 @@ check(`and keeps shorter fallbacks behind it`, searchProbes("California").includ
 check(`a short value is not padded into nonsense`, searchProbes("Yes").every((p) => "Yes".startsWith(p) || p === "Yes"), searchProbes("Yes"));
 check(`stopwords never become a probe`, !searchProbes("Bachelor of Science and the Arts").includes("and"), searchProbes("Bachelor of Science and the Arts"));
 
+/**
+ * MICHELIN'S "What is your current major?" — ten options, none of them the stored wording.
+ *
+ * The store holds "Computer and Information Science" (a Workday taxonomy entry). This list offers
+ * "Computer Science, Computer Engineering" and "Information Systems Technology". Nothing matched,
+ * the model's own "Information Systems Technology" was refused as an invented field of study, and
+ * the question went out blank — while the RESUME's "Information Systems" names that option token
+ * for token.
+ */
+const MICHELIN_MAJORS = [
+  "Mechanical Engineering",
+  "Chemical Engineering, Materials Sciences and Engineering",
+  "Electrical Engineering",
+  "Computer Science, Computer Engineering",
+  "Information Systems Technology",
+  "Environmental Engineering",
+  "Chemistry, Physics, Math or Other Sciences",
+  "Sales & Business, Marketing",
+  "Supply Chain, Logistics",
+  "Other Non-Technical Degree",
+];
+console.log("\nMichelin's major list");
+check(`the resume's "Information Systems" names "Information Systems Technology"`,
+  JSON.stringify(optionForRecorded(MICHELIN_MAJORS, "Information Systems")) ===
+    '{"kind":"reworded","option":"Information Systems Technology"}',
+  optionForRecorded(MICHELIN_MAJORS, "Information Systems"));
+check(`the stored taxonomy wording is absent from this list, and says so`,
+  optionForRecorded(MICHELIN_MAJORS, "Computer and Information Science").kind === "absent");
+check(`an unrelated major is absent rather than guessed`,
+  optionForRecorded(MICHELIN_MAJORS, "Basket Weaving").kind === "absent");
+check(`it does not settle for "Other Non-Technical Degree"`,
+  JSON.stringify(optionForRecorded(MICHELIN_MAJORS, "Information Systems")).includes("Other") === false);
+check(`an exact option is exact`,
+  optionForRecorded(MICHELIN_MAJORS, "Electrical Engineering").kind === "exact");
+
 console.log(`\n${fail ? "✗" : "✓"} ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

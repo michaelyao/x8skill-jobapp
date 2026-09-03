@@ -144,7 +144,13 @@ export async function runApplication(
   const drafts: string[] = [];
   const unknown: string[] = [];
   const failedToFill: string[] = [];
-  const observed = new Map<string, FieldSpec>(); // label+type → first sighting, insertion-ordered
+  // page → (label+type → the field as that page LAST read it). See the read loop for why.
+  const observedByPage = new Map<string, Map<string, FieldSpec>>();
+  const observed = (): Map<string, FieldSpec> => {
+    const all = new Map<string, FieldSpec>();
+    for (const forPage of observedByPage.values()) for (const [k, f] of forPage) all.set(k, f);
+    return all;
+  };
   let blockedRequired: string[] = [];
   const answers = () => [...answersByLabel.values()];
   // How many times a field we believe we filled has come back empty on re-read.
@@ -623,9 +629,30 @@ export async function runApplication(
      */
     const where = driver.pageLabel ? await driver.pageLabel(root).catch(() => "") : "";
     if (where) console.log(`    on ${where}`);
-    for (const f of snapshot.fields) {
-      const k = `${f.label}\u0000${f.type}`;
-      if (!observed.has(k)) observed.set(k, f);
+    /**
+     * EACH PAGE CONTRIBUTES ITS LATEST SNAPSHOT, NOT ITS FIRST.
+     *
+     * This was a first-sighting map: a field seen once was kept forever, with the `filled` state
+     * it had at that moment. So when ticking "I currently work here" on Work Experience 1 made
+     * Workday REMOVE that row's To date — the screenshot shows only From* 08/2026, there is no To
+     * box on the page — the two To fields stayed on the record as required and unanswered, and the
+     * readiness gate refused a finished application over fields the form itself had taken away.
+     * Michelin was blocked on exactly that, twice.
+     *
+     * Keyed by PAGE, because the union across pages is what a multi-page form is: My Information's
+     * fields are legitimately absent while we are on My Experience, so "not in the last read"
+     * cannot mean "gone" globally. Within one page, the newest read wins and fields that vanished
+     * from it are dropped — and every field's `filled` state is the final one rather than a
+     * mid-fill guess.
+     *
+     * A read that came back EMPTY replaces nothing: a page that failed to read is not a page whose
+     * fields all disappeared.
+     */
+    const pageKey = where || `turn-${turns}`;
+    if (snapshot.fields.length) {
+      const forPage = new Map<string, FieldSpec>();
+      for (const f of snapshot.fields) forPage.set(`${f.label}\u0000${f.type}`, f);
+      observedByPage.set(pageKey, forPage);
     }
     console.log(`  [turn ${turns}] ${snapshot.fields.length} field(s), submitReady=${snapshot.submitReady}`);
     const filledBefore = filled.length;
@@ -779,11 +806,11 @@ export async function runApplication(
    * always known how to record.
    */
   const confirmation = (await driver.submissionConfirmed?.(root).catch(() => false)) ?? false;
-  const sawAForm = observed.size > 0;
+  const sawAForm = observed().size > 0;
   const submittedUnexpectedly = confirmation && sawAForm;
   if (submittedUnexpectedly) {
     console.log(
-      `  ⛔ THE PAGE IS A SUBMISSION CONFIRMATION and this run read ${observed.size} field(s) on the way — ` +
+      `  ⛔ THE PAGE IS A SUBMISSION CONFIRMATION and this run read ${observed().size} field(s) on the way — ` +
         "the form was live when we arrived, so this application went in DURING THIS RUN, without approval.",
     );
   } else if (confirmation) {
@@ -797,7 +824,7 @@ export async function runApplication(
     drafts,
     unknown,
     failedToFill,
-    observedFields: [...observed.values()],
+    observedFields: [...observed().values()],
     reachedReview,
     alreadyApplied: confirmation && !sawAForm,
     blockedRequired,

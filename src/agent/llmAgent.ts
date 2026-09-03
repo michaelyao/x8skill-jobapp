@@ -1013,6 +1013,38 @@ export class LlmAgent implements Agent {
       const answer = answers.find((a) => a.key === field.key);
       if (!answer || !answer.value.trim()) continue;
       if (answer.source === "curated" || answer.source === "profile") continue;
+
+      /**
+       * A CLOSED LIST MAY NAME THE RECORD DIFFERENTLY, AND THAT IS NOT A GUESS.
+       *
+       * Michelin asks "What is your current major?" as ten options, among them
+       * "Computer Science, Computer Engineering" and "Information Systems Technology". The stored
+       * answer is "Computer and Information Science" — a Workday taxonomy entry, absent from this
+       * list — so nothing matched and the model's "Information Systems Technology" was refused as
+       * invented. It was the right option: the resume says Information Systems, and
+       * optionForRecorded maps that phrase onto "Information Systems Technology" token for token.
+       * The question went out BLANK on a finished application over a naming difference.
+       *
+       * So before refusing, ask the RESUME. It is a record — parsed from the file, never from the
+       * model — and the mapping is optionForRecorded's, which only accepts an option that spells
+       * the record out. An ambiguous or absent match still refuses, which is what keeps this from
+       * becoming "pick something plausible".
+       */
+      const fromResume = resumeFactsFor(ctx).fieldOfStudy?.trim();
+      if (fromResume && field.options?.length) {
+        const mapped = optionForRecorded(field.options, fromResume);
+        if (mapped.kind === "exact" || mapped.kind === "reworded") {
+          if (mapped.option.trim().toLowerCase() !== answer.value.trim().toLowerCase()) {
+            console.log(
+              `  [agent] "${field.label.slice(0, 40)}": the list does not use the recorded wording, but the ` +
+                `resume's ${JSON.stringify(fromResume)} names ${JSON.stringify(mapped.option)} — using that`,
+            );
+          }
+          answer.value = mapped.option;
+          answer.source = "profile";
+          continue;
+        }
+      }
       console.log(
         `  [agent] REFUSING an invented answer for "${field.label.slice(0, 40)}": ` +
           `${JSON.stringify(answer.value.slice(0, 40))} — a degree or field of study comes from your ` +
