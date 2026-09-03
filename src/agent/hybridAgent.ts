@@ -58,13 +58,29 @@ export class HybridAgent implements Agent {
       const list = this.byLabel.get(exact) ?? this.byMarkerless.get(markerlessKey(field.label));
       const stored = list?.[index];
 
-      if (stored?.value) {
+      /**
+       * AN APPROVED BLANK IS AN ANSWER.
+       *
+       * This tested `stored?.value`, so an approved empty string — falsy — read as "no approved
+       * answer for this field" and went to the LLM as a gap. The candidate approved "" for
+       * Pony.ai's "Summary (Optional)", meaning he does not want a summary on it; the replay then
+       * wrote a nine-line summary, the drift check compared it against the approved "" and held
+       * the application for re-approval, telling him the FORM had changed. Nothing had changed
+       * except our own filling, and the one thing he had explicitly decided was the thing we
+       * overrode.
+       *
+       * So the test is whether an approved answer EXISTS for this occurrence, not whether it has
+       * text in it. `blank` marks it answered-and-empty, which is what stops the turn loop
+       * reporting it as "no answer available".
+       */
+      if (stored) {
         answers.set(field.key, {
           key: field.key,
-          value: stored.value,
+          value: stored.value ?? "",
           confidence: 1,
           source: "curated",
           draft: stored.draft,
+          blank: !String(stored.value ?? "").trim(),
         });
         continue;
       }

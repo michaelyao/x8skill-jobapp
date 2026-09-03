@@ -33,7 +33,8 @@
     "recheck:screens": "tsx src/debug/recheckScreens.ts",
     "test:options": "tsx src/debug/optionMatchCases.ts",
     "test:confirm": "tsx src/debug/confirmCases.ts",
-    "audit:emails": "tsx src/debug/confirmationEmails.ts"
+    "audit:emails": "tsx src/debug/confirmationEmails.ts",
+    "test:replay": "tsx src/debug/replayCases.ts"
   },
   "repository": {
     "type": "git",
