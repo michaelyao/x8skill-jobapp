@@ -125,6 +125,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ code: s
         requisitionId={app?.companyReqId ?? entry.companyReqId}
         role={user?.role ?? "reviewer"}
         hasScreenshot={Boolean(app?.lastRunDir)}
+        queuedDecision={queuedDecision ? DECISION_WORDS[queuedDecision.name] ?? queuedDecision.name : undefined}
       />
       <p className="muted" style={{ fontSize: 13, marginTop: 14 }}>
         <a href={`/history/${code}`}>History — every recorded copy of this application</a>

@@ -15,6 +15,16 @@ interface Props {
   requisitionId?: string;
   role: string;
   hasScreenshot: boolean;
+  /**
+   * A decision already sitting in the command queue, in the words the buttons use.
+   *
+   * The worker applies commands one at a time, so between the click and the result the page still
+   * shows the OLD state — and it went on offering "Approve & submit" for an application that was a
+   * few seconds away from being recorded as already submitted by hand. The worker would refuse the
+   * approve (it reads the ledger, and manual_submitted is a submitted status), but being asked at
+   * all reads as though the decision had not been taken, which is how the same mark gets made twice.
+   */
+  queuedDecision?: string;
 }
 
 type Answer = { label: string; value: string; draft?: boolean };
@@ -39,7 +49,7 @@ const DECIDED: Record<string, string> = {
  * with no LLM involved. "Submitted == approved" holds because the edit happens BEFORE the
  * approval, not after it.
  */
-export function ReviewPanel({ entry, description, requisitionId, role, hasScreenshot }: Props) {
+export function ReviewPanel({ entry, description, requisitionId, role, hasScreenshot, queuedDecision }: Props) {
   // A held job is the interesting case: the approved answers are stale, and what needs
   // reviewing is what the re-fill actually produced. Show THAT, or approving would authorize
   // a set of values that is no longer what the form holds.
@@ -198,14 +208,14 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
 
       <div className="card" style={{ borderColor: "var(--accent)" }}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          <button className="primary" onClick={approve} disabled={busy !== null || decided !== null}>
+          <button className="primary" onClick={approve} disabled={busy !== null || decided !== null || Boolean(queuedDecision)}>
             {busy === "approve" ? "Sending…" : edited ? `Approve with ${editedCount} edit${editedCount === 1 ? "" : "s"}` : "Approve & submit"}
           </button>
-          <button onClick={() => send("skip")} disabled={busy !== null || decided !== null}>Skip</button>
-          <button onClick={() => setConfirmManual(true)} disabled={busy !== null || decided !== null || confirmManual}>
+          <button onClick={() => send("skip")} disabled={busy !== null || decided !== null || Boolean(queuedDecision)}>Skip</button>
+          <button onClick={() => setConfirmManual(true)} disabled={busy !== null || decided !== null || Boolean(queuedDecision) || confirmManual}>
             I submitted this myself…
           </button>
-          <button onClick={() => setShowChange((v) => !v)} disabled={busy !== null || decided !== null}>Request re-fill…</button>
+          <button onClick={() => setShowChange((v) => !v)} disabled={busy !== null || decided !== null || Boolean(queuedDecision)}>Request re-fill…</button>
           {edited ? <span className="pill warn">{editedCount} edited — these become the approved answers</span> : null}
           {edited ? (
             <label className="muted" style={{ fontSize: 13, display: "flex", gap: 6, alignItems: "center" }}>
@@ -236,7 +246,7 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
               <button
                 className="primary"
                 style={{ background: "var(--good, #2f9e44)" }}
-                disabled={busy !== null || decided !== null}
+                disabled={busy !== null || decided !== null || Boolean(queuedDecision)}
                 onClick={async () => {
                   await send("manual_submit");
                   setConfirmManual(false);
@@ -256,7 +266,7 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
           <div style={{ marginTop: 12 }}>
             <label htmlFor="change">Describe what to change — the agent re-fills the form and comes back for approval</label>
             <textarea id="change" rows={3} value={changeText} onChange={(e) => setChangeText(e.target.value)} placeholder="e.g. use the Pittsburgh address" />
-            <button style={{ marginTop: 8 }} disabled={!changeText.trim() || busy !== null || decided !== null} onClick={() => send("change", { instruction: changeText.trim() })}>
+            <button style={{ marginTop: 8 }} disabled={!changeText.trim() || busy !== null || decided !== null || Boolean(queuedDecision)} onClick={() => send("change", { instruction: changeText.trim() })}>
               Send re-fill request
             </button>
             <p className="muted" style={{ fontSize: 12 }}>
