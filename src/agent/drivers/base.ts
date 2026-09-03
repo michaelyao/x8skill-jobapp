@@ -114,6 +114,61 @@ export const NEXT = /^(next|continue|save and continue|review|save|proceed)\b/i;
  * handles both inline forms and iframe-embedded ones. Concrete drivers provide
  * detect / openApplication / resolveRoot / next as needed.
  */
+/**
+ * DOES THIS PAGE SAY THE APPLICATION IS IN?
+ *
+ * A pure function because it is the guard that turned a repeat submission at HP IQ from
+ * seventeen hours of silence into a log line at the moment it happened — and because it MISSED
+ * one. DV Trading's Greenhouse confirmation reads:
+ *
+ *   "Thank you for your interest in DV Trading! We've received your application and will be in
+ *    touch if your background is a strong match for the role."
+ *
+ * and the old pattern missed it three separate ways: it wanted "we HAVE received" so a
+ * CONTRACTION defeated it, it wanted "thank you for your interest in THE" so any company name
+ * defeated it, and its "application received" alternative could not see the words in the order
+ * every ATS actually writes them — "received your application". WREEFN sat in the queue as
+ * awaiting_approval for eighteen days with the employer already holding the application, one
+ * approval away from being sent twice.
+ *
+ * Biased towards DETECTING. A false positive marks a job engaged and loses the opportunity
+ * quietly; a false negative sends a second application to an employer, which cannot be undone.
+ * The doctrine here is already written down: re-submitting is not undoable.
+ */
+export function confirmsSubmission(pageText: string): boolean {
+  const text = pageText
+    .toLowerCase()
+    .replace(/[’‘`]/g, "'")
+    // Contractions, expanded so one apostrophe cannot hide a confirmation.
+    .replace(/\bwe've\b/g, "we have")
+    .replace(/\bwe're\b/g, "we are")
+    .replace(/\byou've\b/g, "you have")
+    .replace(/\bit's\b/g, "it is")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return false;
+  /**
+   * "once we have received your application" is a job description promising what happens NEXT,
+   * not a confirmation. The forward-looking framings are excluded before the rest is tested.
+   */
+  const forwardLooking = /(once|after|when|if) (we|your application)[^.!?]{0,40}receiv/.test(text);
+  const received =
+    !forwardLooking &&
+    /(we|they) (have|had) received your application|received your application[.! ]|your application (has been|was|is) (received|submitted|complete)/.test(
+      text,
+    );
+  return (
+    received ||
+    /thank(s| you) for applying/.test(text) ||
+    /thanks for your application/.test(text) ||
+    /application (has been |was )?(successfully )?(submitted|received)/.test(text) ||
+    /your application (to|for)[^.!?]{0,60}(has been|was) (received|submitted)/.test(text) ||
+    // "Thank you for your interest in <anything>" only counts WITH a submission statement, which
+    // the `received` test above already covers — on its own it is a job page's opening line.
+    false
+  );
+}
+
 export abstract class GenericDriver implements AtsDriver {
   abstract readonly type: "workday" | "ashby" | "greenhouse" | "lever" | "workable" | "oracle";
   abstract detect(page: Page): Promise<boolean>;
@@ -186,9 +241,7 @@ export abstract class GenericDriver implements AtsDriver {
       .replace(/\s+/g, " ")
       .toLowerCase();
     if (!text) return false;
-    return /(thank you for applying|thanks for applying|your application has been received|application (was )?(successfully )?(submitted|received)|we have received your application|thank you for your interest in the)/.test(
-      text,
-    );
+    return confirmsSubmission(text);
   }
 
   /** Click the final Submit button. Only invoked after explicit user confirmation. */
