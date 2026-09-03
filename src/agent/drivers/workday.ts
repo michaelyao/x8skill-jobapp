@@ -781,16 +781,29 @@ export class WorkdayDriver extends GenericDriver {
           .locator(
             'xpath=.//*[@data-automation-id="promptOption" or @role="option"][not(ancestor::*[@data-automation-id="selectedItemList" or @data-automation-id="selectedItem"])]',
           );
+        /**
+         * THE PORTAL, last, because that is where this tenant puts them.
+         *
+         * Measured with inspectOpenPrompt: role=option rows whose whole ancestry is `ul > li`,
+         * outside any formField and any activeListContainer. Reading them page-wide is what leaked
+         * one field's options to the next — but closeOpenMenu ran immediately above and waited for
+         * every menu to be gone, so a listbox with rows in it NOW is the one this click opened.
+         * That is the same attribution the fill path relies on, and it is why the fill path has
+         * been finding seven options all along while the read path found none.
+         */
+        const portal = root.locator('[role="listbox"]:visible:has([role="option"]) [role="option"]');
         const opt = owns
           ? root.locator("#" + esc(owns) + ' [role="option"], #' + esc(owns) + ' [data-automation-id="promptOption"]')
           : (await nearby.count().catch(() => 0)) > 0
             ? nearby
-            : opened
-              ? root.locator(
-                  '[data-automation-id="activeListContainer"] [role="option"], ' +
-                    '[data-automation-id="activeListContainer"] [data-automation-id="promptOption"]',
-                )
-              : root.locator("#__never_matches__");
+            : (await portal.count().catch(() => 0)) > 0
+              ? portal
+              : opened
+                ? root.locator(
+                    '[data-automation-id="activeListContainer"] [role="option"], ' +
+                      '[data-automation-id="activeListContainer"] [data-automation-id="promptOption"]',
+                  )
+                : root.locator("#__never_matches__");
         const n = await opt.count().catch(() => 0);
         const list: string[] = [];
         for (let k = 0; k < n; k += 1) {
@@ -948,7 +961,22 @@ export class WorkdayDriver extends GenericDriver {
      * activeListContainer is the OPEN prompt specifically — the name says so, and it is what the
      * option-capture code has always keyed on.
      */
-    const menu = root.locator('[data-automation-id="activeListContainer"]').first();
+    /**
+     * TWO SHAPES OF OPEN MENU, and this tenant has the one neither earlier version could see.
+     *
+     * inspectOpenPrompt dumped the option rows: `role=option`, ancestry `ul > li`, NOT inside a
+     * formField and NOT inside an activeListContainer — a portal at body level with no automation
+     * id anywhere above it. So keying on activeListContainer alone could never close it, which is
+     * what "a prompt menu will not close" was reporting, truthfully.
+     *
+     * The first version DID match [role="listbox"] and was too broad: a multi-select keeps an
+     * empty listbox in the page permanently, so every call thought a menu was open and burned six
+     * seconds. The discriminator is CONTENT — a listbox holding option rows is an open menu; an
+     * empty one is furniture.
+     */
+    const menu = root
+      .locator('[data-automation-id="activeListContainer"]:visible, [role="listbox"]:visible:has([role="option"])')
+      .first();
     for (let attempt = 0; attempt < 2; attempt += 1) {
       if (!(await menu.isVisible().catch(() => false))) return;
       await (root as Page).keyboard?.press("Escape").catch(() => undefined);
@@ -976,6 +1004,26 @@ export class WorkdayDriver extends GenericDriver {
       else await (root as Page).keyboard?.press("Escape").catch(() => undefined);
       await (root as Page).waitForTimeout?.(1000);
     }
+  }
+
+  /**
+   * The step, in Workday's own words — h3 is the step name and the progress bar carries "step N of
+   * M". inspectWorkdayStructure showed h2 is the JOB TITLE, identical on every step, which is why
+   * anything built on h2 could not tell one page from another.
+   */
+  async pageLabel(root: Root): Promise<string> {
+    return (
+      ((await root
+        .evaluate(`(() => {
+          var h3 = document.querySelector('h3');
+          var name = ((h3 && h3.textContent) || "").replace(/\\s+/g, " ").trim();
+          var cur = document.querySelector('[aria-current="step"]');
+          var step = ((cur && cur.textContent) || "").replace(/\\s+/g, " ").trim();
+          var m = step.match(/step\\s+(\\d+)\\s+of\\s+(\\d+)/i) || document.body.innerText.match(/current step\\s+(\\d+)\\s+of\\s+(\\d+)/i);
+          return (m ? "step " + m[1] + " of " + m[2] + " — " : "") + (name || step || "(unnamed page)");
+        })()`)
+        .catch(() => "")) as string) || "(page unknown)"
+    );
   }
 
   async next(root: Root): Promise<boolean> {

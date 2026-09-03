@@ -467,6 +467,13 @@ export async function runApplication(
       break;
     }
     const snapshot = await driver.read(root);
+    /**
+     * SAY WHICH PAGE THIS IS. Every turn, from the page itself — not inferred from how many fields
+     * came back. "17 field(s)" told nobody whether this was My Information for the third time or
+     * My Experience for the first.
+     */
+    const where = driver.pageLabel ? await driver.pageLabel(root).catch(() => "") : "";
+    if (where) console.log(`    on ${where}`);
     for (const f of snapshot.fields) {
       const k = `${f.label}\u0000${f.type}`;
       if (!observed.has(k)) observed.set(k, f);

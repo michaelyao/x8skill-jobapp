@@ -153,6 +153,15 @@ export interface AtsDriver {
    */
   pruneSkills?(root: Root): Promise<string[]>;
   /**
+   * WHICH PAGE ARE WE ON? Asked, not inferred.
+   *
+   * The turn loop counted fields and inferred the rest, which is how a rejected page carrying two
+   * extra validation fields passed as a page that had turned, and how a run filled My Information
+   * three times over. Workday prints "step 3 of 8 — My Experience" on screen; there is no need to
+   * guess at it.
+   */
+  pageLabel?(root: Root): Promise<string>;
+  /**
    * Fill repeatable Education / Experience sections, which are not ordinary fields: each entry is
    * an editing panel that must be COMMITTED with its own Update button before the next can be
    * added, and the fields vanish from the DOM once committed. The generic reader cannot see that

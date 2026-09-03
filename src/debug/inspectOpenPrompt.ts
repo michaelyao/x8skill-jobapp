@@ -74,6 +74,27 @@ const dump = await page.evaluate(`(() => {
       box: [Math.round(r.x), Math.round(r.y), Math.round(r.width)],
     });
   }
+  // WHERE DO THE OPTION ROWS ACTUALLY LIVE? Two attempts at fixing read-time option capture by
+  // reasoning about locators both failed, while the fill path finds seven options every time. So
+  // stop reasoning: find every option row on the page and print its ancestry.
+  out.optionRows = [];
+  for (const row of document.querySelectorAll('[data-automation-id="promptOption"], [role="option"], [class*="select__option"]')) {
+    if (row.offsetParent === null) continue;
+    const parts = [];
+    for (let n = row; n && n !== document.body; n = n.parentElement) {
+      const id = n.getAttribute && n.getAttribute("data-automation-id");
+      if (id) parts.unshift(id);
+      else if (n.tagName === "UL" || n.tagName === "LI") parts.unshift(n.tagName.toLowerCase());
+    }
+    out.optionRows.push({
+      text: (row.textContent || "").trim().slice(0, 26),
+      automationId: row.getAttribute("data-automation-id") || "",
+      role: row.getAttribute("role") || "",
+      inFormField: Boolean(row.closest('[data-automation-id^="formField"]')),
+      inActiveList: Boolean(row.closest('[data-automation-id="activeListContainer"]')),
+      ancestry: parts.slice(0, 7).join(" > "),
+    });
+  }
   const lc = document.querySelector('[data-automation-id="activeListContainer"]');
   if (lc) {
     out.list = {
@@ -90,6 +111,13 @@ console.log("FOCUSED after the click (this is what pressSequentially types into)
 console.log(`  ${JSON.stringify(d.activeElement)}\n`);
 console.log("THE OPEN LIST:");
 console.log(`  ${JSON.stringify(d.list)}\n`);
+const rows = (dump as { optionRows?: Array<Record<string, unknown>> }).optionRows ?? [];
+console.log(`OPTION ROWS ON THE PAGE (${rows.length}) — where they live:`);
+for (const r of rows.slice(0, 10)) {
+  console.log(`  "${String(r.text).padEnd(26)}" id=${String(r.automationId || "-").padEnd(14)} role=${String(r.role || "-").padEnd(8)} formField=${r.inFormField ? "Y" : "n"} activeList=${r.inActiveList ? "Y" : "n"}`);
+  console.log(`     ${r.ancestry}`);
+}
+console.log("");
 console.log(`VISIBLE INPUTS (${d.inputs.length}) — inList / inFormField / focused:`);
 for (const i of d.inputs) {
   console.log(`  ${i.focused ? "FOCUSED" : "       "} ${String(i.tag + (i.type ? ":" + i.type : "")).padEnd(12)} list=${i.inList ? "Y" : "n"} field=${i.inFormField ? "Y" : "n"} id=${String(i.automationId).slice(0, 28).padEnd(30)} aria="${i.aria}"`);
