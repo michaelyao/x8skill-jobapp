@@ -206,6 +206,34 @@ export async function runApplication(
        * answer was worse: the filler typed the placeholder into the taxonomy and was offered
        * "Skill Development".
        */
+      /**
+       * ONE ANSWER PER EXCLUSIVE GROUP.
+       *
+       * Michelin's Self Identify page asks about disability as three mutually exclusive options,
+       * and the loop answered all three:
+       *
+       *     ✓ Yes, I have a disability, or have had one in the past
+       *     ✓ No, I do not have a disability and have not had one in the past
+       *     ✓ I do not want to answer
+       *
+       * Three contradictory answers to one question about someone's health, and the form then
+       * refused to advance. The grouping was already read — groupKey, groupLabel — but only the
+       * required-group GATE consulted it; the fill loop treated each option as its own question.
+       *
+       * RADIO only. A checkbox group is "select all that apply" and multiple ticks are the point,
+       * which is how the areas-of-interest answer works.
+       */
+      if (
+        field.type === "radio" &&
+        field.groupLabel &&
+        filledLabels.has(`group:${field.groupLabel}`)
+      ) {
+        console.log(
+          `    ↳ "${field.groupLabel.slice(0, 40)}" is already answered — not also ticking ` +
+            `"${field.label.slice(0, 40)}"`,
+        );
+        continue;
+      }
       if (driver.fillsWithoutAnswer?.(field) && !field.filled) {
         const done = await withDeadline(
           driver.fill(root, field, { key: field.key, value: "", confidence: 1, source: "curated" }),
@@ -315,7 +343,13 @@ export async function runApplication(
         filled.push(`${field.label}: ${answer.value}${answer.draft ? " (DRAFT)" : ""}`);
         filledLabels.add(field.label);
         // A ticked box satisfies its whole group; an untouched one ("No") does not.
-        if (field.groupKey && field.groupLabel && /^(yes|true|checked)/i.test(answer.value.trim())) {
+        /**
+         * A ticked box satisfies its whole group; an untouched one ("No") does not. For a RADIO,
+         * choosing any option is the answer — including "I do not want to answer", which is a
+         * legitimate response to a self-identification question and must not leave the group
+         * looking unanswered.
+         */
+        if (field.groupKey && field.groupLabel && (field.type === "radio" || /^(yes|true|checked)/i.test(answer.value.trim()))) {
           filledLabels.add(`group:${field.groupLabel}`);
         }
         answersByLabel.set(field.label, { label: field.label, type: field.type, value: answer.value, widget: field.widget, draft: answer.draft });
