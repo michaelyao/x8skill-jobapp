@@ -367,6 +367,8 @@ export async function applyToJob(
       { company: job.company, title: job.title, resumeText: profile.resumeText || "", profile, answers, jobDescription: jobDescriptionResolved, changeInstruction: opts.changeInstruction },
       {
         resumePath: resume.path,
+        // How many jobs to enter, so the driver can add the rows Workday will not render on its own.
+        experienceCount: parseResumeHistory(profile.resumeText || profile.rawText || "").experience?.length ?? 0,
         interactive: opts.interactive,
         maxTurns: driver.type === "workday" ? 18 : 8,
         // Where the per-page verification screenshots go. Without it that check is skipped.

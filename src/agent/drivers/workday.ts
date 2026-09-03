@@ -570,6 +570,101 @@ export class WorkdayDriver extends GenericDriver {
 
   // Workday shows a loading/branding modal between steps; wait for it to clear
   // (and dismiss it if it hangs), then wait for fields, or the reader sees 0.
+  /**
+   * ADD THE ROWS THE HISTORY NEEDS BEFORE READING THE PAGE.
+   *
+   * Workday renders ONE Work Experience row and expects a click on "Add" for each further one.
+   * Nothing in this codebase ever clicked it, so every application entered exactly one job — the
+   * candidate has seven on his resume, and the review screenshot showing a single experience was
+   * read as a truncated screenshot rather than a missing history. The answering side was always
+   * ready: the prompt already carries the whole history "MOST RECENT FIRST" and read() already
+   * qualifies a repeated field as "Work Experience 2 — Company*".
+   *
+   * Runs BEFORE read(), for the same reason pruneSkills does: the review must show the form as it
+   * will be submitted, and a row that appears after the read is a row nothing fills.
+   *
+   * The page script only OBSERVES and clicks a marked button. How many rows to want is decided
+   * here, in TypeScript, and the click is CONFIRMED by re-counting: a click that dispatched
+   * without adding a row is reported as stuck, never as done.
+   */
+  async expandRepeatedBlocks(root: Root, wanted: number): Promise<{ section: string; from: number; to: number }[]> {
+    if (wanted < 2) return [];
+    const MARK = "data-jobapp-add";
+
+    /**
+     * Count the rows in a repeated section and mark its Add button.
+     *
+     * Both counts are returned because I cannot see this tenant's DOM from here and will not
+     * guess which signal is the real one: `panels` counts Workday's own repeated panel wrapper,
+     * `numbered` counts headings that name a row ("Work Experience 2"). The larger is used and
+     * BOTH are logged, so one live run says which to trust.
+     */
+    const OBSERVE = `(() => {
+      const clean = (t) => (t || "").replace(/\\s+/g, " ").trim();
+      const out = [];
+      const heads = Array.from(document.querySelectorAll("h2, h3, h4, legend"));
+      for (const h of heads) {
+        const name = clean(h.textContent);
+        if (!/^(work experience|employment|education|languages?)\\b/i.test(name)) continue;
+        // The section is the nearest ancestor that also holds the Add button for this heading.
+        let box = h.parentElement;
+        let add = null;
+        for (let lv = 0; lv < 6 && box; lv += 1) {
+          const buttons = Array.from(box.querySelectorAll('button, [role="button"], [data-automation-id="add-button"]'));
+          add = buttons.find((b) => /^(add|add another|add more)$/i.test(clean(b.textContent)) ||
+                                    /^(add|add another)$/i.test(clean(b.getAttribute("aria-label")))) || null;
+          if (add) break;
+          box = box.parentElement;
+        }
+        if (!box) continue;
+        const panels = box.querySelectorAll('[data-automation-id^="panelSet-"], [data-automation-id^="panel-Set"], [data-automation-id="panelSet"] > div').length;
+        const numbered = new Set(Array.from(box.querySelectorAll("h3, h4, legend, [aria-label]"))
+          .map((e) => clean(e.textContent) || clean(e.getAttribute("aria-label")))
+          .map((t) => (t.match(/^(work experience|employment|education|language)\\s+(\\d+)$/i) || [])[2])
+          .filter(Boolean)).size;
+        let mark = "";
+        if (add) {
+          mark = add.getAttribute("${MARK}") || String(out.length);
+          add.setAttribute("${MARK}", mark);
+        }
+        out.push({ section: name.slice(0, 40), panels: panels, numbered: numbered, mark: mark, hasAdd: !!add });
+      }
+      return out;
+    })()`;
+
+    type Seen = { section: string; panels: number; numbered: number; mark: string; hasAdd: boolean };
+    const observe = async () => ((await root.evaluate(OBSERVE).catch(() => [])) ?? []) as Seen[];
+
+    const grown: { section: string; from: number; to: number }[] = [];
+    for (const seen of await observe()) {
+      if (!/^(work experience|employment)/i.test(seen.section)) continue; // education/languages: one each
+      const count = (s: Seen) => Math.max(s.panels, s.numbered, 1);
+      const from = count(seen);
+      console.log(`    [workday] "${seen.section}": ${from} row(s) (panels=${seen.panels} numbered=${seen.numbered}), add button ${seen.hasAdd ? "found" : "NOT FOUND"}`);
+      if (!seen.hasAdd || from >= wanted) continue;
+
+      let have = from;
+      while (have < wanted) {
+        const button = root.locator(`[${MARK}="${seen.mark}"]`).first();
+        if (!(await button.count())) break;
+        await button.scrollIntoViewIfNeeded().catch(() => undefined);
+        await button.click().catch(() => undefined);
+        // Root may be a Page or a Locator; a locator carries its page, and a click just happened
+        // so there is always one to wait on.
+        await button.page().waitForTimeout(400);
+        const after = (await observe()).find((s) => s.section === seen.section);
+        const now = after ? count(after) : have;
+        if (now <= have) {
+          console.log(`    [workday] "${seen.section}" would not take another row — stopped at ${have}`);
+          break;
+        }
+        have = now;
+      }
+      if (have > from) grown.push({ section: seen.section, from, to: have });
+    }
+    return grown;
+  }
+
   async read(root: Root): Promise<PageSnapshot> {
     const page = root as Page;
     await page.waitForLoadState?.("networkidle").catch(() => undefined);

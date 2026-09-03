@@ -24,6 +24,11 @@ export class OcrUnavailableError extends Error {
 
 export interface TurnLoopOptions {
   resumePath: string;
+  /**
+   * How many jobs the resume lists. Passed in rather than read here: applyJob already parses the
+   * resume, and the turn loop has no business loading files. 0/undefined means "add no rows".
+   */
+  experienceCount?: number;
   maxTurns?: number;
   interactive?: boolean; // pause for a human when a field needs manual input
   // Ask the user (in the terminal) for a field's value. Returns the value to
@@ -541,6 +546,31 @@ export async function runApplication(
     // and a committed value reads as filled — so the fill path never revisits it and the wrong
     // ones would go in untouched. Reading after the prune also means the review email shows
     // the form as it will actually be submitted, not as the autofill left it.
+    /**
+     * ADD THE WORK-EXPERIENCE ROWS THE HISTORY NEEDS, before anything is read.
+     *
+     * Workday renders one row and waits for a click on "Add" for each further one, and nothing
+     * here ever clicked it — so every application carried exactly ONE job out of the seven on the
+     * resume. It read as a truncated screenshot rather than a missing employment history.
+     *
+     * How many: the resume's own count, capped by MAX_EXPERIENCE_BLOCKS (default 3, the most
+     * recent roles). The cap is not squeamishness about the history — the resume is attached and
+     * carries all of it — it is that each row is six more fields to fill and verify on a live
+     * form, and a run that stalls on row seven delivers nothing. Raise it with the env var.
+     */
+    if (driver.expandRepeatedBlocks) {
+      const onResume = opts.experienceCount ?? 0;
+      const cap = Number(process.env.MAX_EXPERIENCE_BLOCKS ?? 3);
+      const wanted = Math.min(onResume, Number.isFinite(cap) && cap > 0 ? cap : 3);
+      if (wanted > 1) {
+        const grown = await driver.expandRepeatedBlocks(root, wanted).catch(() => []);
+        for (const g of grown) {
+          console.log(`    + "${g.section}": ${g.from} → ${g.to} row(s) for ${onResume} on the resume`);
+          filled.push(`${g.section} — added ${g.to - g.from} row(s) (${g.to} of ${onResume} on the resume)`);
+        }
+      }
+    }
+
     if (driver.pruneSkills) {
       const dropped = await driver.pruneSkills(root).catch(() => [] as string[]);
       if (dropped.length) {
