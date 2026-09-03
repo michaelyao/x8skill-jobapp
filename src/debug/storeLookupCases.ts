@@ -1,6 +1,7 @@
 import { loadEnv } from "../utils/env.js";
 loadEnv();
 import { loadAnswers } from "../knowledge/answerStore.js";
+import { normalizeQuestion } from "../utils/normalize.js";
 import { isAreasOfInterest, mustComeFromRecords, preferredHearAboutUs, softwareInterests, storedAnswerFor } from "../agent/llmAgent.js";
 
 /**
@@ -133,6 +134,32 @@ check(`"Field of Study" still is`, mustComeFromRecords("Education — Field of S
 check(`"What is your current major?" still is`, mustComeFromRecords("What is your current major?") === true);
 check(`"Discipline*" still is`, mustComeFromRecords("Discipline*") === true);
 check(`an ordinary question is unaffected`, mustComeFromRecords("Job Title*") === false);
+
+/**
+ * A MAJOR IS A FIELD OF STUDY. Michelin's "What is your current major?" found nothing in the
+ * store, so the model answered "Information Systems Technology" and the do-not-invent rule
+ * refused it — the question went out blank while the answer sat on file under another name.
+ */
+console.log("\nthe store's aliases");
+const STORE = [
+  { normalizedQuestion: normalizeQuestion("Field of Study"), value: "Computer and Information Science" },
+  { normalizedQuestion: normalizeQuestion("Home address"), value: "318 Morse Ave, Sunnyvale, CA 94085" },
+];
+const found = (label: string) => storedAnswerFor(STORE, label)?.value;
+check(`"What is your current major?" reads the recorded field of study`,
+  found("What is your current major?") === "Computer and Information Science", found("What is your current major?"));
+check(`"Major*" does too`, found("Major*") === "Computer and Information Science");
+check(`"Discipline*" does too`, found("Discipline*") === "Computer and Information Science");
+check(`"Program of Study" does too`, found("Program of Study") === "Computer and Information Science");
+check(`an em-dash qualified label still resolves by its tail`,
+  found("Education — Field of Study") === "Computer and Information Science");
+check(`an exact match is unchanged`, found("Field of Study") === "Computer and Information Science");
+check(`an unrelated question still finds nothing rather than the nearest record`,
+  found("What is your favourite programming language?") === undefined, found("What is your favourite programming language?"));
+check(`a GPA question does not resolve to the field of study`,
+  found("What is your cumulative GPA for your 4 year degree on a 4.0 scale?") === undefined);
+check(`"Degree*" does not silently become the field of study`,
+  found("Degree*") === undefined, found("Degree*"));
 
 console.log(`\n${fail ? "✗" : "✓"} ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

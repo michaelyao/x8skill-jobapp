@@ -253,9 +253,36 @@ export function storedAnswerFor<T extends { normalizedQuestion: string }>(
   const exact = answers.find((entry) => entry.normalizedQuestion === normalizeQuestion(label));
   if (exact) return exact;
   const tail = label.split(/\s+[—–]\s+/).pop() ?? label;
-  if (tail === label) return undefined;
-  return answers.find((entry) => entry.normalizedQuestion === normalizeQuestion(tail));
+  const byTail = tail === label
+    ? undefined
+    : answers.find((entry) => entry.normalizedQuestion === normalizeQuestion(tail));
+  if (byTail) return byTail;
+
+  /**
+   * A MAJOR IS A FIELD OF STUDY, and the store files it under one name.
+   *
+   * Michelin asks "What is your current major?". The record is "Field of Study" ->
+   * "Computer and Information Science", nothing matched, so the model answered "Information
+   * Systems Technology" — which the do-not-invent rule then refused, correctly, leaving the
+   * question blank on a finished application. Refusing a guess is right; not finding the answer
+   * we already have is not, and between them the field went unanswered twice.
+   *
+   * Only for the questions whose answer is a record anyway (mustComeFromRecords), and only in
+   * ONE direction: a question asking for the major/discipline/programme may read the recorded
+   * field of study. It never invents a value and never rewrites the record.
+   */
+  for (const [asks, recordedAs] of STORE_ALIASES) {
+    if (!asks.test(label)) continue;
+    const aliased = answers.find((entry) => entry.normalizedQuestion === normalizeQuestion(recordedAs));
+    if (aliased) return aliased;
+  }
+  return undefined;
 }
+
+/** Questions the store files under a different name. Narrow on purpose — see storedAnswerFor. */
+const STORE_ALIASES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\b(current\s+)?major\b|field of study|program of study|course of study|\bdiscipline\b/i, "Field of Study"],
+];
 
 /**
  * Questions whose answer is a RECORD, not a judgement.

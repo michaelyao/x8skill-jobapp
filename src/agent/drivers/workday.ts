@@ -617,7 +617,26 @@ export class WorkdayDriver extends GenericDriver {
           box = box.parentElement;
         }
         if (!box) continue;
-        const panels = box.querySelectorAll('[data-automation-id^="panelSet-"], [data-automation-id^="panel-Set"], [data-automation-id="panelSet"] > div').length;
+        /**
+         * COUNT ROWS BY THE FIELD EVERY ROW MUST HAVE.
+         *
+         * Measured on Michelin: panelSet- wrappers and headings numbered "Work Experience 2"
+         * (no backticks in this comment — it lives INSIDE a template literal and one would end it)
+         * BOTH returned 0, so the count was pinned at 1 and the confirming re-count could never
+         * see a row appear — the Add button was found and clicked and the method still reported
+         * "would not take another row". Those two signals are gone.
+         *
+         * A Work Experience row always carries a Job Title and a Company, and a repeated row
+         * always carries its own Delete control, so the row count is however many of those the
+         * section holds. All three are reported: this is the second guess at this DOM and the log
+         * is what settles it, not me.
+         */
+        const countOf = (sel) => box.querySelectorAll(sel).length;
+        const titles = countOf('[data-automation-id*="jobTitle" i], [data-automation-id*="formField-title" i]');
+        const companies = countOf('[data-automation-id*="companyName" i], [data-automation-id*="formField-company" i]');
+        const deletes = Array.from(box.querySelectorAll('button, [role="button"]'))
+          .filter((b) => /^(delete|remove)$/i.test(clean(b.textContent)) || /^(delete|remove)\\b/i.test(clean(b.getAttribute("aria-label")))).length;
+        const panels = Math.max(titles, companies, deletes);
         const numbered = new Set(Array.from(box.querySelectorAll("h3, h4, legend, [aria-label]"))
           .map((e) => clean(e.textContent) || clean(e.getAttribute("aria-label")))
           .map((t) => (t.match(/^(work experience|employment|education|language)\\s+(\\d+)$/i) || [])[2])
@@ -658,7 +677,7 @@ export class WorkdayDriver extends GenericDriver {
       if (!/^(work experience|employment)/i.test(seen.section)) continue; // education/languages: one each
       const count = (s: Seen) => Math.max(s.panels, s.numbered, 1);
       const from = count(seen);
-      console.log(`    [workday] "${seen.section}": ${from} row(s) (panels=${seen.panels} numbered=${seen.numbered}), add button ${seen.hasAdd ? "found" : "NOT FOUND"}`);
+      console.log(`    [workday] "${seen.section}": ${from} row(s) (rowFields=${seen.panels} numbered=${seen.numbered}), add button ${seen.hasAdd ? "found" : "NOT FOUND"}`);
       if (!seen.hasAdd || from >= wanted) continue;
 
       let have = from;
@@ -667,11 +686,22 @@ export class WorkdayDriver extends GenericDriver {
         if (!(await button.count())) break;
         await button.scrollIntoViewIfNeeded().catch(() => undefined);
         await button.click().catch(() => undefined);
-        // Root may be a Page or a Locator; a locator carries its page, and a click just happened
-        // so there is always one to wait on.
-        await button.page().waitForTimeout(400);
-        const after = (await observe("after add")).find((s) => s.section === seen.section);
-        const now = after ? count(after) : have;
+        /**
+         * WAIT FOR THE ROW, DO NOT SLEEP ONCE AND JUDGE.
+         *
+         * The first live attempt clicked Add, re-counted 400ms later, saw no change and reported
+         * "would not take another row" — while the row HAD been added: the very next read found 26
+         * fields where the previous run found 17, which is one whole Work Experience row. So the
+         * click worked and the confirmation was wrong twice over, once in what it counted and once
+         * in how long it gave the page to render it. A wrong confirmation on a live form is worse
+         * than none: it makes a working action look broken.
+         */
+        let now = have;
+        for (let look = 0; look < 4 && now <= have; look += 1) {
+          await button.page().waitForTimeout(400);
+          const after = (await observe("after add")).find((s) => s.section === seen.section);
+          now = after ? count(after) : have;
+        }
         if (now <= have) {
           console.log(`    [workday] "${seen.section}" would not take another row — stopped at ${have}`);
           break;

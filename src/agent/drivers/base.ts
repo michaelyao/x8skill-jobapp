@@ -4,7 +4,7 @@ import { TRANSCRIPT_PATH } from "../../config.js";
 import type { Locator, Page } from "playwright";
 import { loadSkillPicks, loadSkillRemovals, pillsToRemove, type SkillPill } from "../../knowledge/skillPlan.js";
 import { datePartOf, datePartValue } from "../../core/dateParts.js";
-import { isSensitive } from "../llmAgent.js";
+import { isSensitive, preferredHearAboutUs } from "../llmAgent.js";
 import type { AtsDriver, DocumentUploads, FieldAnswer, FieldSpec, PageSnapshot, Root } from "../types.js";
 
 /** Parse a human/ISO date string into y/m/day, or null. */
@@ -342,9 +342,23 @@ export abstract class GenericDriver implements AtsDriver {
         if (el.getAttribute("aria-hidden") === "true") return true;
         return /honey|hpot|_bot\\b|\\bbot_|trap|nospam/i.test((el.getAttribute("name") || "") + " " + (el.id || ""));
       };
+      /**
+       * A DISABLED CONTROL IS NOT A REQUIRED GAP.
+       *
+       * Workday hides a Work Experience row's "To" date the moment "I currently work here" is
+       * ticked — the input stays in the DOM, disabled. read() reported it anyway, so on Michelin
+       * row 1 (Amazon, "Aug 2026 – Present") the To month and year came back required and empty,
+       * the gate refused to advance, and the application stopped one field short of Review with
+       * nothing anybody could do about it: there is no box on the page to type into.
+       *
+       * DISABLED only, never READONLY. A Workday prompt is a readonly input you drive by clicking,
+       * and skipping those would blind the reader to most of the form.
+       */
+      const isDisabled = (el) => el.disabled === true || el.getAttribute("aria-disabled") === "true";
       const controls = [...document.querySelectorAll("input:not([type=hidden]):not([type=file]), textarea, select")]
         .filter(isVisible)
-        .filter((el) => !isBotTrap(el));
+        .filter((el) => !isBotTrap(el))
+        .filter((el) => !isDisabled(el));
       const out = [];
       let i = 0;
       let gi = 0;
@@ -890,12 +904,12 @@ export abstract class GenericDriver implements AtsDriver {
       return filled;
     }
 
-    if (field.widget === "react-select") return this.fillReactSelect(root, locator, value, field.key);
+    if (field.widget === "react-select") return this.fillReactSelect(root, locator, value, field.key, field.label);
     // Workday's styled dropdown: the control IS a <button aria-haspopup="listbox">, so there is no
     // <select> for selectOption() and no input to type into. Clicking it opens a listbox of
     // promptOption rows — exactly what fillReactSelect already drives.
     if (field.widget === "workday-select") {
-      const picked = await this.fillReactSelect(root, locator, value, field.key);
+      const picked = await this.fillReactSelect(root, locator, value, field.key, field.label);
       if (!picked) return false;
       // VERIFY. fillReactSelect reported success while RTX kept answering "The field ... is
       // required and must have a value" — a false success, the one thing this path must never
@@ -1311,7 +1325,7 @@ export abstract class GenericDriver implements AtsDriver {
     return removed;
   }
 
-  protected async fillReactSelect(root: Root, control: Locator, value: string, keySelector?: string): Promise<boolean> {
+  protected async fillReactSelect(root: Root, control: Locator, value: string, keySelector?: string, label?: string): Promise<boolean> {
     // "Python, Computer Science" means "the real answer, then a broader one": try each in turn
     // and keep the first the live list actually offers. A taxonomy that lacks the specific term
     // usually has the general one, and an empty skills box helps nobody.
@@ -1332,11 +1346,11 @@ export abstract class GenericDriver implements AtsDriver {
           : [];
     if (alternatives.length > 1) {
       for (const candidate of alternatives) {
-        if (await this.fillReactSelectOne(root, control, candidate, keySelector)) return true;
+        if (await this.fillReactSelectOne(root, control, candidate, keySelector, label)) return true;
       }
       return false;
     }
-    return this.fillReactSelectOne(root, control, value, keySelector);
+    return this.fillReactSelectOne(root, control, value, keySelector, label);
   }
 
   /**
@@ -1532,7 +1546,7 @@ export abstract class GenericDriver implements AtsDriver {
     return out;
   }
 
-  private async fillReactSelectOne(root: Root, control: Locator, value: string, keySelector?: string): Promise<boolean> {
+  private async fillReactSelectOne(root: Root, control: Locator, value: string, keySelector?: string, label?: string): Promise<boolean> {
     const page = control.page();
     const want = normaliseOption(value);
     const firstWord = value.trim().split(/[\s,/(]+/)[0] ?? value;
@@ -1757,6 +1771,36 @@ export abstract class GenericDriver implements AtsDriver {
       // (+1)". Match on the parenthesised code, preferring the United States when several
       // countries share it (+1 covers Canada, American Samoa, Guam…).
       let idx = indexOfOption(texts, want);
+      /**
+       * "How did you hear about us?" IS A TREE, AND CHASING LINKEDIN DOWN IT IS THE WRONG GOAL.
+       *
+       * Michelin's prompt opens on tier one — Campus Campaign | Career Websites | Employee
+       * Referral | Job Board | Other | Social Media — and LinkedIn sits INSIDE Social Media behind
+       * a right arrow. So the recorded answer "LinkedIn" matched nothing, the fill scrolled a list
+       * that cannot scroll ("the wheel does not move this list — cannot reach LinkedIn"), typed
+       * into it, and left the REQUIRED field empty: an application blocked one field short of
+       * Review over a channel nobody cares about.
+       *
+       * The candidate's rule is explicit — campus first, and "Career Websites should be fine as
+       * well" — and Career Websites is sitting right there in tier one. The same preference
+       * already existed for Workday's own select path; this control is driven by the react-select
+       * path, which never had it and never had the label to test for it either.
+       *
+       * Only when the wanted value genuinely is not on offer, and only for this question. The
+       * clicked row is what the commit is verified against, so picking a different option than we
+       * came in with is still verified rather than assumed.
+       */
+      if (idx < 0 && label && /how did you (hear|find|learn)/i.test(label)) {
+        const offered = texts.filter((t) => t && !/^select one$|^no items/i.test(t));
+        const preferred = preferredHearAboutUs(offered);
+        const at = preferred
+          ? texts.findIndex((t) => t.trim().toLowerCase() === preferred.option.trim().toLowerCase())
+          : -1;
+        if (at >= 0) {
+          idx = at;
+          trace(`${JSON.stringify(value)} is not offered at this tier; taking ${JSON.stringify(preferred!.option)} (${preferred!.why})`);
+        }
+      }
       if (idx < 0) {
         // ReactVirtualized renders only the rows in view. Scroll the listbox and re-read before
         // concluding the value is absent.
