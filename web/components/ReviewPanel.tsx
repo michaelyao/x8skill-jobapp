@@ -202,23 +202,9 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
             {busy === "approve" ? "Sending…" : edited ? `Approve with ${editedCount} edit${editedCount === 1 ? "" : "s"}` : "Approve & submit"}
           </button>
           <button onClick={() => send("skip")} disabled={busy !== null || decided !== null}>Skip</button>
-          {confirmManual ? (
-            <button
-              className="primary"
-              style={{ background: "var(--good, #2f9e44)" }}
-              disabled={busy !== null || decided !== null}
-              onClick={async () => {
-                setConfirmManual(false);
-                await send("manual_submit");
-              }}
-            >
-              {busy === "manual_submit" ? "Recording…" : "Confirm — it is already submitted"}
-            </button>
-          ) : (
-            <button onClick={() => setConfirmManual(true)} disabled={busy !== null || decided !== null}>
-              I submitted this myself…
-            </button>
-          )}
+          <button onClick={() => setConfirmManual(true)} disabled={busy !== null || decided !== null || confirmManual}>
+            I submitted this myself…
+          </button>
           <button onClick={() => setShowChange((v) => !v)} disabled={busy !== null || decided !== null}>Request re-fill…</button>
           {edited ? <span className="pill warn">{editedCount} edited — these become the approved answers</span> : null}
           {edited ? (
@@ -227,6 +213,43 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
               Remember these corrections for future applications
             </label>
           ) : null}
+
+        {/*
+          NOT A LABEL SWAP. This used to replace the "I submitted this myself…" button with a
+          "Confirm" button in the SAME PLACE, so one click looked exactly like a completed action
+          — and it sent nothing. A Notion application Nathan had already submitted by hand stayed
+          in the approval queue because of it, with the mark apparently made and no trace of it
+          anywhere: no command, no note, no status change. A confirmation step has to look like a
+          question, not like an answer.
+        */}
+        {confirmManual ? (
+          <div
+            className="card"
+            style={{ marginTop: 12, marginBottom: 0, borderColor: "var(--warn, #e8a33d)" }}
+          >
+            <strong>Record this as already submitted by hand?</strong>
+            <p className="muted" style={{ marginTop: 4 }}>
+              It is written to both stores as <span className="code">manual_submitted</span>, leaves
+              the approval queue, and no later run will re-open it. Nothing is sent to the employer.
+            </p>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button
+                className="primary"
+                style={{ background: "var(--good, #2f9e44)" }}
+                disabled={busy !== null || decided !== null}
+                onClick={async () => {
+                  await send("manual_submit");
+                  setConfirmManual(false);
+                }}
+              >
+                {busy === "manual_submit" ? "Recording…" : "Yes — Nathan already submitted it"}
+              </button>
+              <button onClick={() => setConfirmManual(false)} disabled={busy !== null}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : null}
         </div>
 
         {showChange ? (
