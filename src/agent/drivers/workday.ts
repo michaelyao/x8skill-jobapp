@@ -633,10 +633,28 @@ export class WorkdayDriver extends GenericDriver {
     })()`;
 
     type Seen = { section: string; panels: number; numbered: number; mark: string; hasAdd: boolean };
-    const observe = async () => ((await root.evaluate(OBSERVE).catch(() => [])) ?? []) as Seen[];
+    /**
+     * A silent observer is worse than none. The first live run of this method printed NOTHING —
+     * not "found", not "no add button" — because the only log lines sat inside a loop over the
+     * observed sections and a throw inside the page script came back as an empty array. So the
+     * error is reported, and so is an empty observation.
+     */
+    const observe = async (why: string): Promise<Seen[]> => {
+      try {
+        return ((await root.evaluate(OBSERVE)) ?? []) as Seen[];
+      } catch (err) {
+        console.log(`    [workday] repeated-section scan failed (${why}): ${String((err as Error)?.message ?? err).slice(0, 140)}`);
+        return [];
+      }
+    };
 
     const grown: { section: string; from: number; to: number }[] = [];
-    for (const seen of await observe()) {
+    const sections = await observe("first look");
+    if (!sections.length) {
+      console.log(`    [workday] no repeated section found on this page (wanted ${wanted} row(s))`);
+      return [];
+    }
+    for (const seen of sections) {
       if (!/^(work experience|employment)/i.test(seen.section)) continue; // education/languages: one each
       const count = (s: Seen) => Math.max(s.panels, s.numbered, 1);
       const from = count(seen);
@@ -652,7 +670,7 @@ export class WorkdayDriver extends GenericDriver {
         // Root may be a Page or a Locator; a locator carries its page, and a click just happened
         // so there is always one to wait on.
         await button.page().waitForTimeout(400);
-        const after = (await observe()).find((s) => s.section === seen.section);
+        const after = (await observe("after add")).find((s) => s.section === seen.section);
         const now = after ? count(after) : have;
         if (now <= have) {
           console.log(`    [workday] "${seen.section}" would not take another row — stopped at ${have}`);

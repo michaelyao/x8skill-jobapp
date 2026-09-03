@@ -367,6 +367,8 @@ export async function applyToJob(
       { company: job.company, title: job.title, resumeText: profile.resumeText || "", profile, answers, jobDescription: jobDescriptionResolved, changeInstruction: opts.changeInstruction },
       {
         resumePath: resume.path,
+        // Checked against what the form already holds, not just against what the model says.
+        facts: resumeFacts(profile),
         // How many jobs to enter, so the driver can add the rows Workday will not render on its own.
         experienceCount: parseResumeHistory(profile.resumeText || profile.rawText || "").experience?.length ?? 0,
         interactive: opts.interactive,

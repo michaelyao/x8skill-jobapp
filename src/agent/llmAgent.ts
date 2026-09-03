@@ -273,6 +273,20 @@ export function storedAnswerFor<T extends { normalizedQuestion: string }>(
 const RECORDED_FACT_ONLY = /\b(degree|field of study|major|discipline|program of study|course of study)\b/i;
 
 export function mustComeFromRecords(label: string): boolean {
+  /**
+   * A GPA QUESTION IS NOT A DEGREE QUESTION, even when it mentions one.
+   *
+   * Michelin asks "What is your cumulative GPA for your 4 year DEGREE on a 4.0 scale?". That word
+   * put the question under this rule, so the correctly computed band — "Between 3.00 and 3.49" for
+   * a 3.44 — was refused as an invented degree and the field was left alone. It was not empty: it
+   * held "Below 2.60" from an earlier draft, so the refusal PRESERVED the false answer the whole
+   * fix was for, and the candidate found it on the live form again.
+   *
+   * A band is not a guess. bestBand derives it arithmetically from the recorded GPA, and checkFacts
+   * refuses any band that does not contain that GPA — a stronger guarantee than "appears verbatim
+   * in the records", which is all this rule can offer.
+   */
+  if (/\bgpa\b|grade point average|overall result/i.test(label)) return false;
   return RECORDED_FACT_ONLY.test(label);
 }
 

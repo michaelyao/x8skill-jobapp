@@ -112,5 +112,27 @@ for (const wording of ["Our Careers Website", "Careers Page", "Company Website",
     preferredHearAboutUs([wording, "Social Media"])?.why === "the company's own site",
     preferredHearAboutUs([wording, "Social Media"]));
 
+/**
+ * A GPA QUESTION THAT MENTIONS A DEGREE IS STILL A GPA QUESTION.
+ *
+ * Michelin asks "What is your cumulative GPA for your 4 year degree on a 4.0 scale?". The word
+ * "degree" put it under the do-not-invent rule, so the correctly derived band "Between 3.00 and
+ * 3.49" was refused — and the field was not empty, it held "Below 2.60" from an earlier draft, so
+ * the refusal PRESERVED the false answer it was meant to prevent. The rule still has to hold for
+ * the questions it was written for, which is what the second half of these asserts.
+ */
+console.log("\nwhat must come from the records");
+check(`Michelin's GPA question is NOT a records-only field`,
+  mustComeFromRecords("What is your cumulative GPA for your 4 year degree on a 4.0 scale?") === false);
+check(`a bare GPA question is not either`, mustComeFromRecords("GPA*") === false);
+check(`"Overall Result (GPA)" is not either`, mustComeFromRecords("Overall Result (GPA)") === false);
+check(`grade point average spelled out, next to "degree"`,
+  mustComeFromRecords("Grade point average for your degree") === false);
+check(`"Degree*" still is`, mustComeFromRecords("Degree*") === true);
+check(`"Field of Study" still is`, mustComeFromRecords("Education — Field of Study") === true);
+check(`"What is your current major?" still is`, mustComeFromRecords("What is your current major?") === true);
+check(`"Discipline*" still is`, mustComeFromRecords("Discipline*") === true);
+check(`an ordinary question is unaffected`, mustComeFromRecords("Job Title*") === false);
+
 console.log(`\n${fail ? "✗" : "✓"} ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

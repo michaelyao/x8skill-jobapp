@@ -7,6 +7,8 @@ import { ocrLayoutTiled } from "../knowledge/visualCheck.js";
 import { planTiles } from "../knowledge/tiles.js";
 import { judgePageLanguage } from "../core/pageLanguage.js";
 import { isExclusiveGroup } from "../core/fieldGroups.js";
+import { contradictsResume } from "../core/factChecks.js";
+import type { ResumeFacts } from "../core/factChecks.js";
 
 
 /**
@@ -24,6 +26,11 @@ export class OcrUnavailableError extends Error {
 
 export interface TurnLoopOptions {
   resumePath: string;
+  /**
+   * The resume facts, so a value the form ALREADY holds can be checked before it is believed.
+   * Same source as the readiness gate's.
+   */
+  facts?: ResumeFacts;
   /**
    * How many jobs the resume lists. Passed in rather than read here: applyJob already parses the
    * resume, and the turn loop has no business loading files. 0/undefined means "add no rows".
@@ -319,6 +326,28 @@ export async function runApplication(
            * field was refused at Review as having no answer — and the review the candidate reads
            * showed a blank where the form had a value.
            */
+          /**
+           * A PREFILLED VALUE CAN BE FALSE, AND RECORDING IT MAKES IT OURS.
+           *
+           * Workday saves a part-finished application as a draft, so a re-run opens a form holding
+           * whatever the last run typed — including an answer a later fix was meant to correct.
+           * Michelin's GPA question sat at "Below 2.60" for a 3.44 through TWO runs this way: the
+           * value was recorded as the answer, the review showed it as a chosen one, and the
+           * candidate found it on the live form himself.
+           *
+           * So a prefilled value gets the same check a stated one does. A contradiction is not
+           * recorded and the field is reported unanswered, which BLOCKS the application rather
+           * than presenting a false answer for approval. Only the three resume facts are checked;
+           * contradictsResume returns nothing for anything else.
+           */
+          const conflict = opts.facts && field.value?.trim()
+            ? contradictsResume(field.label, field.value.trim(), opts.facts)
+            : undefined;
+          if (conflict) {
+            console.log(`    ⚠ the form already holds a value that is FALSE — not recording it: ${conflict}`);
+            if (!unknown.includes(field.label)) unknown.push(field.label);
+            continue;
+          }
           if (field.value?.trim()) {
             answersByLabel.set(field.label, {
               label: field.label,
