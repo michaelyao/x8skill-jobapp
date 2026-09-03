@@ -609,9 +609,20 @@ export async function runApplication(
      * form, and a run that stalls on row seven delivers nothing. Raise it with the env var.
      */
     if (driver.expandRepeatedBlocks) {
+      /**
+       * ALL OF THEM, because the readiness gate already insists on all of them.
+       *
+       * This was capped at 3 on my own reasoning that each row is six more fields to fill on a
+       * live form. TMEIC then went from "only 1 of 7 work-experience entries from the resume went
+       * in" to "only 6 of 7" and was STILL refused — by our own gate, which has always wanted the
+       * full history. A cap that fights the gate delivers nothing: the rows cost real time and
+       * then the application is held back anyway.
+       *
+       * MAX_EXPERIENCE_BLOCKS still overrides, for a form that will not take seven.
+       */
       const onResume = opts.experienceCount ?? 0;
-      const cap = Number(process.env.MAX_EXPERIENCE_BLOCKS ?? 3);
-      const wanted = Math.min(onResume, Number.isFinite(cap) && cap > 0 ? cap : 3);
+      const cap = Number(process.env.MAX_EXPERIENCE_BLOCKS ?? onResume);
+      const wanted = Math.min(onResume, Number.isFinite(cap) && cap > 0 ? cap : onResume);
       if (wanted > 1) {
         const grown = await driver.expandRepeatedBlocks(root, wanted).catch(() => []);
         for (const g of grown) {

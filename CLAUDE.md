@@ -703,8 +703,10 @@ employment history. `expandRepeatedBlocks` runs BEFORE `read()` (same reason as 
 confirms each click by RE-COUNTING; rows are counted by the field every row must have (Job Title,
 Company, its own Delete control), because `panelSet-` wrappers and headings numbered "Work
 Experience 2" both read 0 on a real tenant and a count pinned at 1 reported a working click as
-broken. `MAX_EXPERIENCE_BLOCKS` (default 3) bounds it: each row is six more fields to fill and
-verify on a live form.
+broken. `MAX_EXPERIENCE_BLOCKS` overrides the count for a form that will not take that many; the
+DEFAULT is the resume's own count, because the readiness gate has always insisted on the full
+history — TMEIC went from "only 1 of 7 work-experience entries" to "only 6 of 7" and was still
+refused, so a cap that fights the gate spends the rows and delivers nothing anyway.
 
 **A Workday date part is a TWO-DIGIT spinbutton — a single digit never commits.** Answered "1", it
 treats the entry as part-typed and discards it on blur, so Michelin's Start Date kept the resume
