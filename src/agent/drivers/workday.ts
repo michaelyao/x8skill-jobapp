@@ -804,6 +804,26 @@ export class WorkdayDriver extends GenericDriver {
                       '[data-automation-id="activeListContainer"] [data-automation-id="promptOption"]',
                   )
                 : root.locator("#__never_matches__");
+        /**
+         * SAY WHAT EACH STRATEGY SAW. Four attempts at read-time option capture have failed while
+         * the fill path finds the options every time, and each attempt was a guess about where the
+         * rows live. This prints the counts so the next run answers it instead of me.
+         */
+        if (process.env.SELECT_TRACE === "1") {
+          const counts = {
+            ariaControls: owns ? await root.locator("#" + esc(owns) + ' [role="option"]').count().catch(() => -1) : null,
+            nearbyFormField: await nearby.count().catch(() => -1),
+            portalListbox: await portal.count().catch(() => -1),
+            activeList: await root
+              .locator('[data-automation-id="activeListContainer"] [role="option"], [data-automation-id="activeListContainer"] [data-automation-id="promptOption"]')
+              .count()
+              .catch(() => -1),
+            anyRoleOption: await root.locator('[role="option"]').count().catch(() => -1),
+            anyPromptOption: await root.locator('[data-automation-id="promptOption"]').count().catch(() => -1),
+            menuVisible: opened,
+          };
+          console.log(`      · read-options[${combo.label.slice(0, 26)}] ${JSON.stringify(counts)}`);
+        }
         const n = await opt.count().catch(() => 0);
         const list: string[] = [];
         for (let k = 0; k < n; k += 1) {
