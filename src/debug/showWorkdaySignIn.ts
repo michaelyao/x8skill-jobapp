@@ -1,0 +1,59 @@
+/**
+ * Open a Workday posting in a HEADED browser, drive the real driver's openApplication, and LEAVE
+ * IT OPEN so a human can look at where it stops.
+ *
+ *   npx tsx src/debug/showWorkdaySignIn.ts <url>
+ *
+ * Sixty-five applications stopped having filled one field, "Email Address*". The log says why —
+ * sign-in fails, a password reset is attempted, the reset email never arrives — but a log line is
+ * not the same as seeing the page. Read-only: it fills nothing and clicks no submit.
+ */
+import { chromium } from "playwright";
+import readline from "node:readline/promises";
+import { stdin as input, stdout as output } from "node:process";
+import { loadEnv } from "../utils/env.js";
+import { AUTH_DIR } from "../config.js";
+import { WorkdayDriver } from "../agent/drivers/workday.js";
+
+loadEnv();
+const url = process.argv[2];
+if (!url) { console.error("usage: npx tsx src/debug/showWorkdaySignIn.ts <url>"); process.exit(1); }
+
+const context = await chromium.launchPersistentContext(AUTH_DIR, {
+  channel: "chrome",
+  headless: false,
+  viewport: { width: 1440, height: 1000 },
+  ignoreDefaultArgs: ["--enable-automation"],
+  args: ["--disable-blink-features=AutomationControlled"],
+});
+const page = context.pages()[0] ?? (await context.newPage());
+console.log(`\n>>> going to ${url}`);
+await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 }).catch((e) => console.log("  goto: " + e.message));
+await page.waitForTimeout(2500);
+console.log(`>>> landed on ${page.url()}`);
+
+const driver = new WorkdayDriver();
+// The names the CODE reads. WORKDAY_EMAIL/WORKDAY_PASSWORD appear nowhere in src/ — printing
+// those was my own error and it read as "the credentials are missing" when they are not.
+console.log(
+  `>>> sign-in will use JOB_APP_USERNAME=${(process.env.JOB_APP_USERNAME ?? "(unset -> falls back to the resume's email)").replace(/^(.{4}).*@/, "$1***@")}` +
+    `  JOB_APP_PASSWORD=${process.env.JOB_APP_PASSWORD ? "set" : "(unset)"}`,
+);
+console.log(`>>> running the real openApplication — watch the window\n`);
+try {
+  await driver.openApplication(page);
+} catch (e) {
+  console.log(`  openApplication threw: ${(e as Error).message.split("\n")[0]}`);
+}
+await page.waitForTimeout(1500);
+console.log(`\n>>> now on ${page.url()}`);
+const root = await driver.resolveRoot(page).catch(() => page);
+const snap = await driver.read(root).catch(() => null);
+console.log(`>>> read() sees ${snap?.fields.length ?? 0} field(s), submitReady=${snap?.submitReady}`);
+for (const f of snap?.fields ?? []) console.log(`      ${f.required ? "*" : " "} ${f.label.slice(0, 70)}`);
+const text = (await page.locator("body").innerText().catch(() => "")).replace(/\s+/g, " ").slice(0, 400);
+console.log(`\n>>> what the page says:\n    ${text}\n`);
+const rl = readline.createInterface({ input, output });
+await rl.question(">>> The browser is open. Press Enter here when you are done looking. ");
+await rl.close();
+await context.close();

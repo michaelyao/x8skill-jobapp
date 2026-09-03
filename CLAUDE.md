@@ -58,11 +58,18 @@ case-sensitive volume or in a Linux container. Do not reintroduce the mismatch.
 ## .env format
 
 ```
-WORKDAY_EMAIL=you@example.com
-WORKDAY_PASSWORD=yourpassword
+JOB_APP_USERNAME=you@example.com      # ALSO the ATS candidate-account login
+JOB_APP_PASSWORD=yourpassword         # ditto — profile.ts reads these two
 GEMINI_API_KEY=your_key_here
 GOG_KEYRING_PASSWORD=your_gog_keyring_passphrase
 ```
+
+**The ATS login is `JOB_APP_USERNAME` / `JOB_APP_PASSWORD`, not `WORKDAY_*`.** This section said
+`WORKDAY_EMAIL` / `WORKDAY_PASSWORD` for weeks and those names appear NOWHERE in `src/` —
+`profile.ts` reads `loginEmail: process.env.JOB_APP_USERNAME ?? primaryEmail` and
+`loginPassword: process.env.JOB_APP_PASSWORD`. Reading the stale names while diagnosing 65 failed
+Workday sign-ins produced "WORKDAY_EMAIL = (EMPTY)" and a confident wrong conclusion that the
+credentials were missing. The same pair doubles as the website's own login.
 
 `GOG_KEYRING_PASSWORD` is **not** a Google credential — it is the local passphrase encrypting
 gog's OAuth token file. It belongs in `.env` because launchd services do not read `~/.zshrc`:
