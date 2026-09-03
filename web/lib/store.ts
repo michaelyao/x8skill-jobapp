@@ -8,6 +8,10 @@ import { pendingCommands, recentCommands } from "@core/knowledge/commands.js";
 import { readWorkerStatus, isStale, type WorkerStatus } from "@core/knowledge/workerStatus.js";
 import type { ApplicationRecord } from "@core/types.js";
 import { ensureEnv } from "./env";
+import { loadInternshipList } from "@core/sources/internshipList.js";
+import { detectAtsType } from "@core/core/jobIdentity.js";
+import { normalizeUrl } from "@core/utils/normalize.js";
+import { ledgerStage, queueStage } from "@core/core/statusVocabulary.js";
 
 /**
  * Read-only view of the state the worker owns. The website NEVER writes application state —
@@ -231,4 +235,94 @@ export async function getRuns(limit = 20): Promise<RunSummary[]> {
     }
   }
   return out;
+}
+
+export interface IncomingJob {
+  code?: string;
+  company: string;
+  title: string;
+  location?: string;
+  source?: string;
+  age?: string;
+  applyUrl: string;
+  ats: string;
+  /** Short state word, and the sentence that explains it. */
+  state: string;
+  meaning?: string;
+  tone: string;
+  href?: string;
+}
+
+/**
+ * EVERY job we know about, from every source, and what became of each.
+ *
+ * The trackers in job_sites.txt produce ~600 listings into internships_summer2027.csv, and until
+ * now NO page read that file: a posting became visible only once an application had been attempted
+ * and a ledger record or queue entry existed. Jobs added by hand had their own table on /add, so
+ * the two sources — which are the same kind of thing — were visible in completely different ways,
+ * and "where do the new ones go?" had no answer.
+ *
+ * The state is derived, never stored: the ledger and the queue are the truth, a pending command
+ * means a run is coming, and everything else is simply waiting for a sweep to reach it.
+ */
+export async function getIncoming(): Promise<IncomingJob[]> {
+  ensureEnv();
+  const [listed, apps, queue, waiting] = await Promise.all([
+    loadInternshipList().catch(() => []),
+    loadApplications(),
+    loadPendingQueue(),
+    pendingCommands().catch(() => []),
+  ]);
+  const byUrl = new Map<string, (typeof apps)[number]>();
+  for (const a of apps) if (a.applyUrl) byUrl.set(normalizeUrl(a.applyUrl), a);
+  const queueByUrl = new Map<string, (typeof queue)[number]>();
+  for (const e of queue) if (e.applyUrl) queueByUrl.set(normalizeUrl(e.applyUrl), e);
+  const commandFor = new Set(
+    waiting.map((c) => ("code" in c ? c.code : undefined)).filter((c): c is string => Boolean(c)),
+  );
+
+  return listed.map((job) => {
+    const key = job.applyUrl ? normalizeUrl(job.applyUrl) : "";
+    const q = queueByUrl.get(key);
+    const l = byUrl.get(key);
+    const ats = detectAtsType(job.applyUrl ?? "");
+    const code = q?.code ?? l?.code ?? job.id;
+    const stage = q ? queueStage(q.status) : ledgerStage(l?.status);
+    let state = stage?.label;
+    let meaning = stage?.meaning;
+    let tone = stage?.tone ?? "muted";
+    let href = q ? `/queue/${code}` : l ? `/applications/${code}` : undefined;
+    if (!state) {
+      if (job.id && commandFor.has(job.id)) {
+        state = "a run is queued";
+        meaning = "A command is waiting for the worker; it will be opened shortly.";
+        tone = "accent";
+      } else if (ats === "unknown" || ats === "smartrecruiters") {
+        state = "cannot be applied to";
+        meaning =
+          ats === "smartrecruiters"
+            ? "SmartRecruiters sits behind DataDome, which serves a CAPTCHA to automation. It is counted, never opened."
+            : "No driver for this ATS. It will never be opened, so it is not waiting for anything.";
+        tone = "warn";
+      } else {
+        state = "waiting";
+        meaning = "On the list, nothing attempted yet. A sweep will reach it.";
+        tone = "muted";
+      }
+    }
+    return {
+      code,
+      company: job.company,
+      title: job.title,
+      location: job.location,
+      source: job.source,
+      age: job.age,
+      applyUrl: job.applyUrl,
+      ats,
+      state,
+      meaning,
+      tone,
+      href,
+    } satisfies IncomingJob;
+  });
 }
