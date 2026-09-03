@@ -4,7 +4,7 @@ import { TRANSCRIPT_PATH } from "../../config.js";
 import type { Locator, Page } from "playwright";
 import { loadSkillPicks, loadSkillRemovals, pillsToRemove, type SkillPill } from "../../knowledge/skillPlan.js";
 import { datePartOf, datePartValue } from "../../core/dateParts.js";
-import { isSensitive, preferredHearAboutUs } from "../llmAgent.js";
+import { isSensitive, preferredHearAboutUs, workAuthorizationOption } from "../llmAgent.js";
 import { listChooserRow } from "../../core/listChooser.js";
 import type { AtsDriver, DocumentUploads, FieldAnswer, FieldSpec, PageSnapshot, Root } from "../types.js";
 
@@ -969,12 +969,12 @@ export abstract class GenericDriver implements AtsDriver {
       return filled;
     }
 
-    if (field.widget === "react-select") return this.fillReactSelect(root, locator, value, field.key, field.label);
+    if (field.widget === "react-select") return this.fillReactSelect(root, locator, value, field.key, field.label, answer.records);
     // Workday's styled dropdown: the control IS a <button aria-haspopup="listbox">, so there is no
     // <select> for selectOption() and no input to type into. Clicking it opens a listbox of
     // promptOption rows — exactly what fillReactSelect already drives.
     if (field.widget === "workday-select") {
-      const picked = await this.fillReactSelect(root, locator, value, field.key, field.label);
+      const picked = await this.fillReactSelect(root, locator, value, field.key, field.label, answer.records);
       if (!picked) return false;
       // VERIFY. fillReactSelect reported success while RTX kept answering "The field ... is
       // required and must have a value" — a false success, the one thing this path must never
@@ -1390,7 +1390,7 @@ export abstract class GenericDriver implements AtsDriver {
     return removed;
   }
 
-  protected async fillReactSelect(root: Root, control: Locator, value: string, keySelector?: string, label?: string): Promise<boolean> {
+  protected async fillReactSelect(root: Root, control: Locator, value: string, keySelector?: string, label?: string, records?: FieldAnswer["records"]): Promise<boolean> {
     // "Python, Computer Science" means "the real answer, then a broader one": try each in turn
     // and keep the first the live list actually offers. A taxonomy that lacks the specific term
     // usually has the general one, and an empty skills box helps nobody.
@@ -1411,11 +1411,11 @@ export abstract class GenericDriver implements AtsDriver {
           : [];
     if (alternatives.length > 1) {
       for (const candidate of alternatives) {
-        if (await this.fillReactSelectOne(root, control, candidate, keySelector, label)) return true;
+        if (await this.fillReactSelectOne(root, control, candidate, keySelector, label, records)) return true;
       }
       return false;
     }
-    return this.fillReactSelectOne(root, control, value, keySelector, label);
+    return this.fillReactSelectOne(root, control, value, keySelector, label, records);
   }
 
   /**
@@ -1611,7 +1611,7 @@ export abstract class GenericDriver implements AtsDriver {
     return out;
   }
 
-  private async fillReactSelectOne(root: Root, control: Locator, value: string, keySelector?: string, label?: string): Promise<boolean> {
+  private async fillReactSelectOne(root: Root, control: Locator, value: string, keySelector?: string, label?: string, records?: FieldAnswer["records"]): Promise<boolean> {
     const page = control.page();
     const want = normaliseOption(value);
     const firstWord = value.trim().split(/[\s,/(]+/)[0] ?? value;
@@ -1884,6 +1884,23 @@ export abstract class GenericDriver implements AtsDriver {
        * clicked row is what the commit is verified against, so picking a different option than we
        * came in with is still verified rather than assumed.
        */
+      /**
+       * WORK AUTHORISATION SPELLED OUT AS SENTENCES.
+       *
+       * General Matter offers five of them and none is "Yes", so the recorded answer matched
+       * nothing, the fill scrolled a list that cannot scroll, and a REQUIRED field stayed empty
+       * through three runs. The options are not known when the answer is chosen — read-time
+       * capture finds none here and this path finds five — so the facts that decide it ride along
+       * on the answer and the choice is made where the options actually are.
+       */
+      if (idx < 0 && records && label && /authoriz|authoris/i.test(label) && /\bwork\b/i.test(label)) {
+        const derived = workAuthorizationOption(texts.filter((t) => t && !/^no items/i.test(t)), records);
+        const at = derived ? texts.findIndex((t) => t.trim() === derived.option.trim()) : -1;
+        if (at >= 0) {
+          idx = at;
+          trace(`${JSON.stringify(value)} is not on this menu; the records say ${JSON.stringify(derived!.option.slice(0, 46))} (${derived!.why})`);
+        }
+      }
       if (idx < 0 && label && /how did you (hear|find|learn)/i.test(label)) {
         const offered = texts.filter((t) => t && !/^select one$|^no items/i.test(t));
         const preferred = preferredHearAboutUs(offered);

@@ -882,7 +882,20 @@ export class LlmAgent implements Agent {
                   `${JSON.stringify(derived.option.slice(0, 52))} (${derived.why})`,
               );
               value = derived.option;
-              answer.value = value;
+              /**
+       * A work-authorisation answer carries the records that decide it. The tenant may offer
+       * sentences instead of Yes/No, and the options are usually unknown here — the fill is where
+       * they appear, so that is where the choice is made, from these facts and nothing else.
+       */
+      if (/authoriz|authoris/i.test(field.label) && /\bwork\b/i.test(field.label)) {
+        const sponsor = storedAnswerFor(ctx.answers, "Do you require sponsorship for employment visa status?")
+          ?? storedAnswerFor(ctx.answers, "Will you now or in the future require visa sponsorship?");
+        answer.records = {
+          authorized: /^\s*y(es)?\b/i.test(value),
+          needsSponsorship: sponsor ? /^\s*y(es)?\b/i.test(String(sponsor.answer)) : undefined,
+        };
+      }
+      answer.value = value;
               answer.source = "curated";
               answer.needsHuman = false;
               continue;

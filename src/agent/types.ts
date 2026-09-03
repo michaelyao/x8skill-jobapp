@@ -73,6 +73,15 @@ export interface FieldAnswer {
   source: "llm" | "curated" | "profile";
   needsHuman?: boolean; // true → route to learning mode instead of auto-filling
   draft?: boolean; // true → LLM-drafted free-text (fill it, but flag for review)
+  /**
+   * The records that DECIDE a work-authorisation answer, carried so the fill can use them.
+   *
+   * The tenant may spell this question as sentences ("I am authorized to work in the United
+   * States for any employer") rather than Yes/No, and the options are often unknown when the
+   * answer is chosen — read-time capture finds none and the fill discovers five. So the decision
+   * cannot be made here; the facts that decide it travel to where the options are.
+   */
+  records?: { authorized?: boolean; needsSponsorship?: boolean };
   /** true → the correct answer IS empty (an optional field the candidate has nothing for,
    *  e.g. a phone extension they do not have). Distinct from needsHuman: it is answered,
    *  and must not be reported as "no answer available". */
