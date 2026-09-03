@@ -304,6 +304,42 @@ export function isAreasOfInterest(label: string): boolean {
     /\binterest(ed|s)?\b/i.test(label);
 }
 
+/**
+ * "How did you hear about us?" — the whole preference ladder, not just its top rung.
+ *
+ * The standing order is university > company's own site > job board > referral > social > other,
+ * and the candidate has confirmed CAREER WEBSITES is fine. The rule only ever looked for a
+ * campus-ish option and gave up when there was none, so a form offering "Career Websites |
+ * Employee Referral | Job Board | Social Media" got nothing from the rule and the model answered
+ * instead — which is how "LinkedIn" came to be typed at a tenant whose list does not contain it.
+ *
+ * Every rung matches on the FORM'S wording, and anything unmatched is left alone: an option we
+ * cannot classify is not one to pick blind.
+ */
+const HEAR_ABOUT_LADDER: ReadonlyArray<{ why: string; test: RegExp }> = [
+  { why: "campus", test: /campus|university|college|career (fair|center)|school|student/i },
+  {
+    why: "the company's own site",
+    // Plurals and "page" included: "Our Careers Website" fell through this rung to SOCIAL MEDIA,
+    // because "career ?(web)?site" cannot span the "s" in "Careers".
+    test: /careers?\s*(web)?\s*(site|page)|compan(y|ies)\s*(web)?site|our\s*(web)?site|corporate\s*site/i,
+  },
+  { why: "a job board", test: /job board|indeed|glassdoor|handshake|simplify|linkedin/i },
+  { why: "a referral", test: /referral|employee refer|friend|colleague/i },
+  { why: "social media", test: /social|twitter|facebook|instagram|tiktok|youtube/i },
+  { why: "other", test: /other/i },
+];
+
+export function preferredHearAboutUs(
+  options: readonly string[],
+): { option: string; why: string } | undefined {
+  for (const rung of HEAR_ABOUT_LADDER) {
+    const hit = options.find((o) => rung.test.test(o));
+    if (hit) return { option: hit, why: rung.why };
+  }
+  return undefined;
+}
+
 export function isPhoneCountryCode(label: string): boolean {
   const l = label.toLowerCase();
   if (!/\bcode\b/.test(l)) return false;
@@ -992,10 +1028,11 @@ export class LlmAgent implements Agent {
         console.log(`  [agent] "${field.label.slice(0, 40)}" arrived with NO options — cannot pick the campus channel`);
         continue;
       }
-      const campus = field.options.find((o) => /campus|university|college|career (fair|center)|school/i.test(o));
+      const preferred = preferredHearAboutUs(field.options);
+      const campus = preferred?.option;
       if (!campus) {
         console.log(
-          `  [agent] "${field.label.slice(0, 40)}" offers no campus channel among ${field.options.length}: ` +
+          `  [agent] "${field.label.slice(0, 40)}" offers no channel we recognise among ${field.options.length}: ` +
             `${field.options.slice(0, 4).map((o) => o.slice(0, 20)).join(" | ")}`,
         );
         continue;
@@ -1011,7 +1048,10 @@ export class LlmAgent implements Agent {
         answers.push(answer);
       }
       if (answer.value === campus && !answer.needsHuman) continue;
-      console.log(`  [agent] "how did you hear" → ${JSON.stringify(campus)} (campus is preferred over ${JSON.stringify(answer.value)})`);
+      console.log(
+        `  [agent] "how did you hear" → ${JSON.stringify(campus)} (${preferred?.why}, preferred over ` +
+          `${JSON.stringify(answer.value || "(nothing)")})`,
+      );
       answer.value = campus;
       answer.source = "curated";
       answer.confidence = 1;

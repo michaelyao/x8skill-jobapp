@@ -1,7 +1,7 @@
 import { loadEnv } from "../utils/env.js";
 loadEnv();
 import { loadAnswers } from "../knowledge/answerStore.js";
-import { isAreasOfInterest, mustComeFromRecords, softwareInterests, storedAnswerFor } from "../agent/llmAgent.js";
+import { isAreasOfInterest, mustComeFromRecords, preferredHearAboutUs, softwareInterests, storedAnswerFor } from "../agent/llmAgent.js";
 
 /**
  * Cases for finding a recorded answer despite the prefix our own reader adds.
@@ -86,6 +86,31 @@ for (const no of [
   "Why are you interested in this role?",
   "First Name",
 ]) check(`"${no}" is NOT`, !isAreasOfInterest(no), no);
+
+
+console.log("\nhow did you hear about us — the whole ladder");
+// Michelin's real seven, as the trace printed them.
+const MICHELIN = ["Campus Campaign", "Career Websites", "Employee Referral", "Job Board", "Social Media", "Print Advertising", "Other"];
+check(`campus wins when offered`, preferredHearAboutUs(MICHELIN)?.option === "Campus Campaign", preferredHearAboutUs(MICHELIN));
+// The candidate's addition: Career Websites is fine, and must be reachable when campus is not.
+const noCampus = MICHELIN.filter((o) => o !== "Campus Campaign");
+check(`Career Websites is chosen when there is no campus option`,
+  preferredHearAboutUs(noCampus)?.option === "Career Websites", preferredHearAboutUs(noCampus));
+const noSite = noCampus.filter((o) => o !== "Career Websites");
+check(`then a job board`, preferredHearAboutUs(noSite)?.option === "Job Board", preferredHearAboutUs(noSite));
+const noBoard = noSite.filter((o) => o !== "Job Board");
+check(`then a referral`, preferredHearAboutUs(noBoard)?.option === "Employee Referral", preferredHearAboutUs(noBoard));
+const noRef = noBoard.filter((o) => o !== "Employee Referral");
+check(`then social`, preferredHearAboutUs(noRef)?.option === "Social Media", preferredHearAboutUs(noRef));
+check(`then Other, last`, preferredHearAboutUs(["Print Advertising", "Other"])?.option === "Other");
+check(`and nothing recognisable yields nothing rather than a guess`,
+  preferredHearAboutUs(["Print Advertising", "Radio", "Billboard"]) === undefined,
+  preferredHearAboutUs(["Print Advertising", "Radio", "Billboard"]));
+// A tenant that words it differently must still resolve.
+for (const wording of ["Our Careers Website", "Careers Page", "Company Website", "Michelin Careers Site"])
+  check(`"${wording}" counts as the company's own site`,
+    preferredHearAboutUs([wording, "Social Media"])?.why === "the company's own site",
+    preferredHearAboutUs([wording, "Social Media"]));
 
 console.log(`\n${fail ? "✗" : "✓"} ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
