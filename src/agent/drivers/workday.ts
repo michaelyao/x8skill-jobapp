@@ -5,6 +5,7 @@ import { fetchWorkdayActivateLink, fetchWorkdayResetLink } from "../../knowledge
 import type { FieldAnswer, FieldSpec, PageSnapshot, Root } from "../types.js";
 import { recordAuthAlert, clearAuthAlert } from "../../knowledge/authAlerts.js";
 import { preferredHearAboutUs } from "../llmAgent.js";
+import { bestBand } from "../../core/factChecks.js";
 
 const NEXT_BTN = '[data-automation-id="pageFooterNextButton"]';
 const SUBMIT_BTN = '[data-automation-id="pageFooterSubmitButton"]';
@@ -928,6 +929,35 @@ export class WorkdayDriver extends GenericDriver {
     for (let i = 0; i < count; i += 1) texts.push(((await options.nth(i).innerText().catch(() => "")) || "").trim());
 
     let idx = bestOption(texts, answer.value);
+    /**
+     * A GPA IS A NUMBER, AND A BAND EITHER CONTAINS IT OR DOES NOT.
+     *
+     * Michelin's review page read "What is your cumulative GPA for your 4 year degree on a 4.0
+     * scale? — Below 2.60" for a candidate whose GPA is 3.44. A false statement about someone's
+     * academic record, on a finished application, and the candidate spotted it on the screenshot.
+     *
+     * The answering rule had done its job: it set "3.44". It could not pick a band because this
+     * field's options were not captured at read time. So the value reaching the driver was a bare
+     * number, and bestOption is a FUZZY STRING match — it has no notion of which band contains
+     * 3.44, and "Below 2.60" scored well enough on shared digits and punctuation.
+     *
+     * Containment is not a matter of resemblance. When the question is about a GPA and the options
+     * look like ranges, the band is chosen arithmetically, here, where the options are in hand.
+     */
+    if (/\bgpa\b|grade point average|overall result/i.test(field.label)) {
+      const asNumber = Number.parseFloat(answer.value.replace(/[^0-9.]/g, ""));
+      if (Number.isFinite(asNumber) && asNumber > 0) {
+        const band = bestBand(texts, asNumber);
+        const bandIdx = band ? texts.findIndex((t) => t.trim() === band.trim()) : -1;
+        if (bandIdx >= 0 && bandIdx !== idx) {
+          console.log(
+            `    ↳ GPA ${asNumber} belongs in ${JSON.stringify(band)}, not ` +
+              `${JSON.stringify(texts[idx] ?? "(no match)")} — a band contains a number or it does not`,
+          );
+          idx = bandIdx;
+        }
+      }
+    }
     /**
      * "HOW DID YOU HEAR ABOUT US?" IS A TWO-TIER TREE, and only this question is.
      *
