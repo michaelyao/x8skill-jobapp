@@ -447,6 +447,12 @@ function buildPrompt(snapshot: PageSnapshot, ctx: AgentContext): { system: strin
     '- If an OPTIONAL field asks for something the candidate simply does not have (a phone extension, a middle name, a second address, a portfolio they lack), the correct answer is EMPTY: set "blank": true with an empty value and needsHuman=false. Do not set needsHuman for these — nothing needs to be asked, there is genuinely nothing to enter.',
     "- WORK EXPERIENCE BLOCKS: the form usually has fewer blocks than the candidate has positions. Fill them in the order listed above — the FIRST block takes position 1 (most recent), the second block position 2, and so on. Never put an older position in the first block: a form with a single block must get the most recent role, not the oldest. Keep each block internally consistent — the title, employer, location and dates in one block must all belong to the SAME position.",
     "- For 'have you previously worked for X / are you a former employee of X / do you work for X' questions: answer Yes ONLY if X (or its parent/subsidiary) appears in the candidate's Employment history below; otherwise No. Do NOT rely on any generic curated answer for this.",
+    // Michelin asks "Have you already done a Co-Op or Internship term with Michelin?" and left it
+    // unanswered on three runs: the rule above covers "worked for", and an internship term with a
+    // company is the same question about the same records. The employment history is the whole
+    // answer — it lists seven employers and Michelin is not among them — so this is a fact we
+    // hold, not a guess, and leaving it blank was the wrong kind of caution.
+    "- The same applies to 'have you already done a co-op / internship / placement / apprenticeship with X', 'have you interned here before', 'are you a returning intern': answer Yes ONLY if X appears in the Employment history below; otherwise No.",
     "- Do NOT answer or reference any submit button.",
     'Respond with ONLY a JSON array: [{"key":"...","value":"...","confidence":0.0-1.0,"needsHuman":false,"draft":false,"blank":false,"reasoning":"short"}]. One object per field, using the exact keys given.',
   ].join("\n");
