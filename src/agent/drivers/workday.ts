@@ -636,6 +636,21 @@ export class WorkdayDriver extends GenericDriver {
       let i = 0;
       for (const b of document.querySelectorAll('button[aria-haspopup="listbox"]')) {
         if (b.offsetParent === null) continue;
+        /**
+         * ONLY BUTTONS INSIDE A FORM FIELD.
+         *
+         * This query is page-wide, and Michelin's header carries "English", "Settings" and the
+         * signed-in account as buttons with aria-haspopup="listbox" — indistinguishable from a
+         * prompt by that attribute alone. The capture loop opened each one and read or committed
+         * from it, and the candidate watched the site CHANGE LANGUAGE mid-application. A wrong
+         * value in a field is bad; navigating the chrome of someone's careers site is worse,
+         * because everything after it happens on a page we did not mean to be on.
+         *
+         * Every Workday form control sits in a [data-automation-id="formField-*"] wrapper — the
+         * label lookup below has relied on that for as long as this driver has existed. Requiring
+         * it costs nothing real and excludes the header entirely.
+         */
+        if (!b.closest('[data-automation-id^="formField"]')) continue;
         const txt = (b.textContent || "").trim();
         if (!txt) continue; // nothing rendered yet
         const placeholder = /^(select one|please select|select|choose one|choose)$/i.test(txt);
