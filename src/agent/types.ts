@@ -182,6 +182,8 @@ export interface AtsDriver {
    * honest version: no value changes hands, and nothing can be typed by accident.
    */
   fillsWithoutAnswer?(field: FieldSpec): boolean;
+  /** Does the PAGE show a resume already attached? Asked when this run did not upload one. */
+  hasResumeOnPage?(root: Root, fileName: string): Promise<boolean>;
   /**
    * Fill repeatable Education / Experience sections, which are not ordinary fields: each entry is
    * an editing panel that must be COMMITTED with its own Update button before the next can be

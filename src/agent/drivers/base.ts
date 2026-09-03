@@ -840,6 +840,20 @@ export abstract class GenericDriver implements AtsDriver {
     return /\b(add skills?|^skills?)\b/i.test(field.label);
   }
 
+  /**
+   * Is a resume already attached, according to the PAGE?
+   *
+   * uploadDocuments verifies by the filename appearing, precisely because Greenhouse detaches the
+   * input and files.length then lies — 130 log lines claimed an upload had failed when it had
+   * worked, and the document gate blocked finished applications over it. The same lesson had not
+   * reached the case where the run never visits the upload step at all: resuming a Workday draft
+   * starts at My Information, nothing is uploaded, and the gate refused an application that HAS a
+   * resume with "no resume was attached".
+   */
+  async hasResumeOnPage(root: Root, fileName: string): Promise<boolean> {
+    return this.showsFileName(root, fileName).catch(() => false);
+  }
+
   async fill(root: Root, field: FieldSpec, answer: FieldAnswer): Promise<boolean> {
     const locator = root.locator(field.key).first();
     if (!(await locator.count())) return false;

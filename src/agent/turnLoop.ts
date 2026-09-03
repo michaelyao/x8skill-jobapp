@@ -360,6 +360,15 @@ export async function runApplication(
     return false;
   };
 
+  const resumeAlreadyOnPage = async (): Promise<boolean> => {
+    // The name the form would be showing: the resume we would have uploaded.
+    const fileName = opts.resumePath ? path.basename(opts.resumePath) : "";
+    if (!driver.hasResumeOnPage || !fileName) return false;
+    const there = await driver.hasResumeOnPage(root, fileName).catch(() => false);
+    if (there) console.log(`    ↳ the form is already showing ${fileName} — resume attached`);
+    return there;
+  };
+
   const verifyThisPage = async (): Promise<void> => {
     if (!opts.runDir || process.env.PAGE_VERIFY === "0") return;
     // One check per page. The loop asks before deciding a page is done AND before advancing, which
@@ -693,7 +702,13 @@ export async function runApplication(
     alreadyApplied: confirmation && !sawAForm,
     blockedRequired,
     submittedUnexpectedly,
-    resumeAttached: resumeUploaded,
+    /**
+     * ASK THE PAGE, if this run did not upload. Resuming a Workday draft starts at My Information
+     * with the resume already attached from a previous session, so `resumeUploaded` is false and
+     * the gate refused a Review-ready application with "no resume was attached". uploadDocuments
+     * learned this lesson once already, by filename, and it did not reach here.
+     */
+    resumeAttached: resumeUploaded || (await resumeAlreadyOnPage()),
     history,
     documents,
   };
