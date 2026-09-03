@@ -12,6 +12,20 @@ export interface FieldSpec {
   sensitive?: boolean; // legal/demographic/compensation — guarded
   widget?: "react-select" | "workday-select"; // custom combobox (click-open-pick), not a native control
   searchable?: boolean; // type-to-filter combobox → `options` is an async SAMPLE, not an allowlist
+  /**
+   * The heading path this field sits under — "My Information / Phone", "My Information / Address".
+   *
+   * Workday's page is h3 for the step and h4 for each group, and the same words appear in more
+   * than one group: "Country / Territory" is in Address and "Country / Territory Phone Code" is in
+   * Phone. Read without that context they are one label away from each other, which is how a
+   * dialling code nearly went into the country field.
+   *
+   * Kept SEPARATE from `label` on purpose. The label is what the answer store matches on and what
+   * compareToApproved uses to decide whether an approved application still matches the form;
+   * renaming every field would make every queued application look like it had drifted and hold
+   * them all for re-approval. This is context, not identity.
+   */
+  section?: string;
   /** Checkbox groups: every option of one question shares a groupKey. The GROUP can be
    *  required ("Please check one of the boxes below:*") while no individual box is, so the
    *  gate has to check the group, not the boxes. */

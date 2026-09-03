@@ -37,7 +37,8 @@
     "test:replay": "tsx src/debug/replayCases.ts",
     "test:tiles": "tsx src/debug/tileCases.ts",
     "backfill:authalerts": "tsx src/debug/backfillAuthAlerts.ts",
-    "test:language": "tsx src/debug/languageCases.ts"
+    "test:language": "tsx src/debug/languageCases.ts",
+    "inspect:structure": "tsx src/debug/inspectWorkdayStructure.ts"
   },
   "repository": {
     "type": "git",

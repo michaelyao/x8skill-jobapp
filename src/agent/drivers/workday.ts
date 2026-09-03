@@ -659,6 +659,21 @@ export class WorkdayDriver extends GenericDriver {
         // The question text is in the enclosing formField container's text (there
         // is often no <label> and the aria-label is a generic "Select One").
         const ff = b.closest('[data-automation-id^="formField"]');
+        // The heading path, from the real DOM: h3 is the step ("My Information"), h4 the group
+        // ("Legal Name", "Address", "Email Address", "Phone"). Nearest of each ABOVE the field.
+        let h3 = "", h4 = "";
+        if (ff) {
+          const top = ff.getBoundingClientRect().top + window.scrollY;
+          for (const h of document.querySelectorAll("h3, h4")) {
+            if (h.offsetParent === null) continue;
+            const ht = h.getBoundingClientRect().top + window.scrollY;
+            if (ht > top) continue;
+            const t = (h.textContent || "").replace(/\s+/g, " ").trim().slice(0, 40);
+            if (!t) continue;
+            if (h.tagName === "H3") { h3 = t; h4 = ""; } else { h4 = t; }
+          }
+        }
+        const section = [h3, h4].filter(Boolean).join(" / ");
         const raw = ff ? (ff.innerText || "") : (b.getAttribute("aria-label") || "");
         // Required iff the field container shows a red-star asterisk / "required".
         const required = /\\*/.test(raw) || /\\brequired\\b/i.test(raw) || b.getAttribute("aria-required") === "true";
@@ -677,10 +692,10 @@ export class WorkdayDriver extends GenericDriver {
           .slice(0, 160);
         // The button text is the current value, so it doubles as the "is it answered?" signal —
         // and it must be reported, or a WRONG value reads as an empty field and is never fixed.
-        if (label) out.push({ key, label, required, filled: !placeholder });
+        if (label) out.push({ section, key, label, required, filled: !placeholder });
       }
       return out;
-    })()`)) as Array<{ key: string; label: string; required: boolean; filled: boolean }>;
+    })()`)) as Array<{ section?: string; key: string; label: string; required: boolean; filled: boolean }>;
 
     // Capture each combobox's real options (open → read → close) so the agent
     // picks an exact option rather than us guessing with fuzzy matching.
@@ -772,6 +787,7 @@ export class WorkdayDriver extends GenericDriver {
 
       snapshot.fields.push({
         key: sel,
+        section: combo.section,
         label: combo.label,
         type: "single_select",
         required: combo.required,
@@ -805,15 +821,29 @@ export class WorkdayDriver extends GenericDriver {
         const raw = c.innerText || '';
         const required = /\\*/.test(raw) || /\\brequired\\b/i.test(raw) || inp.getAttribute('aria-required') === 'true' || inp.hasAttribute('required');
         const label = raw.replace(/\\*/g, '').replace(/\\s+/g, ' ').trim().slice(0, 160);
-        out.push({ key, label, required, type: inp.tagName.toLowerCase() === 'textarea' ? 'textarea' : 'text', filled: !!inp.value });
+        // Same heading path as the combo scan: h3 is the step, h4 the group.
+        let h3 = '', h4 = '';
+        {
+          const top = c.getBoundingClientRect().top + window.scrollY;
+          for (const h of document.querySelectorAll('h3, h4')) {
+            if (h.offsetParent === null) continue;
+            const ht = h.getBoundingClientRect().top + window.scrollY;
+            if (ht > top) continue;
+            const t = (h.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 40);
+            if (!t) continue;
+            if (h.tagName === 'H3') { h3 = t; h4 = ''; } else { h4 = t; }
+          }
+        }
+        const section = [h3, h4].filter(Boolean).join(' / ');
+        out.push({ section, key, label, required, type: inp.tagName.toLowerCase() === 'textarea' ? 'textarea' : 'text', filled: !!inp.value });
       }
       return out;
-    })()`)) as Array<{ key: string; label: string; required: boolean; type: string; filled: boolean }>;
+    })()`)) as Array<{ section?: string; key: string; label: string; required: boolean; type: string; filled: boolean }>;
 
     for (const t of texts) {
       if (t.filled || !t.label) continue;
       if (snapshot.fields.some((f) => f.key === t.key || f.label === t.label)) continue;
-      snapshot.fields.push({ key: t.key, label: t.label, type: t.type as FieldSpec["type"], required: t.required, sensitive: isSensitive(t.label), filled: false });
+      snapshot.fields.push({ key: t.key, section: t.section, label: t.label, type: t.type as FieldSpec["type"], required: t.required, sensitive: isSensitive(t.label), filled: false });
     }
     return snapshot;
   }
