@@ -221,7 +221,14 @@ export async function submitApprovedEntry(
   applications = outcome.applications;
 
   if (outcome.submitted) {
-    await updatePendingStatus(entry.key, "submitted", { attempts });
+    /**
+     * CLEAR THE OLD FAILURE. Six applications came out of this reading `submitted` while still
+     * carrying "the visual checker did not answer, so the re-fill stopped rather than submit
+     * unverified" from an earlier attempt — which on the page reads as a submit that failed. A
+     * stale reason beside a finished status is the same mislabelling that made "applied" mean two
+     * things.
+     */
+    await updatePendingStatus(entry.key, "submitted", { attempts, lastError: "" });
     await opts.onSubmitted?.();
     return { result: "submitted", message: `[${label}] submitted`, answers, applications };
   }
