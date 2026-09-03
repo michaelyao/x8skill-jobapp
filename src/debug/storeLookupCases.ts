@@ -2,7 +2,7 @@ import { loadEnv } from "../utils/env.js";
 loadEnv();
 import { loadAnswers } from "../knowledge/answerStore.js";
 import { normalizeQuestion } from "../utils/normalize.js";
-import { isAreasOfInterest, mustComeFromRecords, preferredHearAboutUs, softwareInterests, storedAnswerFor } from "../agent/llmAgent.js";
+import { workAuthorizationOption, isAreasOfInterest, mustComeFromRecords, preferredHearAboutUs, softwareInterests, storedAnswerFor } from "../agent/llmAgent.js";
 
 /**
  * Cases for finding a recorded answer despite the prefix our own reader adds.
@@ -187,6 +187,41 @@ check(`"What is your current major?" still does`,
 check(`"Education — Field of Study" still does`,
   mustComeFromRecords("Education — Field of Study") === true);
 check(`"Discipline*" still does`, mustComeFromRecords("Discipline*") === true);
+
+/**
+ * GENERAL MATTER: work authorisation offered as five SENTENCES, none of them "Yes".
+ *
+ * The record says authorized: Yes and sponsorship: No (a US citizen), so "Yes" matched nothing and
+ * a REQUIRED field stayed empty through two runs. Both halves of the record decide it: authorised
+ * AND needing no sponsorship is what "for any employer" says.
+ */
+const AUTH_OPTIONS = [
+  "I am authorized to work in the United States for any employer",
+  "I am authorized to work in the United States for my present employer only",
+  "I require sponsorship to work in the United States",
+  "I am not authorized to work in the United States",
+  "My status to work in the United States in unknown",
+];
+console.log("\nwork authorisation as a sentence");
+check(`a citizen gets "for any employer"`,
+  workAuthorizationOption(AUTH_OPTIONS, { authorized: true, needsSponsorship: false })?.option ===
+    "I am authorized to work in the United States for any employer");
+check(`needing sponsorship gets the sponsorship sentence`,
+  workAuthorizationOption(AUTH_OPTIONS, { authorized: true, needsSponsorship: true })?.option ===
+    "I require sponsorship to work in the United States");
+check(`not authorised gets the not-authorised sentence`,
+  workAuthorizationOption(AUTH_OPTIONS, { authorized: false })?.option ===
+    "I am not authorized to work in the United States");
+check(`no record yields NOTHING rather than a guess`,
+  workAuthorizationOption(AUTH_OPTIONS, {}) === undefined);
+check(`"present employer only" is never chosen for a citizen`,
+  workAuthorizationOption(AUTH_OPTIONS, { authorized: true, needsSponsorship: false })?.option.includes("present employer") === false);
+check(`"unknown" is never chosen`,
+  workAuthorizationOption(AUTH_OPTIONS, { authorized: true, needsSponsorship: false })?.option.includes("unknown") === false);
+check(`a plain Yes/No list is left to the ordinary path`,
+  workAuthorizationOption(["Yes", "No"], { authorized: true, needsSponsorship: false }) === undefined);
+check(`two authorised-for-any-employer wordings are ambiguous, not a coin toss`,
+  workAuthorizationOption(["I am authorized to work for any employer", "Authorized to work for any employer in the US"], { authorized: true, needsSponsorship: false }) === undefined);
 
 console.log(`\n${fail ? "✗" : "✓"} ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

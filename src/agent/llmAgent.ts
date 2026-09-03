@@ -299,6 +299,52 @@ const STORE_ALIASES: ReadonlyArray<readonly [RegExp, string]> = [
  */
 const RECORDED_FACT_ONLY = /\b(degree|field of study|major|discipline|program of study|course of study)\b/i;
 
+/**
+ * WORK AUTHORISATION AS A SENTENCE, NOT A YES/NO.
+ *
+ * General Matter asks "Are you legally authorized to work in the United States?*" and offers five
+ * sentences, none of them "Yes":
+ *
+ *   I am authorized to work in the United States for any employer
+ *   I am authorized to work in the United States for my present employer only
+ *   I require sponsorship to work in the United States
+ *   I am not authorized to work in the United States
+ *   My status to work in the United States in unknown
+ *
+ * The record says authorized: Yes and sponsorship: No (a US citizen). "Yes" matches nothing, so a
+ * REQUIRED field stayed empty and the application was refused — twice.
+ *
+ * Both halves of the record are needed to choose: authorised AND needing no sponsorship is what
+ * "for any employer" says. This derives the option from records; it never guesses. "not
+ * authorized", "present employer only" and "unknown" are never chosen from an authorised record,
+ * and anything ambiguous returns nothing so the field is reported rather than filled.
+ */
+export function workAuthorizationOption(
+  options: readonly string[],
+  records: { authorized?: boolean; needsSponsorship?: boolean },
+): { option: string; why: string } | undefined {
+  const norm = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim();
+  const has = (t: string, re: RegExp) => re.test(norm(t));
+  const pick = (cands: readonly string[], why: string) =>
+    cands.length === 1 ? { option: cands[0], why } : undefined;
+
+  if (records.needsSponsorship === true) {
+    return pick(options.filter((o) => has(o, /require\w*\s+(a\s+)?(visa\s+)?sponsor/)), "the record says sponsorship is required");
+  }
+  if (records.authorized === false) {
+    return pick(options.filter((o) => has(o, /\bnot authoriz/)), "the record says not authorised");
+  }
+  if (records.authorized !== true) return undefined;
+
+  const disqualified = (o: string) =>
+    has(o, /\bnot authoriz|unknown|present employer only|require\w*\s+(a\s+)?(visa\s+)?sponsor/);
+  const anyEmployer = options.filter((o) => has(o, /authoriz/) && has(o, /any employer/) && !disqualified(o));
+  if (anyEmployer.length === 1) {
+    return { option: anyEmployer[0], why: "authorised, and the record needs no sponsorship" };
+  }
+  return pick(options.filter((o) => has(o, /authoriz/) && !disqualified(o)), "the only option that says authorised");
+}
+
 export function mustComeFromRecords(label: string): boolean {
   /**
    * A GPA QUESTION IS NOT A DEGREE QUESTION, even when it mentions one.
@@ -818,6 +864,30 @@ export class LlmAgent implements Agent {
            * "no answer available" was the only trace — which read as "we have no answer" when the
            * truth was "the answer is not on the menu". 130 of those went undiagnosed.
            */
+          /**
+           * A work-authorisation question spells its answers out as sentences, so a recorded
+           * "Yes" can never match. Derive it from the two records that decide it before
+           * reporting the field as unanswerable.
+           */
+          if (/authoriz|authoris/i.test(field.label) && /\bwork\b/i.test(field.label)) {
+            const sponsorRecord = storedAnswerFor(ctx.answers, "Do you require sponsorship for employment visa status?")
+              ?? storedAnswerFor(ctx.answers, "Will you now or in the future require visa sponsorship?");
+            const derived = workAuthorizationOption(field.options, {
+              authorized: /^\s*y(es)?\b/i.test(value),
+              needsSponsorship: sponsorRecord ? /^\s*y(es)?\b/i.test(String(sponsorRecord.answer)) : undefined,
+            });
+            if (derived) {
+              console.log(
+                `  [agent] "${field.label.slice(0, 42)}" is a sentence, not a yes/no — the records say ` +
+                  `${JSON.stringify(derived.option.slice(0, 52))} (${derived.why})`,
+              );
+              value = derived.option;
+              answer.value = value;
+              answer.source = "curated";
+              answer.needsHuman = false;
+              continue;
+            }
+          }
           const why = match.kind === "ambiguous" ? `matches ${match.among} of them` : "is not one of them";
           console.log(
             `  [agent] your recorded answer for "${field.label.slice(0, 42)}" ` +
