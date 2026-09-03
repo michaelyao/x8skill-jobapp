@@ -522,6 +522,23 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
       // A brand-new posting exists in neither the queue nor the ledger — only in the CSV. It
       // is the most ordinary thing to want to run, and refusing it would mean the terminal and
       // the website can name a job the worker then claims not to know.
+      /**
+       * A FILL IS ALSO POINTLESS WITH THE CHECKER DOWN — and not free.
+       *
+       * The gate on `approve` stops a live form being re-filled for a submit that cannot be
+       * verified. The same argument applies here: a fill opens the employer's form, and if the
+       * screenshot cannot be read the run stops and produces an application nobody has verified,
+       * which is the one thing this system exists to avoid. Deferred, so the batch resumes by
+       * itself when the checker is back.
+       */
+      const fillHealth = await readOcrHealth();
+      if (fillHealth && !fillHealth.ok) {
+        return {
+          ok: false,
+          defer: true,
+          message: `[${command.code}] holding — the visual checker is down (${(fillHealth.reason ?? "").slice(0, 90)}). Nothing is filled unverified; this runs when it is back.`,
+        };
+      }
       const catalogue = entry || record ? [] : await loadInternshipList().catch(() => []);
       let listed = entry || record ? undefined : catalogue.find((j) => j.id === command.code);
       /**
