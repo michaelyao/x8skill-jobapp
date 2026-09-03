@@ -1453,8 +1453,23 @@ export abstract class GenericDriver implements AtsDriver {
      *
      * Matching exactly is still how the ROW is chosen — the probe only has to open the list.
      */
+    /**
+     * A prefix long enough to DISCRIMINATE, then shorter, then the whole thing.
+     *
+     * Four characters was too few and the full string too many. "Unit" cannot separate United
+     * States from United Kingdom or United Arab Emirates — the candidate's instruction was exact:
+     * type "United S" and pick United States. The whole string fails the other way, having to
+     * match the row's own wording: "United States of America" against "United States of America
+     * (+1)".
+     *
+     * So: eight characters first, which carries into the second word and is where the ambiguity
+     * usually resolves; then four to open a list that eight was too specific for; then the words;
+     * then the full value. The row is still chosen by exact match — a probe only has to make the
+     * list appear and contain the answer.
+     */
     const probes = [
       ...new Set([
+        value.trim().slice(0, 8),
         value.trim().slice(0, 4),
         firstWord,
         ...words.slice(0, 2),
@@ -1492,6 +1507,7 @@ export abstract class GenericDriver implements AtsDriver {
 
     // React-select menus are flaky to open (portal timing, filter re-render), so
     // retry with two open strategies: type-to-filter, then keyboard ArrowDown.
+    // 0 = open and look, 1 = ArrowDown, then one attempt per probe.
     for (let attempt = 0; attempt < 2 + probes.length; attempt += 1) {
       await page.keyboard.press("Escape").catch(() => undefined);
       await page.waitForTimeout(150);
@@ -1515,13 +1531,30 @@ export abstract class GenericDriver implements AtsDriver {
       const staleCount = await preOpts.count().catch(() => 0);
       const staleFirst =
         staleCount > 0 ? ((await preOpts.first().innerText({ timeout: 1_000 }).catch(() => "")) || "").trim() : "";
-      if (attempt === 1) {
+      /**
+       * ATTEMPT 0 TYPES NOTHING — open the list and look.
+       *
+       * The candidate's instruction, and it is right for most of these fields: click the arrow,
+       * the whole list appears, pick the row. "How Did You Hear About Us?" has seven options and
+       * "Degree" a handful; both were being TYPED at, and both failed, when the answer was on
+       * screen the moment the list opened. Typing is for the long lists — countries, taxonomies —
+       * where the answer is pages down.
+       *
+       * It also sidesteps a fault this widget has on some tenants: after the click, focus lands on
+       * a <ul> and there is no search input anywhere, so keystrokes go nowhere and every trace line
+       * read `typed "Unit" → control shows ""`. A list we do not have to type into cannot fail that
+       * way.
+       */
+      if (attempt === 0) {
+        if (await this.pickFromFilteredMenu(menu, { first: staleFirst, count: staleCount }, want, page, control)) return true;
+        trace(`attempt 0 — opened without typing; the answer was not in the list as shown`);
+      } else if (attempt === 1) {
         await control.press("ArrowDown").catch(() => undefined); // open without filtering
       } else {
         // Clear first. Workday's prompt keeps whatever is in its searchBox between attempts,
         // so a retry appended the text to itself ("Job BoardJob Board"), which matched no
         // option at all and turned a recoverable miss into a permanent failure.
-        const probe = probes[attempt === 0 ? 0 : Math.min(attempt - 1, probes.length - 1)];
+        const probe = probes[Math.min(attempt - 2, probes.length - 1)];
         // Clear ONLY when there is something to clear. `fill("")` on react-select dispatches an
         // input event that CLOSES the menu it just opened, so on the common path — an empty search
         // box — clearing threw away the open list and the attempt could not commit. Workday's
