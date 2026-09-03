@@ -40,15 +40,27 @@ export async function readOcrHealth(): Promise<OcrHealth | null> {
   }
 }
 
-/** Record the checker's state. Keeps `lastOkAt` across a failure so the page can say how long. */
+/**
+ * Record the checker's state. Keeps `lastOkAt` across a failure so the page can say how long.
+ *
+ * A PASS HERE CANNOT CLEAR A FAILURE THE REAL CHECKS FOUND. This is called from the probe, which
+ * posts no image, so its "ok" means only "something answered on that port". It was overwriting
+ * the verdict from `recordOcrOutcome` — on 2026-09-02 the worker restarted, probed, wrote ok, and
+ * went straight back to re-filling live forms against two dead engines. Only a real check, or a
+ * caller that has one, may declare the checker healthy again.
+ */
 export async function writeOcrHealth(ok: boolean, reason?: string): Promise<void> {
   const previous = await readOcrHealth();
   const now = new Date().toISOString();
+  if (ok && (previous?.consecutiveFailures ?? 0) > 0) {
+    return; // real checks say otherwise; a probe does not get to argue
+  }
   const health: OcrHealth = {
     ok,
     checkedAt: now,
     ...(ok ? {} : { reason }),
     lastOkAt: ok ? now : previous?.lastOkAt,
+    consecutiveFailures: ok ? 0 : previous?.consecutiveFailures,
   };
   const tmp = `${HEALTH_PATH}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(health, null, 2), "utf8");
