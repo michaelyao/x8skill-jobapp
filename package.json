@@ -34,7 +34,8 @@
     "test:options": "tsx src/debug/optionMatchCases.ts",
     "test:confirm": "tsx src/debug/confirmCases.ts",
     "audit:emails": "tsx src/debug/confirmationEmails.ts",
-    "test:replay": "tsx src/debug/replayCases.ts"
+    "test:replay": "tsx src/debug/replayCases.ts",
+    "test:tiles": "tsx src/debug/tileCases.ts"
   },
   "repository": {
     "type": "git",
