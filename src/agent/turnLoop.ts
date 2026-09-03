@@ -6,6 +6,7 @@ import type { DocumentUploads, HistoryOutcome, Agent, AgentContext, AtsDriver, F
 import { ocrLayoutTiled } from "../knowledge/visualCheck.js";
 import { planTiles } from "../knowledge/tiles.js";
 import { judgePageLanguage } from "../core/pageLanguage.js";
+import { isExclusiveGroup } from "../core/fieldGroups.js";
 
 
 /**
@@ -224,9 +225,11 @@ export async function runApplication(
        * which is how the areas-of-interest answer works.
        */
       if (
-        field.type === "radio" &&
         field.groupLabel &&
-        filledLabels.has(`group:${field.groupLabel}`)
+        filledLabels.has(`group:${field.groupLabel}`) &&
+        isExclusiveGroup(
+          snapshot.fields.filter((f) => f.groupLabel === field.groupLabel).map((f) => f.label),
+        )
       ) {
         console.log(
           `    ↳ "${field.groupLabel.slice(0, 40)}" is already answered — not also ticking ` +
@@ -349,7 +352,12 @@ export async function runApplication(
          * legitimate response to a self-identification question and must not leave the group
          * looking unanswered.
          */
-        if (field.groupKey && field.groupLabel && (field.type === "radio" || /^(yes|true|checked)/i.test(answer.value.trim()))) {
+        const exclusive =
+          Boolean(field.groupLabel) &&
+          isExclusiveGroup(
+            snapshot.fields.filter((f) => f.groupLabel === field.groupLabel).map((f) => f.label),
+          );
+        if (field.groupKey && field.groupLabel && (exclusive || /^(yes|true|checked)/i.test(answer.value.trim()))) {
           filledLabels.add(`group:${field.groupLabel}`);
         }
         answersByLabel.set(field.label, { label: field.label, type: field.type, value: answer.value, widget: field.widget, draft: answer.draft });

@@ -39,7 +39,8 @@
     "backfill:authalerts": "tsx src/debug/backfillAuthAlerts.ts",
     "test:language": "tsx src/debug/languageCases.ts",
     "inspect:structure": "tsx src/debug/inspectWorkdayStructure.ts",
-    "test:storelookup": "tsx src/debug/storeLookupCases.ts"
+    "test:storelookup": "tsx src/debug/storeLookupCases.ts",
+    "test:groups": "tsx src/debug/fieldGroupCases.ts"
   },
   "repository": {
     "type": "git",
