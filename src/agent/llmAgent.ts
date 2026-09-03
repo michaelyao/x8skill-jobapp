@@ -890,23 +890,13 @@ export class LlmAgent implements Agent {
      * The value here is a marker: fillFromSkillPlan ignores it and reads the plan. What matters is
      * that the field is ANSWERED, so the filler is invited to do its job.
      */
-    if (await hasSkillPlan()) {
-      for (const field of snapshot.fields) {
-        if (!/\b(add skills?|^skills?)\b/i.test(field.label)) continue;
-        let answer = answers.find((a) => a.key === field.key);
-        if (answer?.value?.trim() && !answer.needsHuman) continue;
-        if (!answer) {
-          answer = { key: field.key, value: "", confidence: 0, needsHuman: true, source: "curated" };
-          answers.push(answer);
-        }
-        answer.value = "(the entries listed in skill.txt)";
-        answer.source = "curated";
-        answer.confidence = 1;
-        answer.needsHuman = false;
-        answer.draft = false;
-        console.log(`  [agent] "${field.label.slice(0, 40)}" will be filled from skill.txt, not by the model`);
-      }
-    }
+    /**
+     * A skills prompt needs NO answer from here. The driver declares it via fillsWithoutAnswer and
+     * fills it from skill.txt; the turn loop invites it directly. An earlier version of this set a
+     * placeholder answer so that fill() would be reached, and the filler typed the placeholder
+     * into the taxonomy — searching for "skill.txt" and being offered "Skill Development". Saying
+     * nothing here is what keeps that impossible.
+     */
 
     /**
      * REFUSE AN INVENTED DEGREE OR FIELD OF STUDY. Runs after the store override, so a recorded or

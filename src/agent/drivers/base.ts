@@ -835,6 +835,11 @@ export abstract class GenericDriver implements AtsDriver {
     return inContainer;
   }
 
+  /** A skills prompt is filled from skill.txt, so it needs no answer — see fillsWithoutAnswer. */
+  fillsWithoutAnswer(field: FieldSpec): boolean {
+    return /\b(add skills?|^skills?)\b/i.test(field.label);
+  }
+
   async fill(root: Root, field: FieldSpec, answer: FieldAnswer): Promise<boolean> {
     const locator = root.locator(field.key).first();
     if (!(await locator.count())) return false;
@@ -843,10 +848,31 @@ export abstract class GenericDriver implements AtsDriver {
     // A skills prompt is a MULTI-select over a taxonomy that names things its own way, so the
     // mapping is curated in skill.txt rather than guessed: type the heading, then tick the exact
     // entries listed under it. Nothing else can know that "Python" means eight separate rows.
-    if (/\b(add skills?|^skills?)\b/i.test(field.label) && (field.searchable || field.widget === "workday-select")) {
+    /**
+     * A SKILLS PROMPT IS THE PLAN'S, AND NOTHING ELSE MAY TYPE INTO IT.
+     *
+     * Two faults here, both mine, both live on a real application.
+     *
+     * The condition required `searchable || widget === "workday-select"`, and on Michelin neither
+     * held, so the plan never ran. The fall-through then typed the ANSWER into the box — and I had
+     * just set that answer to a marker, "(the entries listed in skill.txt)", so the run searched
+     * the taxonomy for "skill.txt" and was offered "Skill Development | Skill Marketing". One more
+     * step and it would have added a skill the candidate has never claimed, on a page whose whole
+     * purpose is that the taxonomy names things its own way.
+     *
+     * So the label alone decides — if it asks about skills, the plan owns it — and this branch now
+     * RETURNS whatever the plan did. Failing is reported; it never degrades into typing a value at
+     * a multi-select taxonomy, which was never going to be right even when the value was real.
+     */
+    if (/\b(add skills?|^skills?)\b/i.test(field.label)) {
       const filled = await this.fillFromSkillPlan(root, locator, field.key);
-      if (filled) return true;
-      // No plan (or nothing matched) — fall through to the normal single-value path.
+      if (!filled) {
+        console.log(
+          `    ✗ the skills plan filled nothing for "${field.label.slice(0, 40)}" — NOT typing a value ` +
+            `into a taxonomy; check the entries in skill.txt against what the prompt offers`,
+        );
+      }
+      return filled;
     }
 
     if (field.widget === "react-select") return this.fillReactSelect(root, locator, value, field.key);

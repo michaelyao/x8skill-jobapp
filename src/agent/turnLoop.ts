@@ -199,6 +199,28 @@ export async function runApplication(
         console.log(`    ✓ ${field.label} (left empty — nothing to enter)`);
         continue;
       }
+      /**
+       * THE DRIVER MAY OWN THIS FIELD. A skills taxonomy is filled from skill.txt, and no answer
+       * string can carry "Python means eight separate rows", so the loop must invite the driver
+       * rather than skip a field it sees no value for. Papering over that with a placeholder
+       * answer was worse: the filler typed the placeholder into the taxonomy and was offered
+       * "Skill Development".
+       */
+      if (driver.fillsWithoutAnswer?.(field) && !field.filled) {
+        const done = await withDeadline(
+          driver.fill(root, field, { key: field.key, value: "", confidence: 1, source: "curated" }),
+          FIELD_TIMEOUT_MS,
+          field.label,
+        ).catch(() => false);
+        if (done) {
+          filled.push(`${field.label}: (from the curated plan)`);
+          filledLabels.add(field.label);
+          console.log(`    ✓ ${field.label} (from the curated plan)`);
+        } else if (!failedToFill.includes(field.label)) {
+          failedToFill.push(field.label);
+        }
+        continue;
+      }
       if (!answer || answer.needsHuman || !answer.value) {
         if (learn && opts.interactive && opts.onLearn) {
           const human = await opts.onLearn(field);

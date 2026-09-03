@@ -162,6 +162,16 @@ export interface AtsDriver {
    */
   pageLabel?(root: Root): Promise<string>;
   /**
+   * Fields the DRIVER fills from its own curated knowledge, with no answer from the agent.
+   *
+   * A skills taxonomy is the case: skill.txt says that "Python" means eight separate rows, and no
+   * answer string can express that. The turn loop skips a field with no value, so the plan never
+   * ran — and papering over it with a placeholder answer was worse, because the filler typed the
+   * placeholder into the taxonomy and was offered "Skill Development". Declaring ownership is the
+   * honest version: no value changes hands, and nothing can be typed by accident.
+   */
+  fillsWithoutAnswer?(field: FieldSpec): boolean;
+  /**
    * Fill repeatable Education / Experience sections, which are not ordinary fields: each entry is
    * an editing panel that must be COMMITTED with its own Update button before the next can be
    * added, and the fields vanish from the DOM once committed. The generic reader cannot see that
