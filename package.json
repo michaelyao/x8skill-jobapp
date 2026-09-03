@@ -41,7 +41,8 @@
     "inspect:structure": "tsx src/debug/inspectWorkdayStructure.ts",
     "test:storelookup": "tsx src/debug/storeLookupCases.ts",
     "test:groups": "tsx src/debug/fieldGroupCases.ts",
-    "test:escapes": "tsx src/debug/evaluateEscapeCases.ts"
+    "test:escapes": "tsx src/debug/evaluateEscapeCases.ts",
+    "test:dateparts": "tsx src/debug/datePartCases.ts"
   },
   "repository": {
     "type": "git",

@@ -3,6 +3,7 @@ import path from "node:path";
 import { TRANSCRIPT_PATH } from "../../config.js";
 import type { Locator, Page } from "playwright";
 import { loadSkillPicks, loadSkillRemovals, pillsToRemove, type SkillPill } from "../../knowledge/skillPlan.js";
+import { datePartOf, datePartValue } from "../../core/dateParts.js";
 import { isSensitive } from "../llmAgent.js";
 import type { AtsDriver, DocumentUploads, FieldAnswer, FieldSpec, PageSnapshot, Root } from "../types.js";
 
@@ -974,7 +975,36 @@ export abstract class GenericDriver implements AtsDriver {
       await page.waitForTimeout(150);
       return await isSet();
     }
-    await locator.fill(value).catch(() => undefined);
+    /**
+     * TYPE IT, THEN READ IT BACK. `fill()` used to be followed by an unconditional `return true`
+     * with the error swallowed, which is the one thing this path is not allowed to do
+     * ("Nothing reports success without verification"). Two failures hid behind it:
+     *
+     *   - a Workday date part is a TWO-DIGIT spinbutton. Answered "1", it treats the entry as
+     *     part-typed and discards it on blur, so Michelin's Start Date kept the resume autofill's
+     *     12/2025 while the answer on record said 1/2025 — a wrong date that reads as a chosen one.
+     *   - a control `fill()` cannot type into at all threw into the `.catch`, and the caller was
+     *     told it worked.
+     *
+     * An empty read-back after typing something is proof it did not land. A DIFFERENT read-back is
+     * not: inputs reformat (a phone mask, a trimmed code), and calling that a failure would retry
+     * fields that are already correct. So this refuses only on empty, and says so.
+     */
+    const wanted = datePartOf(field.label) ? datePartValue(field.label, value) : value;
+    await locator.fill(wanted).catch(() => undefined);
+    const readBack = async () => ((await locator.inputValue().catch(() => "")) || "").trim();
+    if (wanted.trim() && !(await readBack())) {
+      // Typing is also what the stealth rule asks for, and a spinbutton takes keystrokes when it
+      // will not take a programmatic fill.
+      await locator.scrollIntoViewIfNeeded().catch(() => undefined);
+      await locator.click().catch(() => undefined);
+      await locator.pressSequentially(wanted, { delay: 40 }).catch(() => undefined);
+      await locator.page().waitForTimeout(120);
+      if (!(await readBack())) {
+        console.log(`    [fill] "${field.label.slice(0, 44)}" would not take ${JSON.stringify(wanted)} — still empty`);
+        return false;
+      }
+    }
     return true;
   }
 
