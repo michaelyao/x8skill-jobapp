@@ -228,7 +228,7 @@ export async function runApplication(
         field.groupLabel &&
         filledLabels.has(`group:${field.groupLabel}`) &&
         isExclusiveGroup(
-          snapshot.fields.filter((f) => f.groupLabel === field.groupLabel).map((f) => f.label),
+          fields.filter((f) => f.groupLabel === field.groupLabel).map((f) => f.label),
         )
       ) {
         console.log(
@@ -345,17 +345,16 @@ export async function runApplication(
       if (ok) {
         filled.push(`${field.label}: ${answer.value}${answer.draft ? " (DRAFT)" : ""}`);
         filledLabels.add(field.label);
-        // A ticked box satisfies its whole group; an untouched one ("No") does not.
         /**
-         * A ticked box satisfies its whole group; an untouched one ("No") does not. For a RADIO,
-         * choosing any option is the answer — including "I do not want to answer", which is a
-         * legitimate response to a self-identification question and must not leave the group
-         * looking unanswered.
+         * A ticked box satisfies its whole group; an untouched one ("No") does not. But when the
+         * group is EXCLUSIVE, choosing any option is the answer — including "I do not want to
+         * answer", which is a legitimate reply to a self-identification question and must not
+         * leave the group looking unanswered and the gate blocking on it.
          */
         const exclusive =
           Boolean(field.groupLabel) &&
           isExclusiveGroup(
-            snapshot.fields.filter((f) => f.groupLabel === field.groupLabel).map((f) => f.label),
+            fields.filter((f) => f.groupLabel === field.groupLabel).map((f) => f.label),
           );
         if (field.groupKey && field.groupLabel && (exclusive || /^(yes|true|checked)/i.test(answer.value.trim()))) {
           filledLabels.add(`group:${field.groupLabel}`);
