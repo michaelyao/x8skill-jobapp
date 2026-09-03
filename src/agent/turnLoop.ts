@@ -5,6 +5,7 @@ import type { Page } from "playwright";
 import type { DocumentUploads, HistoryOutcome, Agent, AgentContext, AtsDriver, FieldSpec, FilledAnswer } from "./types.js";
 import { ocrLayoutTiled } from "../knowledge/visualCheck.js";
 import { planTiles } from "../knowledge/tiles.js";
+import { judgePageLanguage } from "../core/pageLanguage.js";
 
 
 /**
@@ -297,6 +298,28 @@ export async function runApplication(
    */
   const verifiedPages = new Set<string>();
   let pagesVerified = 0;
+  /**
+   * NEVER FILL A PAGE WE CANNOT READ.
+   *
+   * workdayEnglishUrl rewrites a /fr-CA/ URL before loading, on the reasoning that a form in
+   * another language misses the answer store on every label. Nothing checked that the page STAYED
+   * readable, and on 2026-09-03 it did not: the option scan opened Michelin's header language
+   * picker and committed a selection, the application turned Thai, and the run filled fifteen
+   * fields against labels it could not match — putting "LinkedIn" into "How did you hear about
+   * us". Every guard downstream was working; none of them is about this.
+   */
+  const readablePage = async (): Promise<boolean> => {
+    const text = (await root.locator("body").innerText({ timeout: 5_000 }).catch(() => "")) || "";
+    const verdict = judgePageLanguage(text);
+    if (verdict.readable) return true;
+    console.log(
+      `  ⛔ this page is not in English (${Math.round(verdict.latinShare * 100)}% Latin letters) — ` +
+        `refusing to fill it. Labels would match nothing and the answers would go in the wrong ` +
+        `boxes. Seen: "${verdict.sample.slice(0, 70)}"`,
+    );
+    return false;
+  };
+
   const verifyThisPage = async (): Promise<void> => {
     if (!opts.runDir || process.env.PAGE_VERIFY === "0") return;
     // One check per page. The loop asks before deciding a page is done AND before advancing, which
@@ -439,6 +462,10 @@ export async function runApplication(
       }
     }
 
+    // Before anything is read or filled: is this page in a language whose labels can match?
+    if (!(await readablePage())) {
+      break;
+    }
     const snapshot = await driver.read(root);
     for (const f of snapshot.fields) {
       const k = `${f.label}\u0000${f.type}`;
