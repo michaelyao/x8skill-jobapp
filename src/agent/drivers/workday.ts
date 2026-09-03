@@ -681,17 +681,38 @@ export class WorkdayDriver extends GenericDriver {
         // searching "Social Media" came back with the country-code list from the field before it.
         // Live consequence here: "Are you currently enrolled in a degree seeking program?" was
         // offered a LANGUAGE list, and the agent answered "English".
-        await page.keyboard?.press("Escape").catch(() => undefined);
-        await page.waitForTimeout?.(150);
+        // Close whatever the PREVIOUS field left open and WAIT for it to go — a bare Escape with a
+        // 150ms sleep is what let the next field read the last one's menu.
+        await this.closeOpenMenu(root);
         await btn.click().catch(() => undefined);
         await page.waitForTimeout?.(400);
         // Scope to the list this button actually controls when it says which one that is; the
         // page-wide query is only a fallback.
+        /**
+         * ONLY A LIST WE CAN ATTRIBUTE TO THIS CONTROL.
+         *
+         * The page-wide fallback is what handed "Country / Territory Phone Code*" the seven
+         * options of "How Did You Hear About Us?" — Campus Campaign, Career Website — because that
+         * field sits directly above it and its menu was still open. Anything picked from that list
+         * would have been committed to the wrong question, and the only reason it was noticed is
+         * that "is the US in this list?" happened to have an obvious answer. A rule that guesses
+         * from someone else's menu is worse than one that declines.
+         *
+         * So: the listbox the button NAMES, or nothing. Options stay undefined, which the callers
+         * already handle — the dialling-code rule says so out loud and the LLM answers from the
+         * label instead.
+         */
         const owns = await btn.getAttribute("aria-controls").catch(() => null);
         const esc = (v: string) => v.replace(/([^a-zA-Z0-9_-])/g, "\\$1");
+        if (!owns) {
+          console.log(
+            `    [workday] "${combo.label.slice(0, 44)}" does not name its own listbox — not reading options ` +
+              `from the page, because the menu found there may belong to another field`,
+          );
+        }
         const opt = owns
           ? root.locator("#" + esc(owns) + ' [role="option"], #' + esc(owns) + ' [data-automation-id="promptOption"]')
-          : root.locator('[role="option"], [data-automation-id="promptOption"]');
+          : root.locator("#__never_matches__");
         const n = await opt.count().catch(() => 0);
         const list: string[] = [];
         for (let k = 0; k < n; k += 1) {
@@ -699,8 +720,7 @@ export class WorkdayDriver extends GenericDriver {
           if (t && !/^select one$/i.test(t)) list.push(t);
         }
         if (list.length) options = list;
-        await page.keyboard?.press("Escape").catch(() => undefined);
-        await page.waitForTimeout?.(150);
+        await this.closeOpenMenu(root);
       } catch {
         /* leave options undefined */
       }
@@ -803,7 +823,46 @@ export class WorkdayDriver extends GenericDriver {
     return true;
   }
 
+  /**
+   * AN OPEN OPTION MENU IS AN OVERLAY, and it eats the click on Save and Continue.
+   *
+   * Michelin: the run filled the page correctly and reported "clicked Save and Continue but the
+   * page did not change". The candidate then clicked the same button himself and it advanced
+   * straight to My Experience — so the form was valid and it was OUR click that never landed. A
+   * Workday prompt menu renders over the footer; a click dispatched while one is open hits the
+   * listbox. A human never sees this because their first click closes the menu and the second
+   * hits the button.
+   *
+   * The stray-options bug is the same open menu seen from the other side: option capture read the
+   * "How Did You Hear About Us?" list as if it belonged to "Country / Territory Phone Code*",
+   * which can only happen if that menu was still open when the next field was read.
+   *
+   * Dismiss, WAIT for it to be gone, then click — the rule the consent-banner bug already
+   * established. Escape first because it is the widget's own affordance; a click elsewhere would
+   * land on whatever is underneath.
+   */
+  private async closeOpenMenu(root: Root): Promise<void> {
+    const menu = root
+      .locator('[data-automation-id="activeListContainer"], [role="listbox"]:visible')
+      .first();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (!(await menu.count().catch(() => 0))) return;
+      if (!(await menu.isVisible().catch(() => false))) return;
+      await (root as Page).keyboard?.press("Escape").catch(() => undefined);
+      // Wait for it to GO, rather than assuming Escape worked — the whole point of the rule.
+      const gone = await menu.waitFor({ state: "hidden", timeout: 2_000 }).then(
+        () => true,
+        () => false,
+      );
+      if (gone) return;
+    }
+    if (await menu.isVisible().catch(() => false)) {
+      console.log("    [workday] an option menu is still open after three Escapes — a click may not land");
+    }
+  }
+
   private async clearOverlay(root: Root): Promise<void> {
+    await this.closeOpenMenu(root);
     const overlay = root.locator('[role="dialog"], [class*="Spinner" i], [data-automation-id="loadingPanel"]').first();
     if (!(await overlay.count().catch(() => 0))) return;
     // Give it a chance to clear on its own (resume parsing, step transition).
