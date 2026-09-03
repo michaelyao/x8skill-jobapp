@@ -4,6 +4,7 @@ import { isSensitive } from "../llmAgent.js";
 import { fetchWorkdayActivateLink, fetchWorkdayResetLink } from "../../knowledge/workdayReset.js";
 import type { FieldAnswer, FieldSpec, PageSnapshot, Root } from "../types.js";
 import { recordAuthAlert, clearAuthAlert } from "../../knowledge/authAlerts.js";
+import { preferredHearAboutUs } from "../llmAgent.js";
 
 const NEXT_BTN = '[data-automation-id="pageFooterNextButton"]';
 const SUBMIT_BTN = '[data-automation-id="pageFooterSubmitButton"]';
@@ -925,7 +926,32 @@ export class WorkdayDriver extends GenericDriver {
     const texts: string[] = [];
     for (let i = 0; i < count; i += 1) texts.push(((await options.nth(i).innerText().catch(() => "")) || "").trim());
 
-    const idx = bestOption(texts, answer.value);
+    let idx = bestOption(texts, answer.value);
+    /**
+     * "HOW DID YOU HEAR ABOUT US?" IS A TWO-TIER TREE, and only this question is.
+     *
+     * It opens on tier one — Campus Campaign, Career Websites, Social Media — and LinkedIn lives
+     * INSIDE Social Media, behind a right arrow. So the trace line "the wheel does not move this
+     * list — cannot reach LinkedIn" was literally true, and chasing LinkedIn was the wrong goal: a
+     * tier-one option is always visible and is a good answer under the standing preference
+     * (university > the company's own site > job board > referral > social > other).
+     *
+     * The preference needs to know the options. Read-time capture has failed to find them four
+     * times over, while this path has `texts` in hand every single run — so apply it here, and
+     * only after the recorded answer has genuinely not matched.
+     */
+    if (idx < 0 && /how did you (hear|find|learn)/i.test(field.label)) {
+      const preferred = preferredHearAboutUs(texts.filter((t) => t && !/^select one$|^no items/i.test(t)));
+      if (preferred) {
+        idx = texts.findIndex((t) => t.trim().toLowerCase() === preferred.option.trim().toLowerCase());
+        if (idx >= 0) {
+          console.log(
+            `    ↳ ${JSON.stringify(answer.value)} is not offered at this tier; taking ` +
+              `${JSON.stringify(preferred.option)} (${preferred.why})`,
+          );
+        }
+      }
+    }
     if (idx < 0) {
       await page.keyboard?.press("Escape").catch(() => undefined);
       return false;
