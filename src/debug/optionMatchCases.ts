@@ -1,5 +1,6 @@
 import { isPhoneCountryCode, optionForRecorded } from "../agent/llmAgent.js";
 import { searchProbes } from "../agent/drivers/base.js";
+import { degreeLevel } from "../core/factChecks.js";
 
 /**
  * Cases for matching a RECORDED answer to a closed list's own wording.  npm run test:options
@@ -122,6 +123,21 @@ check(`it does not settle for "Other Non-Technical Degree"`,
   JSON.stringify(optionForRecorded(MICHELIN_MAJORS, "Information Systems")).includes("Other") === false);
 check(`an exact option is exact`,
   optionForRecorded(MICHELIN_MAJORS, "Electrical Engineering").kind === "exact");
+
+/**
+ * A DEGREE LIST NAMES THE LEVEL, NOT THE AWARD. The resume says "Bachelor of Science"; forms offer
+ * "Bachelor's Degree". Token matching cannot join those — degreeLevel can, and that is the claim
+ * the form is asking for. Ambiguity stays a question for a human.
+ */
+console.log("\ndegree level, not award");
+check(`"Bachelor of Science" and "Bachelor's Degree" are the same level`,
+  degreeLevel("Bachelor of Science") === degreeLevel("Bachelor's Degree"), [degreeLevel("Bachelor of Science"), degreeLevel("Bachelor's Degree")]);
+check(`"Bachelor of Science" is not a master's`,
+  degreeLevel("Bachelor of Science") !== degreeLevel("Master of Science"));
+check(`"Bachelors" reads as bachelor level`,
+  degreeLevel("Bachelors") === degreeLevel("Bachelor of Science"));
+check(`two bachelor options in one list are AMBIGUOUS, not a coin toss`,
+  ["Bachelor of Arts", "Bachelor of Science"].filter((o) => degreeLevel(o) === degreeLevel("Bachelor of Science")).length === 2);
 
 console.log(`\n${fail ? "✗" : "✓"} ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -314,6 +314,27 @@ export function mustComeFromRecords(label: string): boolean {
    * in the records", which is all this rule can offer.
    */
   if (/\bgpa\b|grade point average|overall result/i.test(label)) return false;
+
+  /**
+   * THE RULE IS ABOUT QUESTIONS WHOSE ANSWER IS A DEGREE — not every question containing the word.
+   *
+   * Matching on the word alone refused three correct answers on one General Matter application,
+   * two of them REQUIRED, and left the fields blank:
+   *
+   *   "Degree*"                                        -> "Bachelor's Degree"  (the record's own wording)
+   *   "Do you have, or are you currently pursuing …"    -> "Yes"
+   *   "What year do you intend to complete your …"      -> "2028"
+   *
+   * A yes/no and a year are not degree names, and no record could ever be quoted for them
+   * verbatim, so the rule could only ever blank them. It applies when the field is ASKING FOR the
+   * name of a degree or a field of study.
+   */
+  if (/^(do|does|did|are|is|was|were|have|has|had|will|would|can|could|should|may|must)\b/i.test(label.trim())) {
+    return false;
+  }
+  if (/\b(what|which)\s+year\b|\bwhen\b|graduation (date|year)|expected (graduation|completion)|complete your/i.test(label)) {
+    return false;
+  }
   return RECORDED_FACT_ONLY.test(label);
 }
 
@@ -1036,7 +1057,33 @@ export class LlmAgent implements Agent {
        * the record out. An ambiguous or absent match still refuses, which is what keeps this from
        * becoming "pick something plausible".
        */
-      const fromResume = resumeFactsFor(ctx).fieldOfStudy?.trim();
+      const rf = resumeFactsFor(ctx);
+      const asksDegree = /\bdegree\b/i.test(field.label) && !/field of study|major|discipline/i.test(field.label);
+      const fromResume = (asksDegree ? rf.degree : rf.fieldOfStudy)?.trim();
+      if (fromResume && field.options?.length && asksDegree) {
+        /**
+         * A DEGREE LIST NAMES THE LEVEL, NOT THE AWARD. The resume says "Bachelor of Science";
+         * the list offers "Bachelor's Degree". Token matching cannot join those, but degreeLevel
+         * exists to say they are the same level — and that is the claim the form is asking for.
+         * Only when exactly ONE option carries that level, so "Bachelor of Arts" beside
+         * "Bachelor of Science" stays a question for a human rather than a coin toss.
+         */
+        const want = degreeLevel(fromResume);
+        const sameLevel = want ? field.options.filter((o) => degreeLevel(o) === want) : [];
+        const exactish = sameLevel.filter((o) => optionForRecorded([o], fromResume).kind !== "absent");
+        const pick = exactish.length === 1 ? exactish[0] : sameLevel.length === 1 ? sameLevel[0] : "";
+        if (pick) {
+          if (pick.trim().toLowerCase() !== answer.value.trim().toLowerCase()) {
+            console.log(
+              `  [agent] "${field.label.slice(0, 40)}": the resume's ${JSON.stringify(fromResume)} is the ` +
+                `${want} level, and this list calls that ${JSON.stringify(pick)} — using that`,
+            );
+          }
+          answer.value = pick;
+          answer.source = "profile";
+          continue;
+        }
+      }
       if (fromResume && field.options?.length) {
         const mapped = optionForRecorded(field.options, fromResume);
         if (mapped.kind === "exact" || mapped.kind === "reworded") {

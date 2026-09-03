@@ -161,5 +161,32 @@ check(`a GPA question does not resolve to the field of study`,
 check(`"Degree*" does not silently become the field of study`,
   found("Degree*") === undefined, found("Degree*"));
 
+/**
+ * GENERAL MATTER: the word "degree" is not the question.
+ *
+ * One application refused three correct answers, two of them REQUIRED, and left the fields blank:
+ * "Degree*" -> "Bachelor's Degree" (the record's own wording), "Do you have, or are you currently
+ * pursuing a degree?" -> "Yes", "What year do you intend to complete your degree?" -> "2028".
+ * A yes/no and a year are not degree names, and no record could be quoted verbatim for them, so
+ * the rule could only ever blank them.
+ */
+console.log("\nthe rule is about questions whose ANSWER is a degree");
+check(`"Do you have, or are you currently pursuing a degree?" is a yes/no`,
+  mustComeFromRecords("Do you have, or are you currently pursuing a degree?") === false);
+check(`"Are you currently enrolled in a degree seeking program?" is a yes/no`,
+  mustComeFromRecords("Are you currently enrolled in a degree seeking program?") === false);
+check(`"What year do you intend to complete your degree?" is a year`,
+  mustComeFromRecords("What year do you intend to complete your degree?") === false);
+check(`"When will you complete your degree?" is a date`,
+  mustComeFromRecords("When will you complete your degree?") === false);
+check(`"Expected graduation date for your degree" is a date`,
+  mustComeFromRecords("Expected graduation date for your degree") === false);
+check(`"Degree*" still asks for a degree NAME`, mustComeFromRecords("Degree*") === true);
+check(`"What is your current major?" still does`,
+  mustComeFromRecords("What is your current major?") === true);
+check(`"Education — Field of Study" still does`,
+  mustComeFromRecords("Education — Field of Study") === true);
+check(`"Discipline*" still does`, mustComeFromRecords("Discipline*") === true);
+
 console.log(`\n${fail ? "✗" : "✓"} ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
