@@ -353,6 +353,35 @@ export class WorkableDriver extends GenericDriver {
       }
     }
 
+    /**
+     * COUNT WHAT THE FORM HOLDS, NOT WHAT THIS RUN TYPED.
+     *
+     * These counters only ever counted entries THIS run committed, and Workable keeps a
+     * part-finished application: on a re-fill the panels are already populated, the code
+     * correctly says "experience already has 6 field(s) — not adding another", and the run
+     * reported 0/7. The readiness gate then refused a COMPLETE application — the review
+     * screenshot shows all six entries, Amazon through BART, with their periods.
+     *
+     * A company name from the resume appearing in the form's text is the form's own evidence that
+     * the entry went in, and it is what the gate is actually asking about. It can only ever
+     * correct the count UPWARDS, so an entry that genuinely failed still blocks.
+     */
+    const onForm = await page.innerText("body").catch(() => "");
+    const seen = (name: string) => {
+      const n = name.replace(/\s+/g, " ").trim();
+      return n.length >= 4 && onForm.replace(/\s+/g, " ").toLowerCase().includes(n.toLowerCase());
+    };
+    const experienceOnForm = history.experience.filter((j) => seen(j.company)).length;
+    const educationOnForm = history.education.filter((e) => seen(e.school)).length;
+    if (experienceOnForm > out.experienceCommitted || educationOnForm > out.educationCommitted) {
+      console.log(
+        `    [workable] the form already carries ${experienceOnForm} experience and ${educationOnForm} education ` +
+          `entr(ies) from an earlier run — counting those`,
+      );
+      out.experienceCommitted = Math.max(out.experienceCommitted, experienceOnForm);
+      out.educationCommitted = Math.max(out.educationCommitted, educationOnForm);
+    }
+
     console.log(
       `    [workable] history: ${out.educationCommitted}/${out.educationExpected} education, ` +
         `${out.experienceCommitted}/${out.experienceExpected} experience committed`,
