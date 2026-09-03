@@ -42,7 +42,18 @@ export interface GpaBand {
 
 export function parseGpaBand(text: string): GpaBand | undefined {
   const t = text.toLowerCase().replace(/\s+/g, " ").trim();
-  const range = t.match(/(\d(?:\.\d+)?)\s*(?:-|–|—|to)\s*(\d(?:\.\d+)?)/);
+  /**
+   * "BETWEEN 3.00 AND 3.49" is a range, and not reading it as one told Michelin his GPA is
+   * "Below 2.60" when it is 3.44.
+   *
+   * The form offered `3.5 or above / Between 3.00 and 3.49 / Between 2.80 and 2.99 /
+   * Between 2.60 and 2.79 / Below 2.60`. Only the first and last parsed, so the band that
+   * actually CONTAINS a 3.44 was invisible twice over: the picker fell through to the one low
+   * band it could read, and the readiness gate then found no parsable option containing the real
+   * GPA, concluded the form had offered nothing better, and EXCUSED the understatement. A
+   * separator this function cannot read does not look like a bug — it looks like an honest answer.
+   */
+  const range = t.match(/(\d(?:\.\d+)?)\s*(?:-|–|—|to|and)\s*(\d(?:\.\d+)?)/);
   if (range) return { min: Number(range[1]), max: Number(range[2]) };
   const orHigher = t.match(/(\d(?:\.\d+)?)\s*(?:\+|or (?:higher|above|more)|and above)/);
   if (orHigher) return { min: Number(orHigher[1]) };

@@ -121,6 +121,27 @@ check(`a 3.65 does not claim 3.7`, bestBand(LADDER, 3.65) === "3.4 out of 4.0", 
 // Order must not decide the answer: the same ladder listed upwards gives the same rung.
 check(`the answer does not depend on the order the form lists them`,
   bestBand([...LADDER].reverse(), 3.44) === "3.4 out of 4.0", bestBand([...LADDER].reverse(), 3.44));
+/**
+ * MICHELIN: the band that was the right answer did not parse, so the wrong one looked honest.
+ *
+ * The offered ladder is `3.5 or above / Between 3.00 and 3.49 / … / Below 2.60` and the real GPA
+ * is 3.44. "and" was not one of the separators parseGpaBand read, so the only rungs it could see
+ * were the top and the bottom — the picker fell to "Below 2.60" and the readiness gate excused it
+ * as the best on offer. Both halves are asserted here: the band must parse, and the false answer
+ * must be REPORTED even though it understates.
+ */
+const MICHELIN_BANDS = ["3.5 or above", "Between 3.00 and 3.49", "Between 2.80 and 2.99", "Between 2.60 and 2.79", "Below 2.60"];
+check(`"Between 3.00 and 3.49" parses as a range`,
+  JSON.stringify(parseGpaBand("Between 3.00 and 3.49")) === '{"min":3,"max":3.49}', parseGpaBand("Between 3.00 and 3.49"));
+check(`"Between 3.00 and 3.49" contains 3.44`, bandContains(parseGpaBand("Between 3.00 and 3.49")!, 3.44));
+check(`"Between 2.60 and 2.79" excludes 3.44`, !bandContains(parseGpaBand("Between 2.60 and 2.79")!, 3.44));
+check(`a 3.44 picks "Between 3.00 and 3.49" off Michelin's ladder`,
+  bestBand(MICHELIN_BANDS, 3.44) === "Between 3.00 and 3.49", bestBand(MICHELIN_BANDS, 3.44));
+check(`"Below 2.60" for a 3.44 is reported, not excused`,
+  checkFacts([{ label: "What is your cumulative GPA for your 4 year degree on a 4.0 scale?", value: "Below 2.60", options: MICHELIN_BANDS }], { gpa: "3.44" }).some((p) => p.code === "gpa-wrong"));
+check(`"3.5 or above" still reads as a floor, not a range`,
+  JSON.stringify(parseGpaBand("3.5 or above")) === '{"min":3.5}', parseGpaBand("3.5 or above"));
+
 check(`"3.4 out of 4.0" reads as a floor`, JSON.stringify(parseGpaBand("3.4 out of 4.0")) === '{"min":3.4}', parseGpaBand("3.4 out of 4.0"));
 // The gap case this function was written for is unchanged.
 check(`a 3.53 against Verkada's bands still understates by one band`,
