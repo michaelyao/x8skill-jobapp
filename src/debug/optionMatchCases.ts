@@ -1,4 +1,4 @@
-import { optionForRecorded } from "../agent/llmAgent.js";
+import { isPhoneCountryCode, optionForRecorded } from "../agent/llmAgent.js";
 
 /**
  * Cases for matching a RECORDED answer to a closed list's own wording.  npm run test:options
@@ -42,6 +42,27 @@ check(`a recorded "Verification" does not become "Formal Verification"`, m(["For
 check(`"none — no extension" does not become "No"`, m(["Yes", "No"], "none — no extension; leave this field empty").kind === "absent", m(["Yes", "No"], "none — no extension; leave this field empty"));
 check(`an answer nothing offers`, m(DIALLING, "Narnia (+99)").kind === "absent");
 check(`an empty recorded answer`, m(DIALLING, "   ").kind === "absent");
+
+
+console.log("\nrecognising the dialling-code question, however it is spelled");
+// Every one of these is a real label from a real tenant; the store can only hold one of them.
+for (const yes of [
+  "Country Phone Code*",
+  "Country / Territory Phone Code*",
+  "Country/Territory Phone Code",
+  "Phone Country Code",
+  "Mobile Phone Country Code *",
+]) check(`"${yes}" is the dialling code`, isPhoneCountryCode(yes), yes);
+// And the ones it must NOT swallow: a country is a different question with a different answer.
+for (const no of [
+  "Country / Territory",
+  "Country",
+  "Postal Code*",
+  "Zip / Postal Code",
+  "Phone Number*",
+  "Phone Extension",
+  "Country of Citizenship",
+]) check(`"${no}" is NOT the dialling code`, !isPhoneCountryCode(no), no);
 
 console.log(`\n${fail ? "✗" : "✓"} ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

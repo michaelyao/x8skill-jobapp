@@ -211,6 +211,25 @@ export function optionForRecorded(options: string[], value: string): OptionMatch
   return { kind: "absent" };
 }
 
+/**
+ * Is this the country DIALLING CODE beside a phone number?
+ *
+ * The worst field in the log — 130 runs reported no answer for it — and part of the reason is that
+ * every tenant spells it differently: "Country Phone Code", "Country / Territory Phone Code",
+ * "Phone Country Code". The answer store holds one wording, so a variant misses and a REQUIRED
+ * field stays empty, which on Workday means Save and Continue does nothing and the run stops.
+ * Michelin stopped exactly there after filling twelve fields correctly.
+ *
+ * Deliberately narrow: it must mention a phone AND a code. "Country / Territory" on its own is the
+ * country field, which is a different question with a different answer.
+ */
+export function isPhoneCountryCode(label: string): boolean {
+  const l = label.toLowerCase();
+  if (!/\bcode\b/.test(l)) return false;
+  if (!/phone|dial|mobile|telephone/.test(l)) return false;
+  return /country|territory/.test(l);
+}
+
 export function skipAsOptionalProse(label: string, required: boolean): boolean {
   return !required && OPTIONAL_PROSE.test(label ?? "");
 }
@@ -740,6 +759,48 @@ export class LlmAgent implements Agent {
           }
         }
       }
+    }
+
+    /**
+     * The country dialling code. Nathan is in the US on one address used everywhere, so the answer
+     * is always the same; only the SPELLING of the question and of the option varies. The form's
+     * own wording wins, via the same option matcher the store override uses.
+     */
+    for (const field of snapshot.fields) {
+      if (!isPhoneCountryCode(field.label)) continue;
+      let answer = answers.find((a) => a.key === field.key);
+      if (answer?.value?.trim() && !answer.needsHuman) continue;
+      const wanted = "United States of America (+1)";
+      let value = wanted;
+      if (field.options?.length) {
+        const match = optionForRecorded(field.options, wanted);
+        if (match.kind === "exact" || match.kind === "reworded") {
+          value = match.option;
+        } else {
+          // Try the bare code: some tenants list "+1" alone, others "United States".
+          const fallback = ["+1", "United States", "USA", "US"]
+            .map((v) => optionForRecorded(field.options!, v))
+            .find((m) => m.kind === "exact" || m.kind === "reworded");
+          if (!fallback || !("option" in fallback)) {
+            console.log(
+              `  [agent] "${field.label.slice(0, 40)}" offers ${field.options.length} options and none is the US: ` +
+                `${field.options.slice(0, 4).map((o) => o.slice(0, 18)).join(" | ")}`,
+            );
+            continue;
+          }
+          value = fallback.option;
+        }
+      }
+      if (!answer) {
+        answer = { key: field.key, value: "", confidence: 0, needsHuman: true, source: "curated" };
+        answers.push(answer);
+      }
+      console.log(`  [agent] dialling code → ${JSON.stringify(value)} for "${field.label.slice(0, 40)}"`);
+      answer.value = value;
+      answer.source = "curated";
+      answer.confidence = 1;
+      answer.needsHuman = false;
+      answer.draft = false;
     }
 
     // "How did you hear about us?" — prefer the campus channel when the list offers one, per the
