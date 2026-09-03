@@ -842,22 +842,31 @@ export class WorkdayDriver extends GenericDriver {
    * land on whatever is underneath.
    */
   private async closeOpenMenu(root: Root): Promise<void> {
-    const menu = root
-      .locator('[data-automation-id="activeListContainer"], [role="listbox"]:visible')
-      .first();
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      if (!(await menu.count().catch(() => 0))) return;
+    /**
+     * `activeListContainer` ONLY, and it must be visible.
+     *
+     * The first version of this also matched `[role="listbox"]:visible`, which a Workday
+     * multi-select keeps permanently in the page — so it believed a menu was open on every call,
+     * pressed Escape three times waiting two seconds each, and logged a failure. Six seconds
+     * wasted per call, twice per combobox, and the candidate watching the screen asked why the
+     * page was scrolling up and down for so long. An overlay check that fires when there is no
+     * overlay is worse than none: it is pure cost plus a false alarm.
+     *
+     * activeListContainer is the OPEN prompt specifically — the name says so, and it is what the
+     * option-capture code has always keyed on.
+     */
+    const menu = root.locator('[data-automation-id="activeListContainer"]').first();
+    for (let attempt = 0; attempt < 2; attempt += 1) {
       if (!(await menu.isVisible().catch(() => false))) return;
       await (root as Page).keyboard?.press("Escape").catch(() => undefined);
-      // Wait for it to GO, rather than assuming Escape worked — the whole point of the rule.
-      const gone = await menu.waitFor({ state: "hidden", timeout: 2_000 }).then(
+      const gone = await menu.waitFor({ state: "hidden", timeout: 600 }).then(
         () => true,
         () => false,
       );
       if (gone) return;
     }
     if (await menu.isVisible().catch(() => false)) {
-      console.log("    [workday] an option menu is still open after three Escapes — a click may not land");
+      console.log("    [workday] a prompt menu will not close — the next click may land on it");
     }
   }
 
