@@ -214,11 +214,29 @@ export async function runApplication(
             }
           }
         }
+        /**
+         * A FIELD THE FORM ALREADY FILLED IS NOT A GAP.
+         *
+         * "no answer available, left for you" says two things: we have no answer, AND you need to
+         * do something. The second is false when the control already holds a value — Workday
+         * derives the dialling code from the country, so "Country / Territory Phone Code*" arrives
+         * showing "United States (+1)", which is exactly right. Reporting that as unanswered sent
+         * the candidate looking for a problem that was not there, and put a correctly filled field
+         * into `unknown`, which is meant for questions nothing was attempted on.
+         *
+         * It is still logged, because a value we did not choose is worth seeing — the ATS autofills
+         * badly elsewhere (it guesses Skills from the resume and gets them wrong). But it is
+         * reported as what it is, and it is not counted as missing.
+         */
+        if (field.filled) {
+          console.log(`    ↳ already filled by the form, left as it is: ${field.label.slice(0, 60)}`);
+          continue;
+        }
         if (!unknown.includes(field.label)) unknown.push(field.label);
         // Log it. This branch used to skip silently, which is why a field could vanish from
         // the run with no trace and leave "no answer available" impossible to interpret —
         // was it tried, or never reached?
-        console.log(`    – no answer available, left for you: ${field.label.slice(0, 70)}`);
+        console.log(`    – no answer available, and the field is EMPTY: ${field.label.slice(0, 60)}`);
         continue;
       }
       // Cap how long ONE field may take. A hung fill used to stall the whole worker: a submit for
