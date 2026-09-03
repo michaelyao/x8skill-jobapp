@@ -1,6 +1,5 @@
 import path from "node:path";
 import { ocrLayout } from "../knowledge/visualCheck.js";
-import { writeOcrHealth } from "../knowledge/ocrHealth.js";
 import { boxesAreExact, textIsLiteral, unansweredOnScreen } from "../knowledge/screenBlocks.js";
 import type { Page } from "playwright";
 import type { DocumentUploads, HistoryOutcome, Agent, AgentContext, AtsDriver, FieldSpec, FilledAnswer } from "./types.js";
@@ -280,10 +279,10 @@ export async function runApplication(
      */
     if (!layout || layout.unavailable) {
       const why = layout?.unavailable ?? "x8ocr returned nothing";
-      await writeOcrHealth(false, why).catch(() => undefined);
+      // ocrLayout already recorded this outcome into the health window — it is the single writer
+      // of what the real checks found, so writing it again here could only disagree with itself.
       throw new OcrUnavailableError(why);
     }
-    await writeOcrHealth(true).catch(() => undefined);
     if (!boxesAreExact(layout.capability) || !textIsLiteral(layout.capability)) return;
 
     const missing = unansweredOnScreen(layout.blocks, answers().map((a) => ({ label: a.label, value: a.value })));

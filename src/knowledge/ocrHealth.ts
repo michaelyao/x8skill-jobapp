@@ -28,6 +28,8 @@ export interface OcrHealth {
   lastOkAt?: string;
   /** Real checks that have failed in a row. A probe cannot see this; only the checks can. */
   consecutiveFailures?: number;
+  /** ISO timestamps of recent FAILED real checks, newest last. The window, not a streak. */
+  recentFailures?: string[];
 }
 
 const HEALTH_PATH = path.join(DATA_DIR, "ocr-health.json");
@@ -52,7 +54,10 @@ export async function readOcrHealth(): Promise<OcrHealth | null> {
 export async function writeOcrHealth(ok: boolean, reason?: string): Promise<void> {
   const previous = await readOcrHealth();
   const now = new Date().toISOString();
-  if (ok && (previous?.consecutiveFailures ?? 0) > 0) {
+  const stillFailing = (previous?.recentFailures ?? []).filter(
+    (t) => Date.parse(t) >= Date.now() - WINDOW_MS,
+  ).length;
+  if (ok && stillFailing > 0) {
     return; // real checks say otherwise; a probe does not get to argue
   }
   const health: OcrHealth = {
@@ -61,6 +66,7 @@ export async function writeOcrHealth(ok: boolean, reason?: string): Promise<void
     ...(ok ? {} : { reason }),
     lastOkAt: ok ? now : previous?.lastOkAt,
     consecutiveFailures: ok ? 0 : previous?.consecutiveFailures,
+    recentFailures: previous?.recentFailures,
   };
   const tmp = `${HEALTH_PATH}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(health, null, 2), "utf8");
@@ -81,21 +87,39 @@ export async function writeOcrHealth(ok: boolean, reason?: string): Promise<void
  * down; one success clears it. The threshold is above one because a single timeout on a huge
  * screenshot is not an outage.
  */
-const CONSECUTIVE_FAILURES_MEAN_DOWN = 3;
+/**
+ * A WINDOW, NOT A STREAK.
+ *
+ * "Three failures in a row" never fired, and the reason is the shape of the outage: x8ocr reads a
+ * SHORT form's screenshot fine through its fallback and cannot read a tall one at all. So a
+ * success reset the counter between every failure and it never reached three, while every long
+ * application went on being ground through three attempts and handed back to the candidate.
+ *
+ * Failures inside a window are what a systematic fault looks like when the successes are for a
+ * different kind of input. A pass no longer erases the record of what failed; the failures age
+ * out on their own.
+ */
+const FAILURES_MEAN_DOWN = 3;
+const WINDOW_MS = 30 * 60_000;
 
 export async function recordOcrOutcome(ok: boolean, reason?: string): Promise<void> {
   const previous = await readOcrHealth();
-  const failures = ok ? 0 : (previous?.consecutiveFailures ?? 0) + 1;
-  const down = failures >= CONSECUTIVE_FAILURES_MEAN_DOWN;
-  const now = new Date().toISOString();
+  const now = new Date();
+  const cutoff = now.getTime() - WINDOW_MS;
+  const recent = (previous?.recentFailures ?? []).filter((t) => Date.parse(t) >= cutoff);
+  if (!ok) recent.push(now.toISOString());
+  const down = recent.length >= FAILURES_MEAN_DOWN;
   const health: OcrHealth = {
     ok: !down,
-    checkedAt: now,
+    checkedAt: now.toISOString(),
     ...(down
-      ? { reason: `${failures} consecutive checks failed — ${reason ?? "no reason given"}` }
+      ? {
+          reason: `${recent.length} checks failed in the last ${Math.round(WINDOW_MS / 60000)} minutes — ${reason ?? "no reason given"}`,
+        }
       : {}),
-    lastOkAt: ok ? now : previous?.lastOkAt,
-    consecutiveFailures: failures,
+    lastOkAt: ok ? now.toISOString() : previous?.lastOkAt,
+    consecutiveFailures: ok ? 0 : (previous?.consecutiveFailures ?? 0) + 1,
+    recentFailures: recent,
   };
   const tmp = `${HEALTH_PATH}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(health, null, 2), "utf8");
