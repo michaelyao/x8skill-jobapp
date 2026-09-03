@@ -135,11 +135,33 @@ async function fetchGithubReadme(repoUrl) {
 }
 
 // Simplify-style: HTML <table>, sections by "## <emoji> <name>". Keep SWE + AI/ML.
+//
+// COUNT WHAT IS LEFT BEHIND. This slices two sections out of six and said nothing about the other
+// four, so the run reported zshah101's 67 skips in detail and stayed silent about ~294 Simplify
+// rows — and "do we get everything from this source?" could not be answered from the output.
+// Product Management and Hardware Engineering are deliberate (neither suits the candidate);
+// Quantitative Finance is NOT obviously right, because it holds roles like "Trading Systems
+// Engineer Intern" and "Quantitative Developer Intern" while the queue is already full of
+// trading firms that arrived through other trackers. Saying the number is what makes that a
+// decision instead of an accident.
 function parseSimplify(md, srcName) {
   const jobs = [];
+  const skipped = new Map();
   const hdr = (re) => { const i = md.search(re); return i < 0 ? md.length : i; };
   const swe = md.slice(hdr(/##[^\n]*Software Engineering/i), hdr(/##[^\n]*Product Management/i));
   const ai = md.slice(hdr(/##[^\n]*Data Science, AI/i), hdr(/##[^\n]*Quantitative/i));
+  const countRows = (block) => (block.match(/<tr>[\s\S]*?<\/tr>/g) || []).filter(
+    (r) => [...r.matchAll(/<td>([\s\S]*?)<\/td>/g)].length >= 5,
+  ).length;
+  for (const [name, from, to] of [
+    ["Product Management", /##[^\n]*Product Management/i, /##[^\n]*Data Science, AI/i],
+    ["Quantitative Finance", /##[^\n]*Quantitative/i, /##[^\n]*Hardware Engineering/i],
+    ["Hardware Engineering", /##[^\n]*Hardware Engineering/i, /$^/],
+  ]) {
+    const block = md.slice(hdr(from), to.source === "$^" ? md.length : hdr(to));
+    const n = countRows(block);
+    if (n) skipped.set(`"${name}" (section not applied for)`, n);
+  }
   let lastCompany = "";
   for (const block of [swe, ai]) {
     for (const r of block.match(/<tr>[\s\S]*?<\/tr>/g) || []) {
@@ -151,6 +173,7 @@ function parseSimplify(md, srcName) {
         link: firstHref(tds[3]), days: ageToDays(tds[4]), posted: tds[4].trim(), src: srcName });
     }
   }
+  for (const [why, n] of skipped) console.log(`  skipped ${n} row(s) under ${why}`);
   return jobs;
 }
 
