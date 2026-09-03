@@ -215,21 +215,25 @@ export async function runApplication(
           }
         }
         /**
-         * A FIELD THE FORM ALREADY FILLED IS NOT A GAP.
+         * A FIELD THAT ALREADY HOLDS A VALUE IS NOT A GAP.
          *
          * "no answer available, left for you" says two things: we have no answer, AND you need to
-         * do something. The second is false when the control already holds a value — Workday
-         * derives the dialling code from the country, so "Country / Territory Phone Code*" arrives
-         * showing "United States (+1)", which is exactly right. Reporting that as unanswered sent
-         * the candidate looking for a problem that was not there, and put a correctly filled field
-         * into `unknown`, which is meant for questions nothing was attempted on.
+         * do something. The second is false when the control is already filled — the candidate
+         * could see "United States (+1)" sitting correctly in "Country / Territory Phone Code*"
+         * while the log told him it had been left for him.
          *
-         * It is still logged, because a value we did not choose is worth seeing — the ATS autofills
-         * badly elsewhere (it guesses Skills from the resume and gets them wrong). But it is
-         * reported as what it is, and it is not counted as missing.
+         * WHO filled it is not something this flag can answer. `filled` means the control holds a
+         * value; it could be the tenant deriving it from the country, the resume autofill, or OUR
+         * OWN earlier run — Workday saves a part-finished application as a draft, so a re-run opens
+         * a form already carrying what we typed last time. An earlier version of this comment said
+         * "already filled by the form", which is an attribution the code cannot make, and the
+         * candidate corrected it: that value was ours.
+         *
+         * Still logged, because a value nobody chose this run is worth seeing — the ATS autofills
+         * badly elsewhere, which is why skill pruning exists. But it is not counted as missing.
          */
         if (field.filled) {
-          console.log(`    ↳ already filled by the form, left as it is: ${field.label.slice(0, 60)}`);
+          console.log(`    ↳ already has a value, leaving it: ${field.label.slice(0, 60)}`);
           continue;
         }
         if (!unknown.includes(field.label)) unknown.push(field.label);
