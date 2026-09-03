@@ -2,6 +2,7 @@ import "./globals.css";
 import type { Metadata } from "next";
 import { currentUser } from "@/lib/session";
 import { OcrAlarm } from "@/components/OcrAlarm";
+import { AuthAlarm } from "@/components/AuthAlarm";
 
 export const metadata: Metadata = {
   title: "Job applications",
@@ -47,6 +48,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           </header>
         ) : null}
         {user ? <OcrAlarm /> : null}
+        {user ? <AuthAlarm /> : null}
         <div className="shell">{children}</div>
       </body>
     </html>
