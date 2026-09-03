@@ -2,6 +2,7 @@ import { normalizeQuestion } from "../utils/normalize.js";
 import { parseResumeHistory } from "../knowledge/resumeHistory.js";
 import { bandContains, bestBand, contradictsResume, degreeLevel, parseGpaBand } from "../core/factChecks.js";
 import type { Agent, AgentContext, FieldAnswer, FieldSpec, PageSnapshot } from "./types.js";
+import { loadSkillPicks } from "../knowledge/skillPlan.js";
 
 // Legal / demographic / compensation fields we must never free-guess. The agent
 // may answer these only from curated Q&A or profile data; otherwise it defers to
@@ -223,6 +224,15 @@ export function optionForRecorded(options: string[], value: string): OptionMatch
  * Deliberately narrow: it must mention a phone AND a code. "Country / Territory" on its own is the
  * country field, which is a different question with a different answer.
  */
+/** Does skill.txt actually name anything to add? Cached so the check costs one read per run. */
+let skillPlanKnown: boolean | undefined;
+async function hasSkillPlan(): Promise<boolean> {
+  if (skillPlanKnown === undefined) {
+    skillPlanKnown = (await loadSkillPicks().catch(() => [])).length > 0;
+  }
+  return skillPlanKnown;
+}
+
 export function isPhoneCountryCode(label: string): boolean {
   const l = label.toLowerCase();
   if (!/\bcode\b/.test(l)) return false;
@@ -801,6 +811,37 @@ export class LlmAgent implements Agent {
       answer.confidence = 1;
       answer.needsHuman = false;
       answer.draft = false;
+    }
+
+    /**
+     * A SKILLS PROMPT IS ANSWERED BY skill.txt, so it must not look unanswered.
+     *
+     * fillFromSkillPlan does the real work — type each heading, tick the exact entries listed
+     * under it, because nothing else can know that "Python" means eight separate taxonomy rows.
+     * But it lives inside fill(), and fill() is only reached when the turn loop HAS an answer. The
+     * model has nothing to say about a taxonomy it cannot see, so the field came back "no answer
+     * available, and the field is EMPTY" and the plan never ran at all — on the very page the plan
+     * exists for.
+     *
+     * The value here is a marker: fillFromSkillPlan ignores it and reads the plan. What matters is
+     * that the field is ANSWERED, so the filler is invited to do its job.
+     */
+    if (await hasSkillPlan()) {
+      for (const field of snapshot.fields) {
+        if (!/\b(add skills?|^skills?)\b/i.test(field.label)) continue;
+        let answer = answers.find((a) => a.key === field.key);
+        if (answer?.value?.trim() && !answer.needsHuman) continue;
+        if (!answer) {
+          answer = { key: field.key, value: "", confidence: 0, needsHuman: true, source: "curated" };
+          answers.push(answer);
+        }
+        answer.value = "(the entries listed in skill.txt)";
+        answer.source = "curated";
+        answer.confidence = 1;
+        answer.needsHuman = false;
+        answer.draft = false;
+        console.log(`  [agent] "${field.label.slice(0, 40)}" will be filled from skill.txt, not by the model`);
+      }
     }
 
     // "How did you hear about us?" — prefer the campus channel when the list offers one, per the
