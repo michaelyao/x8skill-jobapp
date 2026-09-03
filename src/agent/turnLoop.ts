@@ -233,6 +233,27 @@ export async function runApplication(
          * badly elsewhere, which is why skill pruning exists. But it is not counted as missing.
          */
         if (field.filled) {
+          /**
+           * A PREFILLED FREE-TEXT FIELD IS NOT THE SAME AS A PREFILLED DIALLING CODE.
+           *
+           * Leaving a filled field alone is right when the tenant derived it — the country picks
+           * the phone code and gets it right. It is WRONG for the long text the ATS writes from
+           * its own parse of the resume: those arrive badly formatted, and the same parse is what
+           * put BART in the experience list twice and guesses Skills so poorly that skill.txt
+           * exists to delete them. Accepting that silently would submit the ATS's prose as
+           * Nathan's, which nobody has read.
+           *
+           * We cannot rewrite what we have no answer for, so this is reported rather than fixed:
+           * it goes into `unknown`, which is what puts it in front of a human, and says WHY.
+           */
+          if (field.type === "textarea") {
+            if (!unknown.includes(field.label)) unknown.push(field.label);
+            console.log(
+              `    ⚠ prefilled from the resume parse and we have no answer to replace it with — ` +
+                `left for you to read: ${field.label.slice(0, 56)}`,
+            );
+            continue;
+          }
           console.log(`    ↳ already has a value, leaving it: ${field.label.slice(0, 60)}`);
           continue;
         }
