@@ -665,11 +665,14 @@ dependent dropdown whose options load only after Country/Territory resolves, so 
 options and dropped. Needs a live DOM dump (`src/debug/inspectMyInfo.ts`) to confirm before
 changing the reader. Until then the run stops fast and says why, instead of burning sixteen turns.
 
-**A Workday taxonomy can offer a CHOOSER instead of the list.** Seen live on RTX's
-`Education — Field of Study`: the prompt returns two rows, `Partial List (First 500 Entries)` and
-`All`, and the search reports "no match for Computer and Information Science" because the real
-options are one level down. Any list whose entries look like list-selection meta rather than
-answers needs one of them clicked first. Not yet handled.
+**A Workday taxonomy can offer a CHOOSER instead of the list.** Seen on RTX's and Intel's
+`Education — Field of Study*`: the prompt returns two rows, `Partial List (First 500 Entries)` and
+`All`, neither of them a field of study, so every search reported "no match for Computer and
+Information Science" and a REQUIRED field stayed empty. `listChooserRow` clicks through and the
+options are re-read one level down, preferring `All` — the answer may be outside the first 500, and
+a partial list that lacks it looks identical to a taxonomy that lacks it. It requires EVERY row to
+be list navigation: `All` beside `United States` is a real answer, and clicking through that would
+discard the options we came for. Cases: `npm run test:chooser`.
 
 **FIXED — was: a workday-select fill reported success without committing.** The fill is now
 verified by reading the button text back (its text IS its value), so a pick that did not land is

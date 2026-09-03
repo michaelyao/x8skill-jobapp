@@ -5,6 +5,7 @@ import type { Locator, Page } from "playwright";
 import { loadSkillPicks, loadSkillRemovals, pillsToRemove, type SkillPill } from "../../knowledge/skillPlan.js";
 import { datePartOf, datePartValue } from "../../core/dateParts.js";
 import { isSensitive, preferredHearAboutUs } from "../llmAgent.js";
+import { listChooserRow } from "../../core/listChooser.js";
 import type { AtsDriver, DocumentUploads, FieldAnswer, FieldSpec, PageSnapshot, Root } from "../types.js";
 
 /** Parse a human/ISO date string into y/m/day, or null. */
@@ -1834,6 +1835,35 @@ export abstract class GenericDriver implements AtsDriver {
       // A phone country code arrives as "+1" while the options read "United States of America
       // (+1)". Match on the parenthesised code, preferring the United States when several
       // countries share it (+1 covers Canada, American Samoa, Guam…).
+      /**
+       * THE LIST MAY BE A CHOOSER, AND THE REAL OPTIONS ARE ONE LEVEL DOWN.
+       *
+       * Intel's "Education — Field of Study*" opens on "Partial List (First 500 Entries)" and
+       * "All" — neither is a field of study — so every probe reported no match and a REQUIRED
+       * field stayed empty. RTX does the same, which is why CLAUDE.md has carried this case as
+       * "not yet handled" since August.
+       *
+       * Click through, re-read, and carry on matching against the real entries. listChooserRow
+       * decides, and it requires EVERY row to be list navigation: "All" beside "United States"
+       * is a real answer, and clicking through that would discard the options we came for.
+       */
+      const chooser = listChooserRow(texts);
+      if (chooser) {
+        const row = opts.filter({ hasText: chooser }).first();
+        const target = (await row.count().catch(() => 0)) > 0 ? row : opts.nth(texts.indexOf(chooser));
+        trace(`the list is a chooser (${texts.map((t) => JSON.stringify(t)).join(" | ")}) — opening ${JSON.stringify(chooser)}`);
+        await target.click().catch(() => undefined);
+        await page.waitForTimeout(700);
+        const reread = await readTexts(opts, await opts.count().catch(() => 0));
+        if (reread.length && !listChooserRow(reread)) {
+          texts = reread;
+          lastSeen = texts;
+          trace(`${texts.length} real option(s) behind the chooser: ${texts.slice(0, 4).join(" | ")}`);
+        } else {
+          trace(`the chooser did not open a list of answers — still ${JSON.stringify(reread.slice(0, 3))}`);
+        }
+      }
+
       let idx = indexOfOption(texts, want);
       /**
        * "How did you hear about us?" IS A TREE, AND CHASING LINKEDIN DOWN IT IS THE WRONG GOAL.
