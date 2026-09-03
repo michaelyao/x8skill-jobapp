@@ -9,8 +9,6 @@
  * not the same as seeing the page. Read-only: it fills nothing and clicks no submit.
  */
 import { chromium } from "playwright";
-import readline from "node:readline/promises";
-import { stdin as input, stdout as output } from "node:process";
 import { loadEnv } from "../utils/env.js";
 import { AUTH_DIR } from "../config.js";
 import { WorkdayDriver } from "../agent/drivers/workday.js";
@@ -54,7 +52,26 @@ console.log(`>>> read() sees ${snap?.fields.length ?? 0} field(s), submitReady=$
 for (const f of snap?.fields ?? []) console.log(`      ${f.required ? "*" : " "} ${f.label.slice(0, 70)}`);
 const text = (await page.locator("body").innerText().catch(() => "")).replace(/\s+/g, " ").slice(0, 400);
 console.log(`\n>>> what the page says:\n    ${text}\n`);
-const rl = readline.createInterface({ input, output });
-await rl.question(">>> The browser is open. Press Enter here when you are done looking. ");
-await rl.close();
+/**
+ * HOLD THE WINDOW WITHOUT WAITING ON STDIN.
+ *
+ * This used to end on readline.question(). Run in the background — which is the only way to keep
+ * a browser open while still doing anything else — there is no interactive stdin, so it blocked
+ * forever and every line above it stayed buffered. The window was open on screen and the log was
+ * empty, which is indistinguishable from the tool having hung.
+ */
+const holdMin = Number(process.env.HOLD_MIN ?? 20);
+console.log(`>>> holding the window open for ${holdMin} min (HOLD_MIN=n to change). Reporting what changes.`);
+let was = page.url();
+for (let i = 0; i < holdMin * 6; i += 1) {
+  await page.waitForTimeout(10_000);
+  const now = page.url();
+  if (now !== was) {
+    console.log(`>>> navigated: ${now}`);
+    was = now;
+    const n = (await driver.read(await driver.resolveRoot(page).catch(() => page)).catch(() => null))?.fields.length ?? 0;
+    console.log(`    read() now sees ${n} field(s)`);
+  }
+}
+console.log(">>> hold expired — closing.");
 await context.close();
