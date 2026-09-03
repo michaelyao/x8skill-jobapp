@@ -702,17 +702,39 @@ export class WorkdayDriver extends GenericDriver {
          * already handle — the dialling-code rule says so out loud and the LLM answers from the
          * label instead.
          */
+        /**
+         * ATTRIBUTION COMES FROM HAVING CLOSED EVERYTHING FIRST.
+         *
+         * The page-wide read leaked one field's options to the next. My first fix refused to read
+         * anything a button did not name via aria-controls — and most Workday prompts do not name
+         * one, so "How Did You Hear About Us?" arrived with NO options, the campus rule could not
+         * fire, the model guessed "LinkedIn", and ninety seconds burned on a menu that never
+         * opened. A field with no options is not safer than a field with the wrong ones; it is the
+         * same failure with a longer timeout.
+         *
+         * closeOpenMenu ran immediately above and WAITED for the prompt to be gone. So a visible
+         * activeListContainer now is the one this click opened — attribution without needing the
+         * control to volunteer its id. aria-controls is still preferred when offered, because it
+         * is direct evidence rather than an inference from ordering.
+         */
         const owns = await btn.getAttribute("aria-controls").catch(() => null);
         const esc = (v: string) => v.replace(/([^a-zA-Z0-9_-])/g, "\\$1");
-        if (!owns) {
+        const openNow = root.locator('[data-automation-id="activeListContainer"]').first();
+        const opened = await openNow.isVisible().catch(() => false);
+        if (!owns && !opened) {
           console.log(
-            `    [workday] "${combo.label.slice(0, 44)}" does not name its own listbox — not reading options ` +
-              `from the page, because the menu found there may belong to another field`,
+            `    [workday] "${combo.label.slice(0, 44)}" opened no menu — leaving its options unread ` +
+              `rather than reading someone else's`,
           );
         }
         const opt = owns
           ? root.locator("#" + esc(owns) + ' [role="option"], #' + esc(owns) + ' [data-automation-id="promptOption"]')
-          : root.locator("#__never_matches__");
+          : opened
+            ? root.locator(
+                '[data-automation-id="activeListContainer"] [role="option"], ' +
+                  '[data-automation-id="activeListContainer"] [data-automation-id="promptOption"]',
+              )
+            : root.locator("#__never_matches__");
         const n = await opt.count().catch(() => 0);
         const list: string[] = [];
         for (let k = 0; k < n; k += 1) {

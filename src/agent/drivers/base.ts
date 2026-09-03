@@ -1441,8 +1441,25 @@ export abstract class GenericDriver implements AtsDriver {
       .split(/[\s,/()]+/)
       .filter((w) => w.length >= 4 && !/^(and|the|for|with|from|your|this|that)$/i.test(w))
       .sort((a, b) => b.length - a.length);
+    /**
+     * SHORTEST FIRST, because that is how the widget is meant to be used.
+     *
+     * These prompts filter as you type and you click the row. A FEW characters is what makes the
+     * list appear; the whole string is what stops it appearing, because it has to match the row's
+     * own wording and often does not — "California" against "CA - California", "United States of
+     * America (+1)" against "+1". The order used to be full string first and the four-character
+     * prefix LAST, so every miss spent part of the 90-second budget before trying the one thing
+     * most likely to work, and the candidate watched the same value typed over and over.
+     *
+     * Matching exactly is still how the ROW is chosen — the probe only has to open the list.
+     */
     const probes = [
-      ...new Set([value.slice(0, 30), value.slice(0, 30), firstWord, ...words.slice(0, 2), value.trim().slice(0, 4)]),
+      ...new Set([
+        value.trim().slice(0, 4),
+        firstWord,
+        ...words.slice(0, 2),
+        value.slice(0, 30),
+      ]),
     ].filter((p) => p.length >= 2);
     let lastSeen: string[] = [];
     let typedInto = "";
