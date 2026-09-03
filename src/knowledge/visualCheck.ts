@@ -170,7 +170,19 @@ export async function ocrLayout(
    * submits. The cost of waiting is minutes on an application; the cost of not waiting is a required
    * question submitted blank, or a correct application refused. Waiting is the cheaper mistake.
    */
-  timeoutMs = 600_000,
+  /**
+   * 300s, NOT the 600 this used to say. Node's fetch is undici, whose headersTimeout is 300
+   * SECONDS and is not raised by our AbortController — so a longer number here was never
+   * achievable and the code was describing a guarantee it did not have.
+   *
+   * That cap is what produced the "outage". x8ocr queues requests; with a bulk audit of 27
+   * screenshots running in another process alongside live fills, a new request waited past 300s
+   * for its turn, undici abandoned it, and Node reported the generic "fetch failed" with the real
+   * reason hidden in `cause`. x8ocr then processed those same requests and logged them read in
+   * 5-21 seconds. Every layer said "the checker is down" and the checker was busy — with work I
+   * had queued.
+   */
+  timeoutMs = 300_000,
 ): Promise<LayoutResult | null> {
   if (!fs.existsSync(imagePath)) return null;
   const result = await serialise(() => ocrLayoutOnce(imagePath, timeoutMs));
@@ -208,9 +220,22 @@ async function ocrLayoutOnce(imagePath: string, timeoutMs: number): Promise<Layo
     const blocks = json.pages?.[0]?.blocks ?? [];
     return { blocks, capability: json.capability };
   } catch (error) {
-    // Unreachable, aborted, or unparseable — the checker is not working, and the caller must be
-    // able to tell that apart from a page it read and found nothing on.
-    return { blocks: [], unavailable: `x8ocr did not answer: ${(error as Error).message.slice(0, 90)}` };
+    /**
+     * Unreachable, aborted, or unparseable — the checker is not working, and the caller must be
+     * able to tell that apart from a page it read and found nothing on.
+     *
+     * KEEP THE CAUSE. Node's fetch says only "fetch failed" and puts the reason in `cause`, so
+     * every failure in this system read identically whether the service was absent, the socket
+     * was reset, or undici's 300-SECOND header timeout had expired. That last one is what was
+     * really happening — x8ocr logged the same requests as read in 5-21 seconds — and it cost
+     * hours of looking at the wrong service.
+     */
+    const err = error as Error & { cause?: { code?: string; message?: string } };
+    const cause = err.cause?.code ?? err.cause?.message ?? "";
+    return {
+      blocks: [],
+      unavailable: `x8ocr did not answer: ${err.message.slice(0, 60)}${cause ? ` (${String(cause).slice(0, 40)})` : ""}`,
+    };
   } finally {
     clearTimeout(timer);
   }
