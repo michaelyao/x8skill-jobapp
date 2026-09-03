@@ -566,6 +566,19 @@ change here; do not duplicate its narrative back into this file. The rules that 
   sub-fields each broke because the option lost its question and the agent answered blind.
 - **`page.evaluate()` takes a STRING and it must be an invoked IIFE** — `"(() => {…})()"`.
   A non-invoked arrow silently returns `undefined`.
+- **Inside that string, `\s` is the LETTER "s". Every regex escape must be DOUBLED.** A template
+  literal has no `\s` escape, so JS collapses it: `.replace(/\s+/g, " ")` written with one
+  backslash reaches the page as `/s+/g` and replaces every "s" with a space. `"startDate"` became
+  `" tartDate"` and 652 recorded fields carry a mangled label ("tart Date", "fir t Year Attended")
+  — while "endDate" and "dateSignedOn", which hold no lowercase s, came through perfect, so it read
+  as a few odd labels rather than one broken regex. `\b` is worse: it is a valid escape
+  (BACKSPACE), so the honeypot detector's `_bot\b` matched "_bot" followed by U+0008 and never
+  fired. The files already MIX correct `\\s` with broken `\s`, which is why it survived — both
+  spellings look right and neither errors. `npm run test:escapes` scans every template passed to
+  evaluate or opening with the IIFE; half its cases test the SCANNER, because the first version
+  skipped every escape and pronounced a corrupting file clean.
+- **A label is a KEY, so a mangled label is not cosmetic** — it is how an answer is matched to its
+  question in the store, to its approved value on re-fill, and to its block in the visual check.
 - **Keep the two outcome lists separate**: `unknown` (never attempted) vs `failedToFill`
   (attempted, refused). Both are logged; neither is silent.
 
@@ -682,6 +695,63 @@ fail the slow ones too.
 **A form that is rejecting the page gets one turn, not sixteen.** `turnLoop` breaks as soon as a
 blocking `validationErrors()` message repeats with nothing newly filled. DUSKAZ spent ~10 minutes
 re-answering thirteen fields against an error that never changed.
+
+**Workday renders ONE Work Experience row and waits for a click on "Add Another".** Nothing ever
+clicked it, so every application carried one job out of the seven on the resume — and the review
+screenshot showing a single experience read as a truncated screenshot rather than a missing
+employment history. `expandRepeatedBlocks` runs BEFORE `read()` (same reason as `pruneSkills`) and
+confirms each click by RE-COUNTING; rows are counted by the field every row must have (Job Title,
+Company, its own Delete control), because `panelSet-` wrappers and headings numbered "Work
+Experience 2" both read 0 on a real tenant and a count pinned at 1 reported a working click as
+broken. `MAX_EXPERIENCE_BLOCKS` (default 3) bounds it: each row is six more fields to fill and
+verify on a live form.
+
+**A Workday date part is a TWO-DIGIT spinbutton — a single digit never commits.** Answered "1", it
+treats the entry as part-typed and discards it on blur, so Michelin's Start Date kept the resume
+autofill's 12/2025 while the answer on record said 1/2025. `datePartValue` pads month/day and takes
+month names; it refuses to invent (a 13, a 40 or a sentence passes through untouched). The same run
+proved the general rule: `fill()` must READ THE VALUE BACK, never `fill().catch(() => undefined);
+return true`. It refuses only on EMPTY — inputs reformat, and treating that as failure would retry
+fields that are already right. Cases: `npm run test:dateparts`.
+
+**`observedFields` is per PAGE, newest read wins.** It was a first-sighting map, so a field the form
+REMOVED stayed on the record as required and unanswered: ticking "I currently work here" makes
+Workday drop that row's To date, and the readiness gate then refused a finished application over a
+field with no box on the page. Per page because the union across pages IS a multi-page form — My
+Information's fields are legitimately absent while on My Experience. An empty read replaces nothing.
+
+**A GPA band question that says "degree" is still a GPA question.** "What is your cumulative GPA for
+your 4 year degree on a 4.0 scale?" tripped the do-not-invent rule, which refused the correctly
+derived band and left the field holding "Below 2.60" from an earlier DRAFT — Workday saves
+part-finished applications, so a re-run opens a form carrying whatever the last run typed. Two
+consequences, both now enforced: a band is derived arithmetically and validated by `checkFacts`, so
+it is never an "invention"; and a PREFILLED value gets the same fact check a stated one does — a
+contradiction is not recorded, and the application is BLOCKED rather than presented for approval
+with a false answer in it. `parseGpaBand` also reads "Between 3.00 and 3.49": that separator was
+missing, so the only rungs it could see were the top and the bottom, and the gate then EXCUSED the
+understatement as the best on offer.
+
+**A closed list may name a record differently, and that is not a guess.** "What is your current
+major?" offers ten options here; the stored "Computer and Information Science" is not among them,
+so the model's answer was refused and the question went out blank — while the resume's "Information
+Systems" names "Information Systems Technology" token for token. `optionForRecorded` does the
+mapping and only accepts an option that spells the record out; ambiguous or absent still refuses,
+so it never settles for "Other". The store also files a major under **"Field of Study"** — a
+one-directional alias, for records-only questions.
+
+**"How did you hear about us?" is a TREE and chasing LinkedIn down it is the wrong goal.** Tier one
+is Campus Campaign | Career Websites | Employee Referral | Job Board | Other | Social Media, with
+LinkedIn nested under Social Media. A recorded "LinkedIn" matches nothing, so the fill scrolls a
+list that cannot scroll and leaves a REQUIRED field empty. Campus first, and **Career Websites is
+acceptable** — both are tier one. The preference now applies on the react-select path too, which is
+what actually drives this control.
+
+**An exclusive checkbox group needs the boxes to be CONTIGUOUS, not alone.** The CC-305 disability
+trio sits in a container that also holds Name, Employee ID, Date and Language, so the
+"nothing-but-checkboxes" climb found no group, the question was never attached, and the agent
+answered No to all three — leaving "Please check one of the boxes below:*" with nothing ticked. The
+second path accepts 2–15 checkboxes with no other input BETWEEN the first and the last, and takes
+the question from the last label PRECEDING the first box (the container's first label is "Name").
 
 ### Workday auth flow (complete)
 
