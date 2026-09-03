@@ -4,22 +4,43 @@ import { FeedbackBox } from "@/components/FeedbackBox";
 import { SiblingApplications } from "@/components/SiblingApplications";
 import { RoleTermFlag } from "@/components/RoleTermFlag";
 import { EligibilityFlag } from "@/components/EligibilityFlag";
+import { pendingCommands } from "@core/knowledge/commands.js";
 import { ledgerStage } from "@core/core/statusVocabulary.js";
 import { resumeFactsFrom } from "@core/core/queueReadiness.js";
 import { readProfileSnapshot } from "@core/knowledge/profile.js";
 import { currentUser } from "@/lib/session";
 import { fetchStoredJobDescription, loadX8NoteConfig } from "@core/knowledge/x8note.js";
 
+/** What a queued command is, in the words the buttons use. */
+const DECISION_WORDS: Record<string, string> = {
+  approve: "Approve and submit",
+  skip: "Skip",
+  manual_submit: "Already submitted by hand",
+  change: "A correction",
+  retry: "A re-fill",
+  apply: "A first fill",
+};
+
 export const dynamic = "force-dynamic";
 
 export default async function ReviewPage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = await params;
-  const [entry, app, user, siblings] = await Promise.all([
+  const [entry, app, user, siblings, waiting] = await Promise.all([
     getQueueEntry(code),
     getApplication(code),
     currentUser(),
     getSiblingApplications(code),
+    pendingCommands().catch(() => []),
   ]);
+  /**
+   * A DECISION ALREADY IN FLIGHT, said on the page.
+   *
+   * "I marked this as submitted by hand and it is still sitting in the queue" — and there was no
+   * way to tell from here whether the click had landed. The confirmation only ever existed as a
+   * client-side note that a reload threw away, so a request that failed and one that succeeded
+   * looked identical the moment you navigated. The command queue knows; this shows it.
+   */
+  const queuedDecision = waiting.find((c) => "code" in c && c.code === code);
 
   if (!entry) {
     /**
@@ -88,6 +109,15 @@ export default async function ReviewPage({ params }: { params: Promise<{ code: s
       <FeedbackBox code={code.toUpperCase()} company={entry.company} title={entry.title} />
       <EligibilityFlag description={description || entry.jobDescription} degree={degree} />
       <RoleTermFlag title={entry.title ?? ""} description={description} />
+      {queuedDecision ? (
+        <div className="card" style={{ marginBottom: 14, borderColor: "var(--accent)" }}>
+          <strong>{DECISION_WORDS[queuedDecision.name] ?? queuedDecision.name} is queued</strong>
+          <p className="muted" style={{ marginBottom: 0 }}>
+            The worker has not applied it yet, so what you see below is still the old state. It is
+            picked up within seconds — reload to see the result.
+          </p>
+        </div>
+      ) : null}
       <SiblingApplications rows={siblings} />
       <ReviewPanel
         entry={JSON.parse(JSON.stringify(entry))}
