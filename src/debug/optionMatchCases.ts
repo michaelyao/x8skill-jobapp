@@ -1,4 +1,5 @@
 import { isPhoneCountryCode, optionForRecorded } from "../agent/llmAgent.js";
+import { searchProbes } from "../agent/drivers/base.js";
 
 /**
  * Cases for matching a RECORDED answer to a closed list's own wording.  npm run test:options
@@ -63,6 +64,29 @@ for (const no of [
   "Phone Extension",
   "Country of Citizenship",
 ]) check(`"${no}" is NOT the dialling code`, !isPhoneCountryCode(no), no);
+
+
+console.log("\nwhat to type into a long list — the candidate's two examples");
+// "Field of Study — type 'Information' and pick Computer and Information Science."
+const fos = searchProbes("Computer and Information Science");
+check(`Field of Study leads with "Information", not "Computer"`, fos[0] === "Information", fos.slice(0, 3));
+// "Country/Territory — type 'United S' and pick United States."
+const ctry = searchProbes("United States of America");
+check(`Country leads with "United S", not "America"`, ctry[0] === "United S", ctry.slice(0, 3));
+check(`the dialling-code wording gets the same opening`,
+  searchProbes("United States of America (+1)")[0] === "United S",
+  searchProbes("United States of America (+1)").slice(0, 3));
+
+console.log("\nand the fallbacks are still there");
+check(`a four-character probe follows, for a list the longer one was too specific for`,
+  fos.includes("Comp"), fos);
+check(`the whole value is tried last`, fos[fos.length - 1].startsWith("Computer and Information"), fos[fos.length - 1]);
+// A single word IS its own most distinctive word, so it leads — then shorter openings behind it,
+// which is what opens a list the full word was too specific for.
+check(`a one-word value leads with the whole word`, searchProbes("California")[0] === "California", searchProbes("California"));
+check(`and keeps shorter fallbacks behind it`, searchProbes("California").includes("Cali"), searchProbes("California"));
+check(`a short value is not padded into nonsense`, searchProbes("Yes").every((p) => "Yes".startsWith(p) || p === "Yes"), searchProbes("Yes"));
+check(`stopwords never become a probe`, !searchProbes("Bachelor of Science and the Arts").includes("and"), searchProbes("Bachelor of Science and the Arts"));
 
 console.log(`\n${fail ? "✗" : "✓"} ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

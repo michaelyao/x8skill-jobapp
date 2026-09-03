@@ -169,6 +169,44 @@ export function confirmsSubmission(pageText: string): boolean {
   );
 }
 
+/**
+ * WHAT TO TYPE to make a long list show the answer.
+ *
+ * Two instructions from the candidate, and one rule reproduces both:
+ *
+ *   "Country/Territory — type 'United S' and pick United States."
+ *   "Field of Study — type 'Information' and pick Computer and Information Science."
+ *
+ * Workday's taxonomy matches ANY WORD, not just the opening, so the best probe is whichever is
+ * more discriminating: the eight-character opening, or the value's longest distinctive word.
+ * Ordering those two by LENGTH gets both answers right — "United S" (8) beats "America" (7), and
+ * "Information" (11) beats "Computer" (8). Dozens of entries begin with Computer; almost none
+ * contain Information.
+ *
+ * The rest follow as fallbacks: four characters to open a list that a longer probe was too
+ * specific for, the first word, the remaining words, and finally the whole value. Choosing the ROW
+ * is still an exact match — a probe only has to make the list appear and contain the answer.
+ */
+export function searchProbes(value: string): string[] {
+  const words = value
+    .trim()
+    .split(/[\s,/()]+/)
+    .filter((w) => w.length >= 4 && !/^(and|the|for|with|from|your|this|that)$/i.test(w))
+    .sort((a, b) => b.length - a.length);
+  const opening = value.trim().slice(0, 8);
+  const distinctive = words[0] ?? "";
+  const leading = [opening, distinctive].filter(Boolean).sort((a, b) => b.length - a.length);
+  return [
+    ...new Set([
+      ...leading,
+      value.trim().slice(0, 4),
+      value.trim().split(/\s+/)[0] ?? "",
+      ...words.slice(1, 3),
+      value.slice(0, 30),
+    ]),
+  ].filter((p) => p.length >= 2);
+}
+
 export abstract class GenericDriver implements AtsDriver {
   abstract readonly type: "workday" | "ashby" | "greenhouse" | "lever" | "workable" | "oracle";
   abstract detect(page: Page): Promise<boolean>;
@@ -1436,46 +1474,7 @@ export abstract class GenericDriver implements AtsDriver {
     // is tried too, longest first (stop-words excluded). Order: the whole value twice (menus are
     // flaky and one miss proves nothing), then the first word, then the longest inner word, then
     // a short prefix.
-    const words = value
-      .trim()
-      .split(/[\s,/()]+/)
-      .filter((w) => w.length >= 4 && !/^(and|the|for|with|from|your|this|that)$/i.test(w))
-      .sort((a, b) => b.length - a.length);
-    /**
-     * SHORTEST FIRST, because that is how the widget is meant to be used.
-     *
-     * These prompts filter as you type and you click the row. A FEW characters is what makes the
-     * list appear; the whole string is what stops it appearing, because it has to match the row's
-     * own wording and often does not — "California" against "CA - California", "United States of
-     * America (+1)" against "+1". The order used to be full string first and the four-character
-     * prefix LAST, so every miss spent part of the 90-second budget before trying the one thing
-     * most likely to work, and the candidate watched the same value typed over and over.
-     *
-     * Matching exactly is still how the ROW is chosen — the probe only has to open the list.
-     */
-    /**
-     * A prefix long enough to DISCRIMINATE, then shorter, then the whole thing.
-     *
-     * Four characters was too few and the full string too many. "Unit" cannot separate United
-     * States from United Kingdom or United Arab Emirates — the candidate's instruction was exact:
-     * type "United S" and pick United States. The whole string fails the other way, having to
-     * match the row's own wording: "United States of America" against "United States of America
-     * (+1)".
-     *
-     * So: eight characters first, which carries into the second word and is where the ambiguity
-     * usually resolves; then four to open a list that eight was too specific for; then the words;
-     * then the full value. The row is still chosen by exact match — a probe only has to make the
-     * list appear and contain the answer.
-     */
-    const probes = [
-      ...new Set([
-        value.trim().slice(0, 8),
-        value.trim().slice(0, 4),
-        firstWord,
-        ...words.slice(0, 2),
-        value.slice(0, 30),
-      ]),
-    ].filter((p) => p.length >= 2);
+    const probes = searchProbes(value);
     let lastSeen: string[] = [];
     let typedInto = "";
     /**
