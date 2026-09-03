@@ -977,12 +977,30 @@ export class WorkdayDriver extends GenericDriver {
     // What page are we on now? Compared after the click, so "advanced" means the page actually
     // TURNED rather than the click having been dispatched. Without this the loop treats a failed
     // navigation as progress.
+    /**
+     * THE STEP NAME AND THE PATH — not the job title and a field count.
+     *
+     * This used to read `h2` plus the number of form fields. inspectWorkdayStructure showed what
+     * h2 actually is: the JOB TITLE, "Summer 2027 Internship: Data Engineering (Ardmore, OK)",
+     * identical on every step of the flow. So the only part that ever varied was the field COUNT —
+     * and Workday adds fields when it annotates a rejected page with validation text, 15 becoming
+     * 17. A click that failed and produced an error message therefore looked like the page had
+     * TURNED. The loop took a fresh turn on the same page and filled it all again, which is what
+     * the candidate watched happen.
+     *
+     * The step name is h3 ("My Information", "My Experience"), and the path changes with it. Both
+     * move on a real advance; neither moves because an error appeared.
+     */
     const signature = async (): Promise<string> =>
       (await root
         .evaluate(`(() => {
-          var h = document.querySelector('h2, [data-automation-id="pageHeader"]');
-          var n = document.querySelectorAll('[data-automation-id^="formField"]').length;
-          return ((h && h.textContent) || "").replace(/[ ]+/g, " ").trim() + "|" + n;
+          var h3 = document.querySelector('h3');
+          var step = document.querySelector('[aria-current="step"], [data-automation-id*="progressBar" i] [aria-current]');
+          return [
+            ((h3 && h3.textContent) || "").replace(/\s+/g, " ").trim(),
+            ((step && step.textContent) || "").replace(/\s+/g, " ").trim(),
+            location.pathname,
+          ].join("|");
         })()`)
         .catch(() => "")) as string;
 
