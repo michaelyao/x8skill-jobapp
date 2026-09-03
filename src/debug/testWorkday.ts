@@ -25,6 +25,7 @@ loadEnv();
 const context = await chromium.launchPersistentContext(AUTH_DIR, {
   channel: "chrome",
   headless: false,
+  chromiumSandbox: true,
   viewport: { width: 1440, height: 1000 },
   args: ["--remote-debugging-port=9222"],
 });

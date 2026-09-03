@@ -3,6 +3,7 @@ import { GenericDriver } from "./base.js";
 import { isSensitive } from "../llmAgent.js";
 import { fetchWorkdayActivateLink, fetchWorkdayResetLink } from "../../knowledge/workdayReset.js";
 import type { FieldAnswer, FieldSpec, PageSnapshot, Root } from "../types.js";
+import { recordAuthAlert, clearAuthAlert } from "../../knowledge/authAlerts.js";
 
 const NEXT_BTN = '[data-automation-id="pageFooterNextButton"]';
 const SUBMIT_BTN = '[data-automation-id="pageFooterSubmitButton"]';
@@ -44,6 +45,22 @@ function bestOption(options: string[], want: string): number {
  * validation on a real Workday posting; custom button-comboboxes (e.g. "How did
  * you hear about us?") are not yet handled by the generic reader.
  */
+/**
+ * The tenant, which is the boundary a Workday candidate account lives inside.
+ *
+ * michelinhr.wd3.myworkdayjobs.com and medline.wd5.myworkdayjobs.com are different employers with
+ * different accounts, and an account at one says nothing about the other. Keyed on the host so one
+ * alarm covers every posting at that employer — twelve identical alarms would bury the eleven
+ * other tenants that also need an account.
+ */
+export function tenantOf(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return url.slice(0, 60);
+  }
+}
+
 export class WorkdayDriver extends GenericDriver {
   readonly type = "workday" as const;
 
@@ -217,7 +234,12 @@ export class WorkdayDriver extends GenericDriver {
     let triedSignIn = false;
     let triedReset = false;
     for (let step = 0; step < 16; step += 1) {
-      if (await count(NEXT_BTN)) return; // reached the application form
+      if (await count(NEXT_BTN)) {
+        // We are in. A tenant that previously needed a human no longer does, so stop shouting
+        // about it — an alarm nobody can clear is one nobody reads.
+        await clearAuthAlert(tenantOf(page.url())).catch(() => undefined);
+        return; // reached the application form
+      }
 
       await page.getByRole("button", { name: /accept cookies|accept all/i }).first().click({ timeout: 1000 }).catch(() => undefined);
       const body = (await page.locator("body").innerText().catch(() => "")).toLowerCase();
@@ -232,6 +254,12 @@ export class WorkdayDriver extends GenericDriver {
           continue; // activation redirects into the application; loop detects the form
         }
         console.log("[workday] no validation email arrived within the wait window.");
+        await recordAuthAlert({
+          tenant: tenantOf(page.url()),
+          stage: "activation-email",
+          detail: "the account was created but no validation email arrived, so it could not be activated",
+          email,
+        }).catch(() => undefined);
         return;
       }
 
@@ -294,6 +322,19 @@ export class WorkdayDriver extends GenericDriver {
 
       // Sign In page (single password field + email).
       if (pwCount === 1 && hasEmailField) {
+        /**
+         * ORDER IS CREATE, THEN SIGN IN, THEN RESET — decided rather than left to whichever page
+         * the tenant happens to open on. Landing on Sign In used to mean signing in first, so a
+         * tenant we have no account at spent its attempt on a password we could not have, and the
+         * ambiguous "wrong email address or password" then sent it to a reset that goes nowhere.
+         * Creating first costs one page load and answers the question the tenant refuses to.
+         */
+        if (!triedCreate) {
+          console.log("[workday] going to Create Account first — create, then sign in, then reset.");
+          await goToCreateAccount();
+          await page.waitForTimeout(1500);
+          continue;
+        }
         console.log("[workday] signing in to existing account.");
         await typeInto(emailSel, email);
         await fillNth(pw, 0, password);
@@ -368,6 +409,20 @@ export class WorkdayDriver extends GenericDriver {
               continue;
             }
             console.log("[workday] password reset did not complete — stopping.");
+            /**
+             * STEP 4: RAISE THE ALARM. Create failed, sign-in failed, and the reset email never
+             * came — so there is nothing left for the automation to try, and a human has to open
+             * this tenant and make an account. Sixty-five applications reached exactly this point
+             * and the only trace was a line in worker.log.
+             */
+            await recordAuthAlert({
+              tenant: tenantOf(page.url()),
+              stage: "reset-email",
+              detail:
+                "create, sign-in and password reset all failed, and no reset email arrived — " +
+                "this tenant needs an account created by hand",
+              email,
+            }).catch(() => undefined);
           }
           return;
         }

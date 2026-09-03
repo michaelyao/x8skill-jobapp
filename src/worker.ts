@@ -141,6 +141,12 @@ async function withBrowser(): Promise<{ deps: ApplyDeps } | null> {
       context = await chromium.launchPersistentContext(AUTH_DIR, {
         channel: "chrome",
         headless: false,
+        // Playwright defaults chromiumSandbox to FALSE, which passes --no-sandbox. Chrome then
+        // shows "You are using an unsupported command-line flag: --no-sandbox. Stability and
+        // security will suffer." at the top of the window — a banner an ATS can read, on a
+        // browser we deliberately keep looking ordinary, and a real security loss for something
+        // pointed at arbitrary employer pages. Verified gone from chrome://version.
+        chromiumSandbox: true,
         viewport: { width: 1440, height: 1000 },
         ignoreDefaultArgs: ["--enable-automation"],
         args: ["--disable-blink-features=AutomationControlled"],

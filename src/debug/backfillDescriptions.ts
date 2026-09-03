@@ -33,6 +33,7 @@ console.log(`${todo.length} of ${records.length} application(s) have no stored d
 
 const browser = await chromium.launch({
   headless: true,
+  chromiumSandbox: true,
   ignoreDefaultArgs: ["--enable-automation"],
   args: ["--disable-blink-features=AutomationControlled"],
 });

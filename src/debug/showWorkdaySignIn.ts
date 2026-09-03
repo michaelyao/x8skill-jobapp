@@ -22,6 +22,7 @@ if (!url) { console.error("usage: npx tsx src/debug/showWorkdaySignIn.ts <url>")
 const context = await chromium.launchPersistentContext(AUTH_DIR, {
   channel: "chrome",
   headless: false,
+  chromiumSandbox: true,
   viewport: { width: 1440, height: 1000 },
   ignoreDefaultArgs: ["--enable-automation"],
   args: ["--disable-blink-features=AutomationControlled"],
