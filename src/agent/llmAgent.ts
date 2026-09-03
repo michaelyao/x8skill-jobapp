@@ -233,6 +233,49 @@ async function hasSkillPlan(): Promise<boolean> {
   return skillPlanKnown;
 }
 
+/**
+ * The recorded answer for a field, allowing for the PREFIX our own reader adds.
+ *
+ * read() qualifies labels with the block they came from — "Education — Field of Study", "Work
+ * Experience 3 — Month" — because a bare "Month" is unanswerable. The store holds the bare
+ * question. An exact-only lookup therefore missed, and the model answered instead: Field of Study
+ * was filled "Management Information System", derived from the resume's "BS Information Systems",
+ * while the store held "Computer and Information Science" all along. The candidate had to say so
+ * three times.
+ *
+ * The tail after the last em-dash IS the question, because we are the ones who put the prefix
+ * there. Exported so the labels this has failed on are a test rather than a promise.
+ */
+export function storedAnswerFor<T extends { normalizedQuestion: string }>(
+  answers: readonly T[],
+  label: string,
+): T | undefined {
+  const exact = answers.find((entry) => entry.normalizedQuestion === normalizeQuestion(label));
+  if (exact) return exact;
+  const tail = label.split(/\s+[—–]\s+/).pop() ?? label;
+  if (tail === label) return undefined;
+  return answers.find((entry) => entry.normalizedQuestion === normalizeQuestion(tail));
+}
+
+/**
+ * Questions whose answer is a RECORD, not a judgement.
+ *
+ * "Do NOT invent degree or field of study." The model filled Field of Study with "Management
+ * Information System", inferred from the resume's "BS Information Systems", when the recorded
+ * answer is "Computer and Information Science" — a real taxonomy entry the candidate chose. An
+ * invented degree or major on an application is a false statement about someone's education, and
+ * it is indistinguishable on the page from a true one.
+ *
+ * So for these, a recorded or resume-derived answer is used and anything else is refused. Left
+ * empty, the field is reported as unanswered, which is a question the candidate can settle in
+ * seconds; filled with a guess, nobody ever finds out.
+ */
+const RECORDED_FACT_ONLY = /\b(degree|field of study|major|discipline|program of study|course of study)\b/i;
+
+export function mustComeFromRecords(label: string): boolean {
+  return RECORDED_FACT_ONLY.test(label);
+}
+
 export function isPhoneCountryCode(label: string): boolean {
   const l = label.toLowerCase();
   if (!/\bcode\b/.test(l)) return false;
@@ -561,8 +604,29 @@ export class LlmAgent implements Agent {
     // turns while the value sat recorded in the store. A recorded answer must not depend on the
     // model having mentioned the field.
     for (const field of snapshot.fields) {
-      const stored = ctx.answers.find((entry) => entry.normalizedQuestion === normalizeQuestion(field.label));
+      /**
+       * OUR OWN LABELS CARRY A PREFIX THE STORE DOES NOT.
+       *
+       * read() qualifies a label with the block it came from — "Education — Field of Study",
+       * "Work Experience 3 — Month", "tart Date — From* — Work Experience — Year" — because a bare
+       * "Month" is unanswerable. The store holds the bare question, so an exact lookup misses and
+       * the model answers instead. It filled Field of Study with "Management Information System",
+       * derived from the resume's "BS Information Systems", while the store held the right answer
+       * the whole time:
+       *
+       *     Field of Study             -> "Computer and Information Science"   (present)
+       *     Education — Field of Study -> no entry                             (what we looked up)
+       *
+       * So after the exact match fails, try the TAIL after the last em-dash separator. That tail is
+       * the question by construction — we are the ones who put the prefix there.
+       */
+      const stored = storedAnswerFor(ctx.answers, field.label);
       if (!stored) continue;
+      if (normalizeQuestion(stored.question) !== normalizeQuestion(field.label)) {
+        console.log(
+          `  [agent] "${field.label.slice(0, 46)}" answered from your recorded "${stored.question.slice(0, 34)}"`,
+        );
+      }
       let answer = answers.find((a) => a.key === field.key);
       if (!answer) {
         answer = { key: field.key, value: "", confidence: 0, needsHuman: true, source: "curated" };
@@ -842,6 +906,27 @@ export class LlmAgent implements Agent {
         answer.draft = false;
         console.log(`  [agent] "${field.label.slice(0, 40)}" will be filled from skill.txt, not by the model`);
       }
+    }
+
+    /**
+     * REFUSE AN INVENTED DEGREE OR FIELD OF STUDY. Runs after the store override, so a recorded or
+     * resume-derived answer has already claimed the field and is left alone; what is left is the
+     * model's own guess, and for these questions that is not good enough.
+     */
+    for (const field of snapshot.fields) {
+      if (!mustComeFromRecords(field.label)) continue;
+      const answer = answers.find((a) => a.key === field.key);
+      if (!answer || !answer.value.trim()) continue;
+      if (answer.source === "curated" || answer.source === "profile") continue;
+      console.log(
+        `  [agent] REFUSING an invented answer for "${field.label.slice(0, 40)}": ` +
+          `${JSON.stringify(answer.value.slice(0, 40))} — a degree or field of study comes from your ` +
+          `records, not from a guess. Left for you.`,
+      );
+      answer.value = "";
+      answer.needsHuman = true;
+      answer.draft = false;
+      answer.source = "curated";
     }
 
     // "How did you hear about us?" — prefer the campus channel when the list offers one, per the

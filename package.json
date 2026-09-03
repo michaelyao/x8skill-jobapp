@@ -38,7 +38,8 @@
     "test:tiles": "tsx src/debug/tileCases.ts",
     "backfill:authalerts": "tsx src/debug/backfillAuthAlerts.ts",
     "test:language": "tsx src/debug/languageCases.ts",
-    "inspect:structure": "tsx src/debug/inspectWorkdayStructure.ts"
+    "inspect:structure": "tsx src/debug/inspectWorkdayStructure.ts",
+    "test:storelookup": "tsx src/debug/storeLookupCases.ts"
   },
   "repository": {
     "type": "git",
