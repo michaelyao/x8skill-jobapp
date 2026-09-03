@@ -94,6 +94,24 @@ export class WorkdayDriver extends GenericDriver {
     const noSuchAccount = async () =>
       /couldn.?t find|could not find|no account|not recognized|isn.?t associated|no user/i.test(await authErrorText());
 
+    /**
+     * WORKDAY WILL NOT SAY WHETHER THE ACCOUNT EXISTS.
+     *
+     * 56 of 65 failed sign-ins got this one sentence:
+     *
+     *   "You may have entered the wrong email address or password or your account might be locked."
+     *
+     * Three different situations in one string, deliberately — disclosing which would leak whether
+     * an address is registered. `noSuchAccount` matches none of it, so every one of those fell
+     * through to the password-reset branch and waited out its window for an email Workday never
+     * sent, because there was no account to reset. Sixty-five applications stopped there having
+     * filled exactly one field.
+     */
+    const cannotTellWhichCase = async () =>
+      /wrong email address or password|email address or password|might be locked/i.test(
+        await authErrorText(),
+      );
+
     const accountExists = async () => {
       const t = (await page.locator('[data-automation-id*="error"], [data-automation-id*="Error"], [role="alert"]').allInnerTexts().catch(() => [])).join(" ").toLowerCase();
       return /already (exists|in use|registered|have an account)|account.*(exists|in use)|email.*already/i.test(t);
@@ -292,20 +310,47 @@ export class WorkdayDriver extends GenericDriver {
           // Do NOT reset a password for an account that does not exist. Workday sends nothing,
           // so the wait window is burned for certain — 16 failures across 11 tenants did exactly
           // this. Say which case it is, using the tenant's own words.
-          if (await noSuchAccount()) {
-            console.log(`[workday] no account at this tenant for ${email} — the form says: "${said.slice(0, 160)}"`);
+          /**
+           * CREATE BEFORE RESETTING when the tenant will not say which case it is.
+           *
+           * Creating is instant and it DIAGNOSES ITSELF: if the account does exist, Workday
+           * answers "an account already exists with this email", which accountExists() reads, and
+           * the reset branch below is then justified. Resetting first commits to a long wait on an
+           * account that may not exist — which is how this failed 56 times. Every Workday employer
+           * is a separate tenant, so having an account at one says nothing about the next.
+           */
+          if ((await noSuchAccount()) || (await cannotTellWhichCase())) {
+            const certain = await noSuchAccount();
+            console.log(
+              certain
+                ? `[workday] no account at this tenant for ${email} — the form says: "${said.slice(0, 160)}"`
+                : `[workday] the tenant will not say whether the account exists — "${said.slice(0, 120)}"`,
+            );
             if (!triedCreate) {
-              console.log("[workday] going to Create Account instead of resetting a password.");
+              console.log("[workday] trying Create Account first; a reset would wait on an email that may never come.");
               await goToCreateAccount();
               await page.waitForTimeout(1500);
               triedSignIn = false;
               continue;
             }
-            console.log(
-              "[workday] create-account was already attempted and sign-in says the account does not exist — " +
-                "stopping. A password reset would wait out its window for an email Workday will never send.",
-            );
-            return;
+            /**
+             * Create was already tried. If it reported the account EXISTS, the password is simply
+             * wrong and a reset is the right move after all — fall through to it. Otherwise stop.
+             */
+            if (!triedReset && (await accountExists())) {
+              console.log("[workday] create says the account exists, so the password is wrong — resetting after all.");
+            } else if (certain) {
+              console.log(
+                "[workday] create-account was already attempted and sign-in says the account does not exist — " +
+                  "stopping. A password reset would wait out its window for an email Workday will never send.",
+              );
+              return;
+            } else {
+              console.log(
+                "[workday] create-account was already attempted and the tenant still will not say which case " +
+                  "this is — trying the reset once before giving up.",
+              );
+            }
           }
           console.log(`[workday] sign-in failed — the form says: "${said.slice(0, 160)}"`);
           // The account exists but its stored password (from a prior season) differs
