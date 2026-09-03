@@ -13,16 +13,27 @@ export const dynamic = "force-dynamic";
 export default async function IncomingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ state?: string; source?: string }>;
+  searchParams: Promise<{ state?: string; source?: string; q?: string }>;
 }) {
-  const { state, source } = await searchParams;
+  const { state, source, q } = await searchParams;
   const all = await getIncoming();
 
   const states = [...new Set(all.map((j) => j.state))].sort();
   const sources = [...new Set(all.map((j) => j.source ?? "—"))].sort();
+  /**
+   * FIND ONE JOB. Six hundred rows and no search is "scroll until you see it" — the question
+   * "where is ANTRMA?" had no answer on any page. Matches the code, the company or the role, so
+   * a code from a log line and a company name from an email both land.
+   */
+  const needle = (q ?? "").trim().toLowerCase();
   const rows = all
     .filter((j) => (state ? j.state === state : true))
-    .filter((j) => (source ? (j.source ?? "—") === source : true));
+    .filter((j) => (source ? (j.source ?? "—") === source : true))
+    .filter((j) =>
+      !needle
+        ? true
+        : `${j.code ?? ""} ${j.company} ${j.title} ${j.applyUrl}`.toLowerCase().includes(needle),
+    );
 
   const count = (k: string) => all.filter((j) => j.state === k).length;
 
@@ -34,13 +45,35 @@ export default async function IncomingPage({
         because they are the same kind of thing. {all.length} postings.
       </p>
 
+      <form className="card" style={{ marginBottom: 14 }} action="/incoming" method="get">
+        <label htmlFor="q" style={{ display: "block", marginBottom: 6, fontWeight: 600 }}>
+          Find a job — by code, company, role or URL
+        </label>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <input
+            id="q"
+            name="q"
+            defaultValue={q ?? ""}
+            placeholder="ANTRMA, or Universal Health, or uhsinc.com"
+            style={{ flex: "1 1 320px", minWidth: 220 }}
+          />
+          <button className="primary" type="submit">Search</button>
+          {q ? <a className="pill" href="/incoming">clear</a> : null}
+        </div>
+        {q ? (
+          <p className="muted" style={{ marginBottom: 0, marginTop: 8, fontSize: 13 }}>
+            {rows.length} match{rows.length === 1 ? "" : "es"} for {JSON.stringify(q)}.
+          </p>
+        ) : null}
+      </form>
+
       <div className="card" style={{ marginBottom: 14 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
           <a href="/incoming" className={`pill${!state && !source ? " accent" : ""}`}>
             all {all.length}
           </a>
           {states.map((s) => (
-            <a key={s} href={`/incoming?state=${encodeURIComponent(s)}`} className={`pill${state === s ? " accent" : ""}`}>
+            <a key={s} href={`/incoming?state=${encodeURIComponent(s)}${q ? `&q=${encodeURIComponent(q)}` : ""}`} className={`pill${state === s ? " accent" : ""}`}>
               {s} {count(s)}
             </a>
           ))}
@@ -50,7 +83,7 @@ export default async function IncomingPage({
           {sources.map((s) => (
             <a
               key={s}
-              href={`/incoming?source=${encodeURIComponent(s)}${state ? `&state=${encodeURIComponent(state)}` : ""}`}
+              href={`/incoming?source=${encodeURIComponent(s)}${state ? `&state=${encodeURIComponent(state)}` : ""}${q ? `&q=${encodeURIComponent(q)}` : ""}`}
               className={`pill${source === s ? " accent" : ""}`}
             >
               {s === "you" ? "you (added by hand)" : s}

@@ -84,8 +84,8 @@ export default async function ReviewPage({ params }: { params: Promise<{ code: s
               Nothing has been recorded for this code yet.
             </p>
             <p className="muted">
-              If you added it on <a href="/add">Add jobs</a>, it is on the list and the worker has not
-              opened it yet — that page shows what became of everything you have given me.
+              Look it up on <a href={`/incoming?q=${code}`}>Jobs found</a> — every posting from every
+              source is there with its state, whether or not anything has been attempted on it.
             </p>
           </div>
         )}
