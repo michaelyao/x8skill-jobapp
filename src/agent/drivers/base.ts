@@ -566,6 +566,35 @@ export abstract class GenericDriver implements AtsDriver {
               up = up.parentElement;
             }
           }
+          /**
+           * SECOND PATH: THE BOXES ARE CONTIGUOUS EVEN IF THE CONTAINER HOLDS OTHER FIELDS.
+           *
+           * The strict climb above demands an ancestor holding NOTHING but checkboxes, and on
+           * Workday's Self Identify page there is none: the smallest ancestor holding all three
+           * CC-305 boxes also holds Name, Employee ID, Date and Language. So no group formed, the
+           * question was never attached, the agent answered each box as its own independent
+           * yes/no and said No to all three — and the form came back "The field Please check one
+           * of the boxes below: is required and must have a value" with nothing ticked. The
+           * comment above describes this exact failure; the strict rule just could not reach it.
+           *
+           * What makes an option list an option list is that the boxes sit TOGETHER: no other
+           * input between the first and the last. Fields above or below are somebody else's
+           * question and cannot be swept in, which is the protection the others===0 rule was
+           * reaching for.
+           */
+          if (!grp || grp.querySelectorAll('input[type="checkbox"]').length < 2) {
+            let up = c.parentElement;
+            for (let lvl = 0; lvl < 8 && up; lvl += 1) {
+              const inputs = Array.from(up.querySelectorAll('input:not([type=hidden]), select, textarea'));
+              const isBox = (el) => (el.getAttribute("type") || "").toLowerCase() === "checkbox";
+              const boxAt = inputs.map((el, ix) => (isBox(el) ? ix : -1)).filter((ix) => ix >= 0);
+              if (boxAt.length >= 2 && boxAt.length <= 15) {
+                const between = inputs.slice(boxAt[0], boxAt[boxAt.length - 1] + 1).filter((el) => !isBox(el));
+                if (!between.length) { grp = up; break; }
+              }
+              up = up.parentElement;
+            }
+          }
           const grpCount = grp ? grp.querySelectorAll('input[type="checkbox"]').length : 1;
           const inGroup = sameName > 1 || grpCount > 1;
           if (inGroup && required) required = false;
@@ -577,6 +606,25 @@ export abstract class GenericDriver implements AtsDriver {
             let q = "";
             const lab = grp.querySelector('legend, [data-automation-id="richText"], label, [class*="label" i]');
             if (lab && lab.innerText) q = lab.innerText;
+            /**
+             * When the container also holds other fields, its FIRST label is that field's — on
+             * Self Identify it is "Name". The question is the last label-ish thing BEFORE the
+             * first checkbox, so walk back from the box itself.
+             */
+            const firstBox = grp.querySelector('input[type="checkbox"]');
+            const boxOwnLabel = firstBox ? labelFor(firstBox) : "";
+            if (firstBox && (!q || (boxOwnLabel && q.indexOf(boxOwnLabel) < 0 && grp.querySelectorAll('input:not([type=hidden]):not([type=checkbox]), select, textarea').length > 0))) {
+              const marks = Array.from(grp.querySelectorAll('legend, [data-automation-id="richText"], label, [class*="label" i], p, h3, h4'));
+              let best = "";
+              for (const m of marks) {
+                if (!(m.compareDocumentPosition(firstBox) & Node.DOCUMENT_POSITION_FOLLOWING)) continue; // must precede the box
+                const t = (m.innerText || "").replace(/\\s+/g, " ").trim();
+                if (!t || t.length > 160) continue;
+                if (boxOwnLabel && t.indexOf(boxOwnLabel) >= 0) continue; // that is the option, not the question
+                best = t;
+              }
+              if (best) q = best;
+            }
             if (!q) q = grp.innerText || "";
             // Strip the option labels out of the container text so only the question is left.
             for (const box of grp.querySelectorAll('input[type="checkbox"]')) {
