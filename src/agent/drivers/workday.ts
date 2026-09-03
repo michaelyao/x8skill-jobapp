@@ -670,7 +670,7 @@ export class WorkdayDriver extends GenericDriver {
             if (h.offsetParent === null) continue;
             const ht = h.getBoundingClientRect().top + window.scrollY;
             if (ht > top) continue;
-            const t = (h.textContent || "").replace(/\s+/g, " ").trim().slice(0, 40);
+            const t = (h.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 40);
             if (!t) continue;
             if (h.tagName === "H3") { h3 = t; h4 = ""; } else { h4 = t; }
           }
@@ -1148,8 +1148,8 @@ export class WorkdayDriver extends GenericDriver {
           var h3 = document.querySelector('h3');
           var step = document.querySelector('[aria-current="step"], [data-automation-id*="progressBar" i] [aria-current]');
           return [
-            ((h3 && h3.textContent) || "").replace(/\s+/g, " ").trim(),
-            ((step && step.textContent) || "").replace(/\s+/g, " ").trim(),
+            ((h3 && h3.textContent) || "").replace(/\\s+/g, " ").trim(),
+            ((step && step.textContent) || "").replace(/\\s+/g, " ").trim(),
             location.pathname,
           ].join("|");
         })()`)

@@ -339,7 +339,7 @@ export abstract class GenericDriver implements AtsDriver {
        */
       const isBotTrap = (el) => {
         if (el.getAttribute("aria-hidden") === "true") return true;
-        return /honey|hpot|_bot\b|\bbot_|trap|nospam/i.test((el.getAttribute("name") || "") + " " + (el.id || ""));
+        return /honey|hpot|_bot\\b|\\bbot_|trap|nospam/i.test((el.getAttribute("name") || "") + " " + (el.id || ""));
       };
       const controls = [...document.querySelectorAll("input:not([type=hidden]):not([type=file]), textarea, select")]
         .filter(isVisible)
@@ -483,7 +483,7 @@ export abstract class GenericDriver implements AtsDriver {
               if (/^formField-/.test(aid3)) t2 = aid3.replace(/^formField-/, "").replace(/([a-z])([A-Z])/g, "$1 $2");
               else if (/section/i.test(aid3)) t2 = aid3.replace(/([a-z])([A-Z])/g, "$1 $2");
             }
-            t2 = (t2 || "").replace(/\s+/g, " ").trim();
+            t2 = (t2 || "").replace(/\\s+/g, " ").trim();
             if (t2 && t2.toLowerCase() !== label.toLowerCase() && parts.indexOf(t2) < 0) parts.unshift(t2.slice(0, 60));
             up2 = up2.parentElement;
           }

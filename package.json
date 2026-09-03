@@ -40,7 +40,8 @@
     "test:language": "tsx src/debug/languageCases.ts",
     "inspect:structure": "tsx src/debug/inspectWorkdayStructure.ts",
     "test:storelookup": "tsx src/debug/storeLookupCases.ts",
-    "test:groups": "tsx src/debug/fieldGroupCases.ts"
+    "test:groups": "tsx src/debug/fieldGroupCases.ts",
+    "test:escapes": "tsx src/debug/evaluateEscapeCases.ts"
   },
   "repository": {
     "type": "git",

@@ -66,7 +66,7 @@ const DUMP = `(() => {
     var up = b.parentElement;
     for (var d = 0; d < 5 && up && !sect; d++) {
       var h = up.querySelector("h1,h2,h3,h4,h5,legend,label,[class*=label i]");
-      if (h && h.innerText) sect = h.innerText.replace(/\s+/g, " ").trim().slice(0, 40);
+      if (h && h.innerText) sect = h.innerText.replace(/\\s+/g, " ").trim().slice(0, 40);
       up = up.parentElement;
     }
     buttons.push({ text: txt(b) || b.getAttribute("aria-label") || "", type: b.getAttribute("type") || "",
