@@ -3,6 +3,7 @@ import { loadApplications } from "@core/knowledge/applications.js";
 import { loadPendingQueue } from "@core/knowledge/approvalQueue.js";
 import { loadInternshipList } from "@core/sources/internshipList.js";
 import { codeForUrl, companyFromUrl, listRequests, recordRequest } from "@core/knowledge/requestedJobs.js";
+import { pendingCommands } from "@core/knowledge/commands.js";
 import { ledgerStage, queueStage } from "@core/core/statusVocabulary.js";
 import { normalizeUrl } from "@core/utils/normalize.js";
 import { isResponse, requireUser } from "@/lib/session";
@@ -119,20 +120,49 @@ export async function POST(request: Request): Promise<Response> {
 export async function GET(): Promise<Response> {
   const user = await requireUser();
   if (isResponse(user)) return user;
-  const [requests, queue, apps] = await Promise.all([listRequests(), loadPendingQueue(), loadApplications()]);
+  const [requests, queue, apps, listed, waiting] = await Promise.all([
+    listRequests(),
+    loadPendingQueue(),
+    loadApplications(),
+    loadInternshipList().catch(() => []),
+    pendingCommands().catch(() => []),
+  ]);
   const byCode = new Map(queue.map((e) => [e.code ?? e.key, e]));
   const ledger = new Map(apps.map((a) => [a.code ?? a.id, a]));
+  // Command is a union; a sweep carries no code.
+  const queuedFor = new Set(
+    waiting.map((c) => ("code" in c ? c.code : undefined)).filter((c): c is string => Boolean(c)),
+  );
+  const byUrl = new Map(listed.filter((j) => j.applyUrl).map((j) => [normalizeUrl(j.applyUrl as string), j]));
   const rows = requests.map((r) => {
-    const q = byCode.get(r.code);
-    const l = ledger.get(r.code);
+    /**
+     * A supplied posting the trackers ALSO carry keeps the tracker's code, so the code we handed
+     * back can be an alias. Follow the URL to whatever is really tracking it, or two of these
+     * read as lost when the job is in hand under another name.
+     */
+    const twin = byUrl.get(normalizeUrl(r.url));
+    const alias = twin && twin.id !== r.code ? twin.id : undefined;
+    const q = byCode.get(r.code) ?? (alias ? byCode.get(alias) : undefined);
+    const l = ledger.get(r.code) ?? (alias ? ledger.get(alias) : undefined);
     const stage = q ? queueStage(q.status) : ledgerStage(l?.status);
+    const code = q?.code ?? l?.code ?? alias ?? r.code;
+    // "Not run yet" must mean it: a command still waiting is different from a run that ended
+    // without recording anything, and calling both "not run yet" is the mislabelling this page
+    // was fixed for once already.
+    const unrun = queuedFor.has(r.code) || (alias ? queuedFor.has(alias) : false);
     return {
       ...r,
-      // Where the code should actually take you: the review page only exists for a queue entry.
-      href: q ? `/queue/${r.code}` : l ? `/applications/${r.code}` : undefined,
-      state: stage?.label ?? (l || q ? l?.status ?? q?.status : "not run yet"),
-      meaning: stage?.meaning ?? (l || q ? undefined : "It is on the list; the worker has not opened it yet."),
-      tone: stage?.tone ?? "muted",
+      href: q ? `/queue/${code}` : l ? `/applications/${code}` : undefined,
+      state: stage?.label ?? (unrun ? "waiting to be picked up" : "nothing recorded"),
+      meaning:
+        stage?.meaning ??
+        (unrun
+          ? "It is on the list and a run is queued for it."
+          : alias
+            ? `The trackers carry this posting too, as ${alias}. Nothing has been recorded against it yet.`
+            : "No run has recorded anything for it. Adding it again queues another attempt."),
+      tone: stage?.tone ?? (unrun ? "accent" : "warn"),
+      alias,
       lastError: q?.lastError ?? undefined,
     };
   });

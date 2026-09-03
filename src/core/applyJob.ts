@@ -698,6 +698,18 @@ export async function applyToJob(
   } catch (error) {
     const message = (error as Error).message.split("\n")[0];
     console.log(`  error processing job: ${message}`);
+    /**
+     * RECORD THE ATTEMPT. A run that throws used to leave NOTHING in the ledger, so the job was
+     * invisible on every page — not on /queue (it never reached review), not on /blocked (that
+     * reads prefilled_pending_submit), not on /applications (no record at all). Three postings
+     * added by hand vanished exactly this way, one of them because a worker restart killed the
+     * run mid-fill, and the only trace was a line in worker.log.
+     *
+     * `error` is deliberately NOT in ENGAGED_STATUSES, so this makes the job VISIBLE without
+     * making it unrepeatable — the next sweep may still open it. Best effort: the browser is
+     * often already gone by here, and a failure to write must not replace the real error.
+     */
+    await record("error", { notes: [message] }).catch(() => undefined);
     await jobPage.close().catch(() => undefined);
     return finish("error", [message]);
   }

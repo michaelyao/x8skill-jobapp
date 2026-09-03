@@ -21,6 +21,7 @@ import {
   type Command,
 } from "./knowledge/commands.js";
 import { isSubmittedStatus, loadPendingQueue, setVisualCheck, updatePendingStatus, upsertPending, type PendingEntry } from "./knowledge/approvalQueue.js";
+import { listRequests } from "./knowledge/requestedJobs.js";
 import { evaluateScreen } from "./knowledge/visualCheck.js";
 import { loadInternshipList, refreshInternshipCsv } from "./sources/internshipList.js";
 import { loadProfile } from "./knowledge/profile.js";
@@ -468,7 +469,29 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
       // A brand-new posting exists in neither the queue nor the ledger — only in the CSV. It
       // is the most ordinary thing to want to run, and refusing it would mean the terminal and
       // the website can name a job the worker then claims not to know.
-      const listed = entry || record ? undefined : (await loadInternshipList().catch(() => [])).find((j) => j.id === command.code);
+      const catalogue = entry || record ? [] : await loadInternshipList().catch(() => []);
+      let listed = entry || record ? undefined : catalogue.find((j) => j.id === command.code);
+      /**
+       * A CODE FROM "ADD JOBS" CAN BE ORPHANED BY A LIST REFRESH.
+       *
+       * A supplied URL that the trackers do not carry yet gets its own code. If a later
+       * refresh_list picks the same posting up from a tracker, the tracker's listing wins — the
+       * request is skipped so one job never has two identities — and the code we told the user
+       * about no longer names anything. Two of eight postings added by hand failed with "no job
+       * known as", which reads as "I lost it" when the job is right there under another code.
+       *
+       * So resolve through the request's URL. Same posting, whichever code the user is holding.
+       */
+      if (!listed) {
+        const request = (await listRequests().catch(() => [])).find((r) => r.code === command.code);
+        if (request) {
+          const wanted = normalizeUrl(request.url);
+          listed = catalogue.find((j) => j.applyUrl && normalizeUrl(j.applyUrl) === wanted);
+          if (listed) {
+            console.log(`  [${command.code}] you gave me this URL; the list carries it as ${listed.id} — using that`);
+          }
+        }
+      }
       if (!entry && !record && !listed) return { ok: false, message: `no job known as ${command.code}` };
 
       // A retry re-opens a live form, so every "is this already done?" guard applies exactly as

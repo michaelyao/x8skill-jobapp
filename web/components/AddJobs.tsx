@@ -21,6 +21,7 @@ interface Request {
   tone?: string;
   href?: string;
   lastError?: string;
+  alias?: string;
 }
 
 /**
@@ -147,6 +148,7 @@ export function AddJobs() {
                       <span className={`pill ${r.tone ?? "muted"}`} style={{ fontSize: 12 }}>{r.state ?? "not run yet"}</span>
                       {r.meaning ? <div className="muted" style={{ fontSize: 12, marginTop: 3 }}>{r.meaning}</div> : null}
                       {r.lastError ? <div className="muted" style={{ fontSize: 12, marginTop: 3 }}>{r.lastError.slice(0, 120)}</div> : null}
+                      {r.alias ? <div className="muted" style={{ fontSize: 12, marginTop: 3 }}>tracked as {r.alias}</div> : null}
                       {r.note ? <div className="muted" style={{ fontSize: 12, marginTop: 3 }}>{r.note}</div> : null}
                     </td>
                     <td style={{ maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis" }}>
