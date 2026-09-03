@@ -22,6 +22,7 @@ import {
 } from "./knowledge/commands.js";
 import { isSubmittedStatus, loadPendingQueue, setVisualCheck, updatePendingStatus, upsertPending, type PendingEntry } from "./knowledge/approvalQueue.js";
 import { listRequests } from "./knowledge/requestedJobs.js";
+import { readOcrHealth } from "./knowledge/ocrHealth.js";
 import { evaluateScreen } from "./knowledge/visualCheck.js";
 import { loadInternshipList, refreshInternshipCsv } from "./sources/internshipList.js";
 import { loadProfile } from "./knowledge/profile.js";
@@ -264,6 +265,25 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
     case "approve": {
       const entry = await findEntry(command.code);
       if (!entry) return { ok: false, message: `no queue entry for ${command.code}` };
+      /**
+       * DO NOT OPEN A LIVE FORM WHILE THE CHECKER IS DOWN.
+       *
+       * A submit re-fills the employer's form and then verifies the screenshot before clicking. If
+       * the checker cannot answer, that work is not just wasted — it RE-FILLS a live application at
+       * a real employer, and the retry does it again. Four approvals did exactly that on
+       * 2026-09-02, each waiting out 300 seconds against two dead engines.
+       *
+       * DEFERRED, not failed: the command stays queued and runs when the checker is back, so the
+       * approval stands without anyone re-approving and without a storm of pointless re-fills.
+       */
+      const health = await readOcrHealth();
+      if (health && !health.ok) {
+        return {
+          ok: false,
+          defer: true,
+          message: `[${command.code}] holding — the visual checker is down (${health.reason ?? "no reason recorded"}). Your approval stands; this submits itself once it is back.`,
+        };
+      }
       if (isSubmittedStatus(entry.status)) {
         return { ok: true, message: `[${command.code}] already ${entry.status === "manual_submitted" ? "submitted by hand on the ATS" : "submitted"} — not submitting again` };
       }
@@ -334,7 +354,10 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
       const transient = /visual checker did not answer|browser is busy|context (was )?destroyed|target (page|closed)/i.test(
         outcome.message ?? "",
       );
-      if (outcome.result === "will_retry" && transient) {
+      // Re-queueing into a checker that is DOWN is the storm this guard exists to prevent: the
+      // health gate above defers the command anyway, so let it sit rather than multiplying it.
+      const checker = await readOcrHealth();
+      if (outcome.result === "will_retry" && transient && (checker?.ok ?? true)) {
         await enqueueCommand({
           name: "approve",
           code: command.code,
