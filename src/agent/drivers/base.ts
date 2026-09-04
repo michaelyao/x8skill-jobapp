@@ -4,7 +4,7 @@ import { TRANSCRIPT_PATH } from "../../config.js";
 import type { Locator, Page } from "playwright";
 import { loadSkillPicks, loadSkillRemovals, pillsToRemove, type SkillPill } from "../../knowledge/skillPlan.js";
 import { datePartOf, datePartValue } from "../../core/dateParts.js";
-import { isSensitive, preferredHearAboutUs, workAuthorizationOption } from "../llmAgent.js";
+import { hearAboutUsPlan, isSensitive, preferredHearAboutUs, workAuthorizationOption } from "../llmAgent.js";
 import { listChooserRow } from "../../core/listChooser.js";
 import type { AtsDriver, DocumentUploads, FieldAnswer, FieldSpec, PageSnapshot, Root } from "../types.js";
 
@@ -2057,15 +2057,66 @@ export abstract class GenericDriver implements AtsDriver {
           trace(`${JSON.stringify(value)} is not on this menu; the records say ${JSON.stringify(derived!.option.slice(0, 46))} (${derived!.why})`);
         }
       }
-      if (idx < 0 && label && /how did you (hear|find|learn)/i.test(label)) {
-        const offered = texts.filter((t) => t && !/^select one$|^no items/i.test(t));
-        const preferred = preferredHearAboutUs(offered);
-        const at = preferred
-          ? texts.findIndex((t) => t.trim().toLowerCase() === preferred.option.trim().toLowerCase())
-          : -1;
-        if (at >= 0) {
-          idx = at;
-          trace(`${JSON.stringify(value)} is not offered at this tier; taking ${JSON.stringify(preferred!.option)} (${preferred!.why})`);
+      if (idx < 0 && isClosedShortList(label)) {
+        /**
+         * HANDSHAKE FIRST, THEN A CAMPUS EVENT, THEN LINKEDIN — the candidate's order.
+         *
+         * The first and third are CHILDREN: Handshake sits under "Job Board" and LinkedIn under
+         * "Social Media", so on a tenant that only shows tier one the option we want is not on
+         * screen yet. hearAboutUsPlan says which tier-one row to open; opening it is confirmed by
+         * re-reading, because a parent that reveals nothing must not read as a choice.
+         *
+         * Two ways in, because I cannot see this tenant's markup from here: the row's own
+         * expander (a chevron/arrow button inside it), then the row itself — Workday's tree
+         * prompts drill in on a click of the parent. Whichever makes the child appear wins, and if
+         * neither does we fall back to the best row that IS showing rather than stalling.
+         */
+        for (let step = 0; step < 2 && idx < 0; step += 1) {
+          const plan = hearAboutUsPlan(texts);
+          if (!plan) break;
+          if (plan.kind === "pick") {
+            const at = texts.findIndex((t) => t.trim().toLowerCase() === plan.option.trim().toLowerCase());
+            if (at >= 0) {
+              idx = at;
+              trace(`taking ${JSON.stringify(plan.option)} (${plan.why})`);
+            }
+            break;
+          }
+          trace(`${JSON.stringify(plan.why)} is nested — opening ${JSON.stringify(plan.parent)}`);
+          const parentRow = opts.filter({ hasText: plan.parent }).first();
+          const rowTarget = (await parentRow.count().catch(() => 0)) > 0
+            ? parentRow
+            : opts.nth(texts.indexOf(plan.parent));
+          const expander = rowTarget
+            .locator('button, [role="button"], [class*="chevron" i], [class*="arrow" i], svg')
+            .first();
+          let opened = false;
+          for (const target of [expander, rowTarget]) {
+            if (!(await target.count().catch(() => 0))) continue;
+            await target.click().catch(() => undefined);
+            await page.waitForTimeout(600);
+            const after = await readTexts(opts, await opts.count().catch(() => 0));
+            if (after.length && after.some((t) => plan.want.test(t))) {
+              texts = after;
+              lastSeen = texts;
+              opened = true;
+              trace(`${after.length} option(s) after opening: ${after.slice(0, 4).join(" | ")}`);
+              break;
+            }
+            if (after.length) { texts = after; lastSeen = texts; }
+          }
+          if (!opened) {
+            trace(`opening ${JSON.stringify(plan.parent)} did not reveal it — using the best row on show`);
+            const fallback = preferredHearAboutUs(texts.filter((t) => t && !/^select one$|^no items/i.test(t)));
+            const at = fallback
+              ? texts.findIndex((t) => t.trim().toLowerCase() === fallback.option.trim().toLowerCase())
+              : -1;
+            if (at >= 0) {
+              idx = at;
+              trace(`taking ${JSON.stringify(fallback!.option)} (${fallback!.why})`);
+            }
+            break;
+          }
         }
       }
       if (idx < 0) {

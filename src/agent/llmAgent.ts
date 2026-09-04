@@ -460,19 +460,54 @@ export function isAreasOfInterest(label: string): boolean {
  * Every rung matches on the FORM'S wording, and anything unmatched is left alone: an option we
  * cannot classify is not one to pick blind.
  */
-const HEAR_ABOUT_LADDER: ReadonlyArray<{ why: string; test: RegExp }> = [
-  { why: "campus", test: /campus|university|college|career (fair|center)|school|student/i },
+const HEAR_ABOUT_LADDER: ReadonlyArray<{ why: string; test: RegExp; under?: RegExp }> = [
+  /**
+   * THE CANDIDATE'S ORDER: Handshake, then a campus event, then LinkedIn.
+   *
+   * Handshake is where he actually finds these roles, and it is normally on the list — but as a
+   * CHILD of "Job Board", the same way LinkedIn is a child of "Social Media". `under` names the
+   * tier-one row to open when the child is not already showing, which is what turns this from a
+   * preference into something the fill can act on.
+   */
+  { why: "Handshake, where these roles are found", test: /handshake/i, under: /job board|job site|jobs? board/i },
+  { why: "a campus event", test: /campus|university|college|career (fair|center)|school|student/i },
+  { why: "LinkedIn", test: /linked\s?in/i, under: /social/i },
+  // Below here the order is unchanged: it is what to do when none of the three above is offered.
   {
     why: "the company's own site",
     // Plurals and "page" included: "Our Careers Website" fell through this rung to SOCIAL MEDIA,
     // because "career ?(web)?site" cannot span the "s" in "Careers".
     test: /careers?\s*(web)?\s*(site|page)|compan(y|ies)\s*(web)?site|our\s*(web)?site|corporate\s*site/i,
   },
-  { why: "a job board", test: /job board|indeed|glassdoor|handshake|simplify|linkedin/i },
+  { why: "a job board", test: /job board|indeed|glassdoor|simplify/i },
   { why: "a referral", test: /referral|employee refer|friend|colleague/i },
   { why: "social media", test: /social|twitter|facebook|instagram|tiktok|youtube/i },
   { why: "other", test: /other/i },
 ];
+
+/**
+ * What to do with the options this prompt is showing: pick one, or open a tier-one row to reach
+ * the child we would rather have.
+ *
+ * Returned as a plan rather than an option because the decision needs the tree, and the tree is
+ * only visible where the menu is open. "Expand" is always CONFIRMED by re-reading — a parent that
+ * opens nothing must not look like a choice.
+ */
+export type HearAboutPlan =
+  | { kind: "pick"; option: string; why: string }
+  | { kind: "expand"; parent: string; want: RegExp; why: string };
+
+export function hearAboutUsPlan(options: readonly string[]): HearAboutPlan | undefined {
+  const visible = options.filter((o) => o && !/^select one$|^no items/i.test(o));
+  for (const rung of HEAR_ABOUT_LADDER) {
+    const hit = visible.find((o) => rung.test.test(o));
+    if (hit) return { kind: "pick", option: hit, why: rung.why };
+    if (!rung.under) continue;
+    const parent = visible.find((o) => rung.under!.test(o));
+    if (parent) return { kind: "expand", parent, want: rung.test, why: rung.why };
+  }
+  return undefined;
+}
 
 export function preferredHearAboutUs(
   options: readonly string[],

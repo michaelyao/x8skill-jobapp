@@ -759,12 +759,15 @@ mapping and only accepts an option that spells the record out; ambiguous or abse
 so it never settles for "Other". The store also files a major under **"Field of Study"** — a
 one-directional alias, for records-only questions.
 
-**"How did you hear about us?" is a TREE and chasing LinkedIn down it is the wrong goal.** Tier one
-is Campus Campaign | Career Websites | Employee Referral | Job Board | Other | Social Media, with
-LinkedIn nested under Social Media. A recorded "LinkedIn" matches nothing, so the fill scrolls a
-list that cannot scroll and leaves a REQUIRED field empty. Campus first, and **Career Websites is
-acceptable** — both are tier one. The preference now applies on the react-select path too, which is
-what actually drives this control.
+**"How did you hear about us?" is a TREE, and the order is HANDSHAKE, then a campus event, then
+LinkedIn.** Tier one is Campus Campaign | Career Websites | Employee Referral | Job Board | Other |
+Social Media; Handshake is a child of Job Board and LinkedIn a child of Social Media, so the top
+choice is usually a row to OPEN rather than a row to pick. `hearAboutUsPlan` returns either a pick
+or an expand-this-parent instruction, and the expand is CONFIRMED by re-reading — a parent that
+reveals nothing must not read as a choice. If it reveals nothing, the best tier-one row on show is
+taken instead of stalling (**Career Websites is acceptable**). Never TYPE into this control: the
+lists are six closed options, a probe that is not among them empties the menu, and Adobe took five
+attempts that way. Cases: `npm run test:storelookup`.
 
 **An exclusive checkbox group needs the boxes to be CONTIGUOUS, not alone.** The CC-305 disability
 trio sits in a container that also holds Name, Employee ID, Date and Language, so the

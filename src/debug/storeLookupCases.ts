@@ -2,7 +2,7 @@ import { loadEnv } from "../utils/env.js";
 loadEnv();
 import { loadAnswers } from "../knowledge/answerStore.js";
 import { normalizeQuestion } from "../utils/normalize.js";
-import { workAuthorizationOption, isAreasOfInterest, mustComeFromRecords, preferredHearAboutUs, softwareInterests, storedAnswerFor } from "../agent/llmAgent.js";
+import { hearAboutUsPlan, workAuthorizationOption, isAreasOfInterest, mustComeFromRecords, preferredHearAboutUs, softwareInterests, storedAnswerFor } from "../agent/llmAgent.js";
 
 /**
  * Cases for finding a recorded answer despite the prefix our own reader adds.
@@ -222,6 +222,37 @@ check(`a plain Yes/No list is left to the ordinary path`,
   workAuthorizationOption(["Yes", "No"], { authorized: true, needsSponsorship: false }) === undefined);
 check(`two authorised-for-any-employer wordings are ambiguous, not a coin toss`,
   workAuthorizationOption(["I am authorized to work for any employer", "Authorized to work for any employer in the US"], { authorized: true, needsSponsorship: false }) === undefined);
+
+/**
+ * THE CANDIDATE'S ORDER for "How did you hear about us?": Handshake, then a campus event, then
+ * LinkedIn. The first and third are CHILDREN — Handshake under "Job Board", LinkedIn under
+ * "Social Media" — so on a tenant showing only tier one the answer is a row to OPEN, not a row to
+ * pick, and the plan has to say which.
+ */
+console.log("\nhow did you hear about us — Handshake first");
+const plan = (opts: string[]) => hearAboutUsPlan(opts);
+check(`Handshake is taken outright when it is on the list`,
+  plan(["Campus Event", "Handshake", "LinkedIn"])?.kind === "pick" &&
+    (plan(["Campus Event", "Handshake", "LinkedIn"]) as { option: string }).option === "Handshake",
+  plan(["Campus Event", "Handshake", "LinkedIn"]));
+check(`it beats a campus event, which used to win`,
+  (plan(["Campus Career Fair", "Handshake"]) as { option: string }).option === "Handshake");
+check(`Michelin's tier one opens Job Board to look for it`,
+  JSON.stringify(plan(["Campus Campaign", "Career Websites", "Employee Referral", "Job Board", "Other", "Social Media"])?.kind) === '"expand"');
+check(`and the row it opens is Job Board`,
+  (plan(["Campus Campaign", "Career Websites", "Employee Referral", "Job Board", "Other", "Social Media"]) as { parent: string }).parent === "Job Board");
+check(`Adobe's "Job Boards" plural is the same row`,
+  (plan(["Adobe Source", "Contingent Worker-Specific", "External Organizations / Events", "Job Boards"]) as { parent: string }).parent === "Job Boards");
+check(`a campus event is second: taken when no job board is offered`,
+  (plan(["Career Websites", "School Career Fair and/or Event", "Social Media"]) as { option: string }).option === "School Career Fair and/or Event");
+check(`LinkedIn is third: Social Media is opened only when neither is available`,
+  (plan(["Social Media", "Other"]) as { parent: string }).parent === "Social Media");
+check(`LinkedIn on the list outright is picked over Other`,
+  (plan(["LinkedIn Job Posting", "Other"]) as { option: string }).option === "LinkedIn Job Posting");
+check(`nothing recognisable still yields nothing rather than a guess`,
+  plan(["Carrier pigeon", "Skywriting"]) === undefined, plan(["Carrier pigeon", "Skywriting"]));
+check(`"Select one" and "No items" are never chosen`,
+  plan(["Select one", "No items"]) === undefined);
 
 console.log(`\n${fail ? "✗" : "✓"} ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
