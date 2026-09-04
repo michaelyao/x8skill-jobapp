@@ -608,6 +608,22 @@ export async function runApplication(
      * carries all of it — it is that each row is six more fields to fill and verify on a live
      * form, and a run that stalls on row seven delivers nothing. Raise it with the env var.
      */
+    /**
+     * SAY WHICH PRE-READ STEP WE ARE IN.
+     *
+     * An Akuna Capital run stopped dead after "✓ resume attached" — twice, reproducibly — and the
+     * log said nothing more, so there was no way to tell which of the four things that happen
+     * before read() had swallowed it. A hang inside a single await is invisible to maxTurns and to
+     * the worker, which goes on reporting "busy" truthfully for as long as it lasts.
+     *
+     * One short line per step. Cheap, and the difference between "it hangs somewhere" and a bug
+     * report.
+     */
+    const step = (what: string) => {
+      if (process.env.QUIET_STEPS !== "1") console.log(`      · ${what}`);
+    };
+
+    step("expanding repeated sections");
     if (driver.expandRepeatedBlocks) {
       /**
        * ALL OF THEM, because the readiness gate already insists on all of them.
@@ -632,6 +648,7 @@ export async function runApplication(
       }
     }
 
+    step("pruning autofilled skills");
     if (driver.pruneSkills) {
       const dropped = await driver.pruneSkills(root).catch(() => [] as string[]);
       if (dropped.length) {
@@ -643,10 +660,12 @@ export async function runApplication(
       }
     }
 
+    step("checking the page language");
     // Before anything is read or filled: is this page in a language whose labels can match?
     if (!(await readablePage())) {
       break;
     }
+    step("reading the form");
     const snapshot = await driver.read(root);
     /**
      * SAY WHICH PAGE THIS IS. Every turn, from the page itself — not inferred from how many fields
