@@ -205,6 +205,24 @@ export function confirmsSubmission(pageText: string): boolean {
  * specific for, the first word, the remaining words, and finally the whole value. Choosing the ROW
  * is still an exact match — a probe only has to make the list appear and contain the answer.
  */
+/**
+ * "How did you hear about us?" IS NEVER A SEARCH BOX, so never type into one.
+ *
+ * Adobe offers six options — Adobe Source | Contingent Worker-Specific | External Organizations /
+ * Events | Job Boards | … — and the answer we arrive with ("Through my University") is not among
+ * them, because every tenant words this question its own way. Typing a word that is not in a
+ * six-item list can only empty the menu, and the candidate watched it do exactly that: four
+ * attempts where the menu never rendered, then a fifth that typed "Thro", filtered to nothing,
+ * re-read the real six and picked one.
+ *
+ * The list is short and closed. Open it, read it, and let preferredHearAboutUs choose. An empty
+ * probe list means every attempt is "open without typing", which is the only attempt that can
+ * work here.
+ */
+export function isClosedShortList(label?: string): boolean {
+  return Boolean(label && /how did you (hear|find|learn)|where did you hear|how you heard/i.test(label));
+}
+
 export function searchProbes(value: string): string[] {
   const words = value
     .trim()
@@ -1761,7 +1779,7 @@ export abstract class GenericDriver implements AtsDriver {
     // is tried too, longest first (stop-words excluded). Order: the whole value twice (menus are
     // flaky and one miss proves nothing), then the first word, then the longest inner word, then
     // a short prefix.
-    const probes = searchProbes(value);
+    const probes = isClosedShortList(label) ? [] : searchProbes(value);
     let lastSeen: string[] = [];
     let typedInto = "";
     /**
