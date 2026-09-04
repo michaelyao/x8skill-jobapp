@@ -355,9 +355,32 @@ export abstract class GenericDriver implements AtsDriver {
        * and clipped. Skipping that would leave a required field unfillable and stall the run
        * against the required-field gate, which is a worse failure than the trap.
        */
+      /**
+       * A REQUIRED FIELD IS NEVER A HONEYPOT.
+       *
+       * aria-hidden="true" alone used to be enough to drop a control, and Workable hides the real
+       * radio behind a styled label exactly that way:
+       *
+       *   <input aria-required="true" required type="radio" name="QA_12265985" aria-hidden="true">
+       *
+       * So on TMEIC's form THIRTEEN required questions were classified as bot traps and never
+       * read — "Are you at least 18 years old?", "Are you legally eligible to work in the United
+       * States?", "What is your highest level of degree achieved?" among them. The reader saw 8
+       * required fields where the form has 21, every one it saw was answered, and the application
+       * was queued for review as complete. The candidate found it by reading the page.
+       *
+       * A honeypot is never required — the whole point is that a human never sees it, so no form
+       * can insist on it. The name pattern still condemns on its own (Oracle's name="honey-pot"
+       * carries no required attribute — and no backticks in this comment, it is inside a template
+       * literal), and an aria-hidden control that is NOT required is still
+       * dropped, so the guard that made this rule necessary still holds.
+       */
       const isBotTrap = (el) => {
-        if (el.getAttribute("aria-hidden") === "true") return true;
-        return /honey|hpot|_bot\\b|\\bbot_|trap|nospam/i.test((el.getAttribute("name") || "") + " " + (el.id || ""));
+        const named = /honey|hpot|_bot\\b|\\bbot_|trap|nospam/i.test((el.getAttribute("name") || "") + " " + (el.id || ""));
+        if (named) return true;
+        if (el.getAttribute("aria-hidden") !== "true") return false;
+        const insisted = el.required === true || el.getAttribute("aria-required") === "true";
+        return !insisted;
       };
       /**
        * A DISABLED CONTROL IS NOT A REQUIRED GAP.
@@ -397,8 +420,34 @@ export abstract class GenericDriver implements AtsDriver {
           else { const dk = "rg" + (i++); radios.forEach((r) => r.setAttribute("data-agent-key", dk)); key = '[data-agent-key="' + dk + '"]'; }
           const options = radios.map(labelFor).filter(Boolean);
           let q = "";
+          /**
+           * THE FIELDSET CARRIES THE QUESTION; the radiogroup wrapper carries one option.
+           *
+           * Workable nests them: <fieldset «Do you have a High school diploma?»> holds
+           * <div role="radiogroup"> per option, each wrapping one radio and its YES/NO label. So
+           * closest('[role="radiogroup"], fieldset') matched the WRAPPER, found no legend and no
+           * aria-label on it, and every fallback below eventually gave up on the raw name — the
+           * probe reported these questions as "QA_12265985". Thirteen of them on one TMEIC form,
+           * and a question the agent cannot read is one it would answer blind, which is worse than
+           * leaving it empty.
+           *
+           * So try the fieldset FIRST, and take its first line of text — the options are excluded
+           * because they live inside the nested wrappers, not at its top.
+           */
+          const fset = c.closest("fieldset");
+          if (fset) {
+            const legend = fset.querySelector("legend");
+            const fromLegend = legend && legend.innerText ? legend.innerText : "";
+            const first = (fset.innerText || "")
+              .split("\\n")
+              .map((t) => t.trim())
+              .filter(Boolean)
+              .filter((t) => !/^(yes|no|n\\/a)$/i.test(t))[0];
+            const cand = (fset.getAttribute("aria-label") || fromLegend || first || "").trim();
+            if (cand && cand.length > 2) q = cand;
+          }
           const rg = c.closest('[role="radiogroup"], fieldset');
-          if (rg) q = rg.getAttribute("aria-label") || (rg.querySelector("legend") ? rg.querySelector("legend").innerText : "");
+          if (!q && rg) q = rg.getAttribute("aria-label") || (rg.querySelector("legend") ? rg.querySelector("legend").innerText : "");
           // Prefer the enclosing field container's question text (Workday formField,
           // Ashby fieldEntry) — the generic div-walk otherwise yields just "choice".
           if (!q) { const ff = c.closest('[data-automation-id^="formField"], [class*="fieldEntry" i], [class*="field-entry" i]'); if (ff) q = ff.innerText || ""; }

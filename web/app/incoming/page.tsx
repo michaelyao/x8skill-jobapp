@@ -158,6 +158,11 @@ export default async function IncomingPage({
                   <th>What became of it</th>
                   <th>Source</th>
                   <th className="right">Posted</th>
+                  {/* An explicit way OUT to the posting. The role title has always linked there,
+                      but nothing said so: the candidate looked at 175 "cannot be applied to" rows
+                      and asked why there was no link to open any of them. A link nobody can find
+                      is not a link. */}
+                  <th className="right">Open</th>
                 </tr>
               </thead>
               <tbody>
@@ -185,6 +190,21 @@ export default async function IncomingPage({
                     </td>
                     <td className="muted nowrap">{j.source ?? "—"}</td>
                     <td className="right muted nowrap">{j.age ?? ""}</td>
+                    <td className="right nowrap">
+                      {j.applyUrl ? (
+                        <a href={j.applyUrl} target="_blank" rel="noreferrer" title={j.applyUrl}>
+                          posting ↗
+                        </a>
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                      {j.href ? (
+                        <>
+                          {" · "}
+                          <a href={j.href}>ours</a>
+                        </>
+                      ) : null}
+                    </td>
                   </tr>
                 ))}
               </tbody>
