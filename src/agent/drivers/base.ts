@@ -640,8 +640,15 @@ export abstract class GenericDriver implements AtsDriver {
               up[CACHE] = ok;
               return ok;
             };
+            /**
+             * 14 LEVELS, not 8. Workday wraps each checkbox in its own formField and then in
+             * several layout divs, so the nearest ancestor holding all three CC-305 boxes is far
+             * above them: at 8 the walk never reached it, no group formed, and the page came back
+             * "The field Please check one of the boxes below: is required and must have a value"
+             * for a THIRD time. Depth is cheap now that each ancestor is judged once.
+             */
             let up = c.parentElement;
-            for (let lvl = 0; lvl < 8 && up; lvl += 1) {
+            for (let lvl = 0; lvl < 14 && up; lvl += 1) {
               if (contiguousBoxes(up)) { grp = up; break; }
               up = up.parentElement;
             }
