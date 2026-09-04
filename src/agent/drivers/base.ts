@@ -735,34 +735,8 @@ export abstract class GenericDriver implements AtsDriver {
 
       return out;
     })()`;
-    /**
-     * A PAGE SCRIPT HAS NO DEADLINE OF ITS OWN, AND THIS ONE HUNG THREE RUNS.
-     *
-     * Akuna Capital's form never came back from this evaluate. The step marker narrowed it to
-     * "reading the form", and a memoisation fix to the checkbox-group walk — which looked like
-     * the expensive part — did not help: it still hangs. Whatever the cause, `evaluate` waits
-     * forever by default, so the worker reported "busy" for twenty minutes until the run deadline
-     * abandoned it, three times.
-     *
-     * A read that cannot finish in READ_TIMEOUT_MS (default 60s) is a failure worth REPORTING.
-     * Sixty seconds is far beyond any healthy read — the slowest legitimate one measured here is
-     * a few seconds on a 250-option Workday page — so this cannot fire on a form that works, and
-     * when it fires the run fails in a minute with a sentence naming the page instead of holding
-     * the browser for twenty.
-     */
-    const readTimeoutMs = Number(process.env.READ_TIMEOUT_MS ?? 60_000);
-    let readTimer: NodeJS.Timeout | undefined;
-    const rawFields = (await Promise.race([
-      root.evaluate(READ_SCRIPT),
-      new Promise<never>((_, reject) => {
-        readTimer = setTimeout(
-          () => reject(new Error(`reading the form took longer than ${Math.round(readTimeoutMs / 1000)}s and was abandoned — ${root instanceof Object && "url" in root ? String((root as Page).url()).slice(0, 120) : "this page"}`)),
-          readTimeoutMs,
-        );
-      }),
-    ]).finally(() => {
-      if (readTimer) clearTimeout(readTimer);
-    })) as Array<{
+    /** The field list, from one page script. The whole read is bounded by the turn loop. */
+    const rawFields = (await root.evaluate(READ_SCRIPT)) as Array<{
       key: string;
       label: string;
       type: string;

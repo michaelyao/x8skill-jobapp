@@ -666,7 +666,33 @@ export async function runApplication(
       break;
     }
     step("reading the form");
-    const snapshot = await driver.read(root);
+    /**
+     * THE WHOLE READ NEEDS THE DEADLINE, not just its page script.
+     *
+     * Akuna Capital's Greenhouse form hangs here, and I bounded the wrong half first: the evaluate
+     * that builds the field list got a 60s race and the run STILL sat there, because the expensive
+     * part comes after it — per-field option enrichment, where a speculative locator read without
+     * an explicit timeout waits Playwright's default 30 SECONDS PER ROW. CLAUDE.md records that
+     * exact failure costing 776 field timeouts in one batch; this is another instance of it, and
+     * one long option list is enough to outlast any patience.
+     *
+     * So the deadline goes around read() itself. A page whose read cannot finish in
+     * READ_TIMEOUT_MS is reported and the run ends — which is a diagnosable minute instead of the
+     * twenty the run deadline used to take, three times on this one form.
+     */
+    const readMs = Number(process.env.READ_TIMEOUT_MS ?? 60_000);
+    let readTimer: NodeJS.Timeout | undefined;
+    const snapshot = await Promise.race([
+      driver.read(root),
+      new Promise<never>((_, reject) => {
+        readTimer = setTimeout(
+          () => reject(new Error(`reading ${where || "the form"} took longer than ${Math.round(readMs / 1000)}s — abandoning the run rather than holding the browser`)),
+          readMs,
+        );
+      }),
+    ]).finally(() => {
+      if (readTimer) clearTimeout(readTimer);
+    });
     /**
      * SAY WHICH PAGE THIS IS. Every turn, from the page itself — not inferred from how many fields
      * came back. "17 field(s)" told nobody whether this was My Information for the third time or
