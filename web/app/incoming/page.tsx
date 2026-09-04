@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 export default async function IncomingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ state?: string; source?: string; q?: string }>;
+  searchParams: Promise<{ state?: string | string[]; source?: string | string[]; q?: string }>;
 }) {
   const { state, source, q } = await searchParams;
   const all = await getIncoming();
@@ -26,9 +26,22 @@ export default async function IncomingPage({
    * a code from a log line and a company name from an email both land.
    */
   const needle = (q ?? "").trim().toLowerCase();
+  /**
+   * TICK WHAT YOU WANT TO SEE.
+   *
+   * These were single-select links: one state, one source, and choosing a second replaced the
+   * first. "Show me everything still to come" is two states — never attempted AND failed-will-be-
+   * retried — so the one question the page exists to answer could not be asked. Repeated query
+   * parameters (state=a&state=b) come back as an array, and NOTHING ticked means everything, so a
+   * bare /incoming still shows the whole list.
+   */
+  const asSet = (v?: string | string[]) =>
+    new Set((Array.isArray(v) ? v : v ? [v] : []).filter(Boolean));
+  const wantStates = asSet(state);
+  const wantSources = asSet(source);
   const rows = all
-    .filter((j) => (state ? j.state === state : true))
-    .filter((j) => (source ? (j.source ?? "—") === source : true))
+    .filter((j) => (wantStates.size ? wantStates.has(j.state) : true))
+    .filter((j) => (wantSources.size ? wantSources.has(j.source ?? "—") : true))
     .filter((j) =>
       !needle
         ? true
@@ -73,39 +86,61 @@ export default async function IncomingPage({
             style={{ flex: "1 1 320px", minWidth: 220 }}
           />
           <button className="primary" type="submit">Search</button>
-          {q ? <a className="pill" href="/incoming">clear</a> : null}
+          {q || wantStates.size || wantSources.size ? (
+            <a className="pill" href="/incoming">clear all</a>
+          ) : null}
         </div>
         {q ? (
           <p className="muted" style={{ marginBottom: 0, marginTop: 8, fontSize: 13 }}>
             {rows.length} match{rows.length === 1 ? "" : "es"} for {JSON.stringify(q)}.
           </p>
         ) : null}
-      </form>
 
-      <div className="card" style={{ marginBottom: 14 }}>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-          <a href="/incoming" className={`pill${!state && !source ? " accent" : ""}`}>
-            all {all.length}
+        <fieldset style={{ border: 0, padding: 0, margin: "14px 0 0" }}>
+          <legend style={{ fontWeight: 600, padding: 0, marginBottom: 6 }}>
+            What became of it{" "}
+            <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}>
+              — tick any; none ticked shows all
+            </span>
+          </legend>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px" }}>
+            {states.map((sName) => (
+              <label key={sName} style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 400 }}>
+                <input type="checkbox" name="state" value={sName} defaultChecked={wantStates.has(sName)} />
+                <span>
+                  {sName} <span className="muted">{count(sName)}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+
+        <fieldset style={{ border: 0, padding: 0, margin: "12px 0 0" }}>
+          <legend style={{ fontWeight: 600, padding: 0, marginBottom: 6 }}>Source</legend>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px" }}>
+            {sources.map((sName) => (
+              <label key={sName} style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 400 }}>
+                <input type="checkbox" name="source" value={sName} defaultChecked={wantSources.has(sName)} />
+                <span>
+                  {sName === "you" ? "you (added by hand)" : sName}{" "}
+                  <span className="muted">{all.filter((j) => (j.source ?? "—") === sName).length}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+
+        <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+          <button className="primary" type="submit">Show these</button>
+          {/* The page's own question, one click: everything a sweep will still reach. */}
+          <a
+            className="pill"
+            href={`/incoming?state=${encodeURIComponent("waiting")}&state=${encodeURIComponent("failed — will be retried")}`}
+          >
+            still to come ({stillToCome})
           </a>
-          {states.map((s) => (
-            <a key={s} href={`/incoming?state=${encodeURIComponent(s)}${q ? `&q=${encodeURIComponent(q)}` : ""}`} className={`pill${state === s ? " accent" : ""}`}>
-              {s} {count(s)}
-            </a>
-          ))}
         </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8, alignItems: "center" }}>
-          <span className="muted" style={{ fontSize: 12 }}>source:</span>
-          {sources.map((s) => (
-            <a
-              key={s}
-              href={`/incoming?source=${encodeURIComponent(s)}${state ? `&state=${encodeURIComponent(state)}` : ""}${q ? `&q=${encodeURIComponent(q)}` : ""}`}
-              className={`pill${source === s ? " accent" : ""}`}
-            >
-              {s === "you" ? "you (added by hand)" : s}
-            </a>
-          ))}
-        </div>
-      </div>
+      </form>
 
       <p className="sub">{rows.length} shown.</p>
       {rows.length === 0 ? (
