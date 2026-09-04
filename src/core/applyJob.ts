@@ -389,7 +389,24 @@ export async function applyToJob(
         activeAgent = opts.replayAgent ?? new ReplayAgent(opts.replayAnswers);
       }
     }
-    const result = await runApplication(
+    /**
+     * A RUN NEEDS A WALL-CLOCK DEADLINE, not just a turn cap.
+     *
+     * maxTurns bounds the LOOP; it does not bound a single await. An Akuna Capital run stopped
+     * logging after "✓ resume attached" and sat there for twenty-five minutes holding
+     * data/.browser.lock — so every queued retry behind it waited too, and the only way out was
+     * killing the worker by hand. Nothing in the pipeline noticed: the worker reported "busy" the
+     * whole time, truthfully.
+     *
+     * The cap is deliberately generous (RUN_DEADLINE_MS, default 20 min). A Workday application
+     * with seven experience rows legitimately takes ten or more, and a deadline that fires on a
+     * healthy run would be worse than the hang. On expiry the run throws, which the caller already
+     * records as an error and which releases the lock for whatever is queued behind it.
+     */
+    const runDeadlineMs = Number(process.env.RUN_DEADLINE_MS ?? 20 * 60 * 1000);
+    let runTimer: NodeJS.Timeout | undefined;
+    const result = await Promise.race([
+      runApplication(
       jobPage,
       driver,
       activeAgent,
@@ -420,7 +437,16 @@ export async function applyToJob(
           return value;
         },
       },
-    );
+      ),
+      new Promise<never>((_, reject) => {
+        runTimer = setTimeout(
+          () => reject(new Error(`the run passed its ${Math.round(runDeadlineMs / 60000)}-minute deadline with no result — abandoning it so the browser is free for the next job`)),
+          runDeadlineMs,
+        );
+      }),
+    ]).finally(() => {
+      if (runTimer) clearTimeout(runTimer);
+    }) as Awaited<ReturnType<typeof runApplication>>;
 
     if (!jobDescriptionResolved && driver.type === "greenhouse") {
       jobDescriptionResolved = await fetchGreenhouseJobDescription(jobPage, job.applyUrl);
