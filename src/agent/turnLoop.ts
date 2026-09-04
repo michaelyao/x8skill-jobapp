@@ -686,7 +686,12 @@ export async function runApplication(
       driver.read(root),
       new Promise<never>((_, reject) => {
         readTimer = setTimeout(
-          () => reject(new Error(`reading ${where || "the form"} took longer than ${Math.round(readMs / 1000)}s — abandoning the run rather than holding the browser`)),
+          // NOT `where`: that is declared below, from the page label read AFTER this. Referencing
+          // it here compiles and then throws ReferenceError inside the timer — which crashed the
+          // whole worker twice, losing the run in flight, because an exception in a setTimeout
+          // callback has nothing to catch it. The URL is available and is enough to identify the
+          // page.
+          () => reject(new Error(`reading the form took longer than ${Math.round(readMs / 1000)}s — abandoning the run rather than holding the browser (${String(page.url()).slice(0, 120)})`)),
           readMs,
         );
       }),

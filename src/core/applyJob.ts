@@ -505,9 +505,24 @@ export async function applyToJob(
       if (result.blockedRequired.length) {
         console.log(`  ⛔ blocked by ${result.blockedRequired.length} empty required field(s): ${result.blockedRequired.join(" | ")}`);
       }
-      // The screenshot and the reasons are on /blocked in the website, which is where a
-      // blocked job gets looked at now. It used to be mailed out as well.
-      await record("prefilled_pending_submit", {
+      /**
+       * A RUN THAT DID NOT REACH REVIEW IS AN ERROR, NOT A FILLED APPLICATION.
+       *
+       * This recorded `prefilled_pending_submit`, whose own definition in statusVocabulary reads
+       * "The form was filled and left at the review step. Nothing was sent." — for runs that
+       * stopped BEFORE the review step. 224 records in the ledger say that today, and only one in
+       * eight sampled has a review screenshot to show for it.
+       *
+       * The label is the smaller half. `prefilled_pending_submit` is in ENGAGED_STATUSES, so every
+       * one of those jobs is skipped by every future sweep: 224 postings retired without ever
+       * being finished, accumulating since 28 August, which is why new applications stopped
+       * appearing while the run log stayed busy. `error` is deliberately NOT engaged — the comment
+       * further down this file says so — so the job stays visible and a later sweep can try again.
+       *
+       * The screenshot and the reasons are on /blocked in the website, which is where a blocked
+       * job gets looked at now.
+       */
+      await record("error", {
         filledFields: result.filled,
         unknownQuestions: result.unknown,
         answers: result.answers,
