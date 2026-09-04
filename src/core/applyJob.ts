@@ -424,7 +424,21 @@ export async function applyToJob(
      * healthy run would be worse than the hang. On expiry the run throws, which the caller already
      * records as an error and which releases the lock for whatever is queued behind it.
      */
-    const runDeadlineMs = Number(process.env.RUN_DEADLINE_MS ?? 20 * 60 * 1000);
+    /**
+     * 45 MINUTES. Twenty was too tight, and it killed this run at the finish line.
+     *
+     * Michelin reached "step 7 of 7 — Review" with submitReady=true — the application was DONE —
+     * and the deadline fired before it could be recorded and queued. Seven steps, seven work
+     * experience rows and 250-option dropdowns is legitimately more than twenty minutes of
+     * clicking, and this is the second guard of mine to kill the same run in one evening.
+     *
+     * The deadline can afford to be generous now because it is no longer the thing that catches a
+     * hang: READ_TIMEOUT_MS bounds the read, which is where both hangs seen so far actually sat
+     * (Akuna, twice). This is the outer backstop for a hang somewhere else entirely — a click that
+     * never returns, a dialog nothing dismisses — and for that, "much longer than any real
+     * application" is exactly the right size.
+     */
+    const runDeadlineMs = Number(process.env.RUN_DEADLINE_MS ?? 45 * 60 * 1000);
     let runTimer: NodeJS.Timeout | undefined;
     const result = await Promise.race([
       runApplication(
