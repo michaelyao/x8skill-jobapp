@@ -797,7 +797,35 @@ export abstract class GenericDriver implements AtsDriver {
         } else {
           filled = (c.value || "").trim() !== "";
         }
-        out.push({ key, label, type, options, required, widget: isReactSelect ? "react-select" : "", searchable, filled, groupKey, groupLabel, groupRequired });
+        /**
+         * WHAT THE CONTROL CURRENTLY HOLDS — not just whether it holds something.
+         *
+         * read() reported "filled" and nothing else for ordinary fields, so a value already on the
+         * form could not be recorded. That is fine on a first fill and wrong on a SUBMIT replay:
+         * Workday keeps a draft, so First Name, Address, City, Postal Code, Phone and State come
+         * back already correct, the re-fill has nothing to record for them, and compareToApproved
+         * then reports twelve fields as "not being answered now — the field probably still exists
+         * and we stopped reading it" and refuses the submit. Michelin was refused on exactly that,
+         * after the candidate had approved it, and the values in question were the approved ones
+         * sitting on the screen.
+         *
+         * Only the unambiguous cases. A react-select's committed text and a Workday pill already
+         * have readers of their own further up; here it is inputs, textareas, selects and
+         * checkboxes, where "what does it say" has one answer.
+         */
+        let currentValue = "";
+        if (tag === "select") {
+          const selOpt = c.options[c.selectedIndex];
+          const t = selOpt ? (selOpt.textContent || "").trim() : "";
+          if (t && !/^(select|choose|please select|--)$/i.test(t)) currentValue = t;
+        } else if (rawType === "checkbox") {
+          currentValue = c.checked ? "Yes" : "No";
+        } else if (rawType === "radio") {
+          currentValue = c.checked ? labelFor(c) : "";
+        } else if (!isReactSelect) {
+          currentValue = (c.value || "").trim();
+        }
+        out.push({ key, label, type, options, required, widget: isReactSelect ? "react-select" : "", searchable, filled, value: currentValue, groupKey, groupLabel, groupRequired });
       }
 
       return out;
