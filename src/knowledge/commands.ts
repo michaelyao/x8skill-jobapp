@@ -39,6 +39,19 @@ interface Base {
   /** Which website account asked for this. With more than one user, "who approved this" has
    *  to be answerable from the record alone. */
   actor?: string;
+  /**
+   * QUEUE RULE: ANYTHING THE CANDIDATE POINTS AT JUMPS THE QUEUE.
+   *
+   * Set to 1 for work he asked for by name — a job he read and found a fault in, an answer he
+   * corrected. It lands under the decisions (approve, skip, visual_check: seconds each, and one of
+   * them gates a submit) and above every re-fill, apply and sweep, which are work nobody asked for
+   * today.
+   *
+   * The rule exists because it was broken: he read a queued application, found the disability
+   * question unanswered, gave me the exact answer to use — and the re-fill went in at the default
+   * rank behind eleven swept applies, which is hours. Left unset, a command keeps its class rank.
+   */
+  priority?: number;
 }
 
 export type Command = Base &
@@ -205,7 +218,21 @@ const PRIORITY: Record<string, number> = {
   refresh_list: 4,
   sweep: 4,
 };
-const rank = (name: string): number => PRIORITY[name] ?? 2;
+/**
+ * A JOB THE CANDIDATE HAS POINTED AT IS NOT BACKGROUND WORK.
+ *
+ * He read a queued application, found the disability question unanswered, told me the exact answer
+ * — and the re-fill went in at rank 3 behind eleven swept applies, which is hours. His own words:
+ * "You need take the one i give you review, either from here, or from webpage as highest priority."
+ * That is right, and the table already argues it for approvals: a thing the user is waiting on
+ * outranks work nobody asked for today.
+ *
+ * So a command may carry an explicit `priority`. Rank 1 puts it under the decisions (approve,
+ * skip, visual_check — seconds each, and one of them gates a submit) and above every re-fill,
+ * apply and sweep.
+ */
+const rank = (cmd: { name: string; priority?: number }): number =>
+  typeof cmd.priority === "number" ? cmd.priority : (PRIORITY[cmd.name] ?? 2);
 
 /**
  * Release commands a dead worker had claimed.
@@ -240,13 +267,15 @@ export async function claimNextCommand(): Promise<ClaimedCommand | null> {
   // the queue and fails in the loop below, where the failure is recorded.
   const ordered: Array<{ name: string; rank: number }> = [];
   for (const name of names) {
-    let commandName = "";
+    let parsed: { name: string; priority?: number } = { name: "" };
     try {
-      commandName = (JSON.parse(await fs.readFile(path.join(COMMANDS_DIR, name), "utf8")) as Command).name;
+      parsed = JSON.parse(await fs.readFile(path.join(COMMANDS_DIR, name), "utf8")) as Command & {
+        priority?: number;
+      };
     } catch {
       /* unreadable — treat as middling priority and let the claim loop report it */
     }
-    ordered.push({ name, rank: rank(commandName) });
+    ordered.push({ name, rank: rank(parsed) });
   }
   const entries = ordered.sort((a, b) => a.rank - b.rank).map((e) => e.name);
 

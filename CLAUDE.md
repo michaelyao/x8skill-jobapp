@@ -298,6 +298,14 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   `confirmed` is deliberately absent: nothing yet reads the acknowledgement email, and adding the
   word before the mechanism repeats the "applied" mistake. When it exists it is its own stage, never
   folded into `submitted`.
+- **QUEUE RULE: anything the candidate points at jumps the queue.** He read a queued application,
+  found the CC-305 disability question unanswered, gave the exact answer to use — and the re-fill
+  was enqueued at `retry`'s background rank behind eleven swept applies, which is hours. A command
+  may now carry `priority` (see `Base.priority`), `jobapp <verb> CODE --now` sets it to 1, and rank
+  1 sits under the decisions (`approve`, `skip`, `visual_check` — seconds each, and one of them
+  gates a submit) and above every re-fill, apply and sweep. Work he asked for by name is not
+  background work; a sweep is. Use `--now` for anything raised from `/queue`, from a screenshot, or
+  in conversation.
 - **`/queue` is for decisions; `/status` is for progress.** The split is by "is a human the next
   step", not by status. An application being re-filled, one mid-submit, and one that reached Review
   with something missing are all things the system moves on its own — they used to sit on the

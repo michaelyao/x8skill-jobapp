@@ -57,6 +57,7 @@ Usage
 
 Flags
   --max N        how many jobs a sweep should queue (default 10)
+  --now          put it in front of the background queue (re-fills, applies, sweeps)
   --no-wait      enqueue and exit instead of streaming the outcome
   --json         machine-readable output
   -h, --help     this text
@@ -65,16 +66,17 @@ Nothing here submits without an explicit approve, and an approve only submits va
 have already read — see DESIGN.md §18.
 `;
 
-type Argv = { _: string[]; hint?: string; wait: boolean; json: boolean; all: boolean; max?: number };
+type Argv = { _: string[]; hint?: string; wait: boolean; json: boolean; all: boolean; max?: number; now: boolean };
 
 function parseArgs(argv: string[]): Argv {
-  const out: Argv = { _: [], wait: true, json: false, all: false };
+  const out: Argv = { _: [], wait: true, json: false, all: false, now: false };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--hint" || a === "--instruction") out.hint = argv[++i];
     else if (a === "--no-wait") out.wait = false;
     else if (a === "--json") out.json = true;
     else if (a === "--all") out.all = true;
+    else if (a === "--now") out.now = true;
     else if (a === "--max") {
       const n = Number.parseInt(argv[++i] ?? "", 10);
       if (!Number.isNaN(n) && n > 0) out.max = n;
@@ -165,6 +167,11 @@ async function send(
     name,
     ...(code ? { code: code.toUpperCase() } : {}),
     ...(args.hint ? { instruction: args.hint } : {}),
+    /**
+     * --now: work the candidate asked for by name goes in front of the background queue.
+     * See the queue rule on Base.priority — this is the flag that makes it usable from here.
+     */
+    ...(args.now ? { priority: 1 } : {}),
     ...extra,
     source: "cli",
     actor: actor(),
