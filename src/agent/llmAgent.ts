@@ -345,6 +345,26 @@ export function workAuthorizationOption(
   return pick(options.filter((o) => has(o, /authoriz/) && !disqualified(o)), "the only option that says authorised");
 }
 
+/**
+ * The two records that decide a work-authorisation answer, or undefined when the question is not
+ * one. One helper, because three separate branches in this file accept a recorded answer and the
+ * fill needs these facts whichever of them ran.
+ */
+function workAuthorizationRecords(
+  label: string,
+  value: string,
+  ctx: AgentContext,
+): { authorized?: boolean; needsSponsorship?: boolean } | undefined {
+  if (!/authoriz|authoris/i.test(label) || !/\bwork\b/i.test(label)) return undefined;
+  const sponsor =
+    storedAnswerFor(ctx.answers, "Do you require sponsorship for employment visa status?") ??
+    storedAnswerFor(ctx.answers, "Will you now or in the future require visa sponsorship?");
+  return {
+    authorized: /^\s*y(es)?\b/i.test(value),
+    needsSponsorship: sponsor ? /^\s*y(es)?\b/i.test(String(sponsor.answer)) : undefined,
+  };
+}
+
 export function mustComeFromRecords(label: string): boolean {
   /**
    * A GPA QUESTION IS NOT A DEGREE QUESTION, even when it mentions one.
@@ -887,14 +907,7 @@ export class LlmAgent implements Agent {
        * sentences instead of Yes/No, and the options are usually unknown here — the fill is where
        * they appear, so that is where the choice is made, from these facts and nothing else.
        */
-      if (/authoriz|authoris/i.test(field.label) && /\bwork\b/i.test(field.label)) {
-        const sponsor = storedAnswerFor(ctx.answers, "Do you require sponsorship for employment visa status?")
-          ?? storedAnswerFor(ctx.answers, "Will you now or in the future require visa sponsorship?");
-        answer.records = {
-          authorized: /^\s*y(es)?\b/i.test(value),
-          needsSponsorship: sponsor ? /^\s*y(es)?\b/i.test(String(sponsor.answer)) : undefined,
-        };
-      }
+      answer.records = workAuthorizationRecords(field.label, value, ctx) ?? answer.records;
       answer.value = value;
               answer.source = "curated";
               answer.needsHuman = false;
@@ -932,6 +945,19 @@ export class LlmAgent implements Agent {
       answer.confidence = 1;
       answer.needsHuman = false;
       answer.draft = false;
+      /**
+       * CARRY THE RECORDS THAT DECIDE WORK AUTHORISATION.
+       *
+       * The tenant may spell this question as sentences ("I am authorized to work in the United
+       * States for any employer") and the options are unknown here — read-time capture finds none
+       * and the fill discovers five — so the choice has to be made in the fill, from these facts.
+       *
+       * I attached this to the WRONG branch first: there are three places in this file that accept
+       * a recorded answer, and the one that logs "using your recorded answer" is this one. The
+       * fill then found `records` undefined, changed nothing, and General Matter failed a FOURTH
+       * time on the same field with the same trace.
+       */
+      answer.records = workAuthorizationRecords(field.label, value, ctx) ?? answer.records;
     }
 
     // An address is ONE thing. Motorola rejected an application with "94085 is not a valid postal
