@@ -1050,8 +1050,37 @@ export abstract class GenericDriver implements AtsDriver {
       const wantChecked = /^(yes|true|y|i agree|agree|i acknowledge|check)/i.test(value.trim());
       const current = await locator.isChecked().catch(() => false);
       if (current !== wantChecked) {
-        if (wantChecked) await locator.check({ force: true }).catch(() => undefined);
-        else await locator.uncheck({ force: true }).catch(() => undefined);
+        /**
+         * CLICK THE VISIBLE CONTROL FIRST. check({force}) IS THE LAST RESORT, NOT THE FIRST.
+         *
+         * Michelin's CC-305 question is three checkboxes whose real inputs are hidden behind
+         * styled labels. check({force:true}) set the hidden input's property, isChecked() then
+         * reported true, this returned SUCCESS — and the screenshot shows all three boxes empty
+         * with "The field Please check one of the boxes below: is required and must have a value"
+         * beside them. Workday's own state never changed because the control it listens to is the
+         * label, not the input we poked.
+         *
+         * That is a false success, on a REQUIRED field, and it cost an approved application: the
+         * submit replay could not get past this page, so nothing was submitted and the approval
+         * was spent.
+         *
+         * A real click on the label dispatches what the widget is listening for. force-check stays
+         * as the last resort for a genuinely label-less box.
+         */
+        const id = await locator.getAttribute("id").catch(() => null);
+        const label = id ? root.locator(`label[for="${id.replace(/"/g, '\\"')}"]`).first() : undefined;
+        const isSet = async () => (await locator.isChecked().catch(() => current)) === wantChecked;
+        if (label && (await label.count().catch(() => 0))) {
+          await label.scrollIntoViewIfNeeded().catch(() => undefined);
+          await label.click().catch(() => undefined);
+          await locator.page().waitForTimeout(150);
+        }
+        if (!(await isSet())) await locator.locator("xpath=..").click().catch(() => undefined);
+        if (!(await isSet())) await locator.locator("xpath=../..").click().catch(() => undefined);
+        if (!(await isSet())) {
+          if (wantChecked) await locator.check({ force: true }).catch(() => undefined);
+          else await locator.uncheck({ force: true }).catch(() => undefined);
+        }
         // Custom checkboxes hide the real input and only update on a click of the visible
         // control, same as the radio handling below.
         /**

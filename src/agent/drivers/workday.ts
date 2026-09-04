@@ -1305,7 +1305,29 @@ export class WorkdayDriver extends GenericDriver {
       const now = await signature();
       if (now && now !== before) return true; // the page turned
     }
-    console.log(`    [workday] clicked Save and Continue but the page did not change (${before})`);
+    /**
+     * SAY WHAT IS ON THE SCREEN, not just that nothing happened.
+     *
+     * "clicked Save and Continue but the page did not change" was the whole report, three runs in
+     * a row, while the screen said in a red box at the top: "Errors Found — 1. Error - Please
+     * check one of the boxes below: The field ... is required and must have a value." I found that
+     * by cropping the debug screenshot BY HAND, which the candidate rightly asked why the run
+     * could not do for itself.
+     *
+     * The form knows why it refused and puts it on the page. Reading it costs one call, turns an
+     * opaque stall into a diagnosis, and is the difference between "it will not advance" and "it
+     * will not advance BECAUSE this required question is unanswered".
+     */
+    const said = await this.validationErrors(root).catch(() => [] as string[]);
+    if (said.length) {
+      console.log(`    [workday] clicked Save and Continue and the page refused — it says:`);
+      for (const line of said.slice(0, 4)) console.log(`       • ${line.slice(0, 150)}`);
+    } else {
+      console.log(
+        `    [workday] clicked Save and Continue but the page did not change (${before}) — and it shows no error, ` +
+          `so the click may have been swallowed rather than rejected`,
+      );
+    }
     return false;
   }
 
