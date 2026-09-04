@@ -69,8 +69,25 @@ export async function loadAnswers(): Promise<AnswerEntry[]> {
     else entries.push(learned);
   }
 
-  await writeJson(ANSWERS_JSON_PATH, entries);
-  await syncAnswersMarkdown(entries);
+  /**
+   * A READ MUST NOT FAIL BECAUSE A DERIVED FILE COULD NOT BE WRITTEN.
+   *
+   * loadAnswers rebuilds answers.json and Q&A.md as a side effect, and in the container Q&A.md is
+   * a bind-mounted single FILE — so the atomic write's rename onto it fails with EBUSY, because
+   * you cannot replace a mount point. That exception came all the way out of loadAnswers, so
+   * /answers threw on every visit and rendered EMPTY. The candidate asked what was supposed to be
+   * on that page; the answer was 106 questions it could not get to.
+   *
+   * Both writes are CONVENIENCE — answers.json is a cache that self-heals and Q&A.md is a
+   * human-readable dump. The entries in hand are the real result. So a failure is reported once
+   * and the read still returns them.
+   */
+  await writeJson(ANSWERS_JSON_PATH, entries).catch((e: unknown) => {
+    console.log(`  [answers] could not cache answers.json (${String((e as Error)?.message).slice(0, 80)}) — carrying on`);
+  });
+  await syncAnswersMarkdown(entries).catch((e: unknown) => {
+    console.log(`  [answers] could not rewrite Q&A.md (${String((e as Error)?.message).slice(0, 80)}) — carrying on`);
+  });
   return entries;
 }
 
