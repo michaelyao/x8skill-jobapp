@@ -60,6 +60,27 @@ import type {
  * A review nobody can see the top of is not a review, and this is the artefact an approval is
  * given against.
  */
+/**
+ * A FAILED RUN MUST NOT LEAVE AN APPROVABLE COPY BEHIND.
+ *
+ * A previous fill may be sitting in the queue as awaiting_approval — which is exactly the case on
+ * a re-fill, which is when a failure fires. Blocking the new attempt while leaving the old entry
+ * approvable is the worst of both: the run says the application is not worth sending, and the
+ * website still offers an Approve button for the older, equally incomplete copy.
+ *
+ * This existed for the "reached review but incomplete" path only. TMEIC stopped BEFORE review —
+ * a different branch — so its 9-of-21-fields copy stayed approvable, and the candidate found it in
+ * the queue and asked why he was being shown it. Both paths call this now.
+ */
+async function retireStaleQueuedCopy(key: string, why: string, code?: string): Promise<void> {
+  const stale = await findPendingEntry(key);
+  if (!stale || stale.status !== "awaiting_approval") return;
+  await updatePendingStatus(stale.key, "error", { lastError: why });
+  console.log(
+    `     the queued copy of ${code ?? key} was still awaiting approval — marked error so it cannot be approved.`,
+  );
+}
+
 async function scrollToTop(page: Page): Promise<void> {
   await page
     .evaluate(`(() => {
@@ -522,6 +543,15 @@ export async function applyToJob(
        * The screenshot and the reasons are on /blocked in the website, which is where a blocked
        * job gets looked at now.
        */
+      // Same reasoning as the incomplete-at-review path: do not leave an older, equally unfinished
+      // copy sitting in the queue with an Approve button next to it.
+      await retireStaleQueuedCopy(
+        job.id || identity.identityKey,
+        result.blockedRequired.length
+          ? `blocked on: ${result.blockedRequired.slice(0, 6).join("; ")}`
+          : "the run stopped before the form was finished",
+        job.id,
+      );
       await record("error", {
         filledFields: result.filled,
         unknownQuestions: result.unknown,
@@ -681,13 +711,7 @@ export async function applyToJob(
         // equally incomplete copy of it. Seen on NMVTAA (1 of 7 roles). Mark it `error` — it is
         // excluded from listAwaiting(), so approve and retry both refuse it until a good re-fill
         // replaces it.
-        const stale = await findPendingEntry(job.id || identity.identityKey);
-        if (stale && stale.status === "awaiting_approval") {
-          await updatePendingStatus(stale.key, "error", {
-            lastError: `incomplete: ${describeProblems(gaps)}`,
-          });
-          console.log(`     the queued copy of ${job.id} was still awaiting approval — marked error so it cannot be approved.`);
-        }
+        await retireStaleQueuedCopy(job.id || identity.identityKey, `incomplete: ${describeProblems(gaps)}`, job.id);
 
         // NOT queued for approval — it goes to /blocked with the reason, so nobody is asked to
         // approve an application with no education on it.
