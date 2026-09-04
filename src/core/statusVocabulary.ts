@@ -72,10 +72,22 @@ export const LEDGER_STAGES: Record<string, StageWords> = {
     tone: "muted",
     wentIn: false,
   },
+  /**
+   * A FAILED RUN IS NOT A CLOSED CASE, and the old wording said it was.
+   *
+   * "gave up — nothing sent / The run failed and stopped trying" reads as final, and the LEDGER's
+   * error is the opposite: it is deliberately absent from ENGAGED_STATUSES, so the next sweep
+   * picks the job up again. 201 postings sit here right now — most of them runs that stopped
+   * before review and were wrongly filed as "filled" until tonight — and the candidate could not
+   * tell from the page that they are queued to be retried rather than abandoned.
+   *
+   * The QUEUE's error is the final one (approved, submit failed three times, stopped); it keeps
+   * its own wording below. Two stores, two meanings, which is the reason this module exists.
+   */
   error: {
-    label: "gave up — nothing sent",
-    meaning: "The run failed and stopped trying. No application was filed.",
-    tone: "bad",
+    label: "failed — will be retried",
+    meaning: "The run stopped before the form was finished. Nothing was sent, and a later sweep will try this posting again.",
+    tone: "warn",
     wentIn: false,
   },
 };

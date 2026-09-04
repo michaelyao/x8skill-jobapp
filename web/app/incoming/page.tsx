@@ -36,6 +36,8 @@ export default async function IncomingPage({
     );
 
   const count = (k: string) => all.filter((j) => j.state === k).length;
+  // The backlog: nothing attempted yet, plus the failures the ledger deliberately keeps retryable.
+  const stillToCome = count("waiting") + count("failed — will be retried");
 
   return (
     <>
@@ -43,6 +45,19 @@ export default async function IncomingPage({
       <p className="sub">
         Everything the trackers in job_sites.txt carry, plus everything you added by hand — one list,
         because they are the same kind of thing. {all.length} postings.
+      </p>
+
+      {/*
+        HOW MANY ARE STILL TO COME. The per-state counts below have always been here, but nothing
+        added up the ones a sweep will still reach — so "how many are left?" could only be answered
+        from a sweep's own log line, which is not a place anybody should have to look. Two states
+        make up the backlog: never attempted, and attempted-and-failed, which the ledger keeps
+        retryable on purpose.
+      */}
+      <p className="sub" style={{ marginTop: -6 }}>
+        <strong>{stillToCome}</strong> of them are still to come — {count("waiting")} never attempted
+        and {count("failed — will be retried")} that failed and are queued to be tried again. A sweep
+        takes them in batches, newest first.
       </p>
 
       <form className="card" style={{ marginBottom: 14 }} action="/incoming" method="get">
