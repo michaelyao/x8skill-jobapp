@@ -4,7 +4,7 @@ import path from "node:path";
 import { loadApplications } from "@core/knowledge/applications.js";
 import { normalizeCompany } from "@core/utils/normalize.js";
 import { loadPendingQueue, type PendingEntry } from "@core/knowledge/approvalQueue.js";
-import { pendingCommands, recentCommands } from "@core/knowledge/commands.js";
+import { pendingCommands, recentCommands, type Command } from "@core/knowledge/commands.js";
 import { readWorkerStatus, isStale, type WorkerStatus } from "@core/knowledge/workerStatus.js";
 import type { ApplicationRecord } from "@core/types.js";
 import { ensureEnv } from "./env";
@@ -28,6 +28,22 @@ export interface Overview {
   queue: PendingEntry[];
   worker: { status: WorkerStatus | null; stale: boolean };
   pendingCommandCount: number;
+  /**
+   * WHAT is queued, not just how many. The bar showed "15 queued" and there was no way to see
+   * behind it — the candidate asked for a button, which is the right instinct: a number you cannot
+   * open is a number you have to take on trust.
+   *
+   * Ordered the way the worker will actually claim them (see the PRIORITY table), because "what is
+   * next" is the question the list is being opened to answer.
+   */
+  pendingCommandList: Array<{
+    name: string;
+    code?: string;
+    company?: string;
+    createdAt: string;
+    priority?: number;
+    instruction?: string;
+  }>;
 }
 
 export async function getOverview(): Promise<Overview> {
@@ -43,7 +59,41 @@ export async function getOverview(): Promise<Overview> {
     queue,
     worker: { status, stale: isStale(status) },
     pendingCommandCount: pending.length,
+    pendingCommandList: describePending(pending, applications),
   };
+}
+
+/** The queued commands, in the order the worker will take them, with a company where we know one. */
+function describePending(
+  pending: ReadonlyArray<Command>,
+  applications: ReadonlyArray<{ code?: string; company?: string; title?: string }>,
+): Overview["pendingCommandList"] {
+  // Mirrors src/knowledge/commands.ts. Kept as a display concern: the worker's copy decides what
+  // actually runs, and duplicating the numbers here cannot change that — it only shows the order.
+  const RANK: Record<string, number> = {
+    approve: 0, skip: 0, manual_submit: 0, visual_check: 0,
+    update_answers: 1, update_guidelines: 1, forget_answers: 1,
+    change: 2, retry: 3, apply: 3, refresh_list: 4, sweep: 4,
+  };
+  const byCode = new Map(applications.filter((a) => a.code).map((a) => [String(a.code), a]));
+  return pending
+    .map((c) => {
+      const any = c as Command & { code?: string; priority?: number; instruction?: string };
+      const name = String(any.name ?? "");
+      const code = any.code ? String(any.code) : undefined;
+      const explicit = typeof any.priority === "number" ? any.priority : undefined;
+      return {
+        name,
+        ...(code ? { code } : {}),
+        ...(code && byCode.get(code)?.company ? { company: String(byCode.get(code)!.company) } : {}),
+        createdAt: String(any.createdAt ?? ""),
+        ...(explicit !== undefined ? { priority: explicit } : {}),
+        ...(any.instruction ? { instruction: String(any.instruction).slice(0, 120) } : {}),
+        rank: explicit ?? RANK[name] ?? 2,
+      };
+    })
+    .sort((a, b) => a.rank - b.rank || a.createdAt.localeCompare(b.createdAt))
+    .map(({ rank: _rank, ...rest }) => rest);
 }
 
 /**

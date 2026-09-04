@@ -69,8 +69,14 @@ export default async function IncomingPage({
       */}
       <p className="sub" style={{ marginTop: -6 }}>
         <strong>{stillToCome}</strong> of them are still to come — {count("waiting")} never attempted
-        and {count("failed — will be retried")} that failed and are queued to be tried again. A sweep
-        takes them in batches, newest first.
+        and {count("failed — will be retried")} that failed and are eligible again. {/*
+          BE CONCRETE ABOUT THE RATE. "A sweep takes them in batches" reads as "soon"; the
+          candidate reasonably asked whether the retryable ones are queued. They are NOT — nothing
+          is scheduled for a posting until a sweep picks it, ten at a time, every eight hours.
+          Saying the arithmetic is the difference between a plan and a hope.
+        */}
+        None of them is queued yet: a sweep picks up to <strong>10</strong> every 8 hours, so this
+        list drains at about 30 a day unless a bigger sweep is asked for.
       </p>
 
       <form className="card" style={{ marginBottom: 14 }} action="/incoming" method="get">

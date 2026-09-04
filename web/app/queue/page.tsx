@@ -21,7 +21,7 @@ export const dynamic = "force-dynamic";
  * ATS before anything else happens to it.
  */
 export default async function QueuePage() {
-  const { queue, worker, pendingCommandCount } = await getOverview();
+  const { queue, worker, pendingCommandCount, pendingCommandList } = await getOverview();
   const decisions = await getDecisions();
   const withWorker = (code?: string) => {
     const d = decisions.get(code ?? "");
@@ -99,7 +99,7 @@ export default async function QueuePage() {
         ) : null}
       </p>
 
-      <WorkerBar initial={worker} pendingCommands={pendingCommandCount} />
+      <WorkerBar initial={worker} pendingCommands={pendingCommandCount} pendingList={pendingCommandList} />
 
       {gaveUp.length ? (
         <div className="card" style={{ borderColor: "var(--bad)", marginTop: 14 }}>
