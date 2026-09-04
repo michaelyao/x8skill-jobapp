@@ -54,6 +54,15 @@ services:
       - ./Q&A.txt:/jobapp/Q&A.txt:ro
       - ./Q&A.md:/jobapp/Q&A.md
       - ./resumes.config:/jobapp/resumes.config:ro
+      # THE POSTING LIST. Everything /incoming shows comes from this CSV, and it was neither
+      # mounted nor in the image — it is git-ignored, so the build context never had it — so the
+      # page built to answer "where are the jobs?" showed "0 postings" from the day it shipped.
+      # The worker regenerates it on the host, which is why this is read-only here.
+      - ./internships_summer2027.csv:/jobapp/internships_summer2027.csv:ro
+      # The sources behind that list, and the curated skills plan. Same reason: read by pages in
+      # the website, absent from the container.
+      - ./job_sites.txt:/jobapp/job_sites.txt:ro
+      - ./skill.txt:/jobapp/skill.txt:ro
       # playwright/ is deliberately absent. The website never drives a browser, so the
       # container has no reason to hold live session cookies.
     healthcheck:
