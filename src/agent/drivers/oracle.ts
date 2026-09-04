@@ -1,7 +1,7 @@
 import type { Page } from "playwright";
 import { GenericDriver } from "./base.js";
 import { fetchOracleVerificationCode } from "../../knowledge/oracleVerify.js";
-import type { Root, PageSnapshot} from "../types.js";
+import type { PageSnapshot, Root } from "../types.js";
 
 /**
  * Oracle HCM "CandidateExperience" driver — the tenant-hosted careers site behind
