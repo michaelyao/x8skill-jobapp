@@ -238,7 +238,33 @@ export class WorkableDriver extends GenericDriver {
       entries: [],
     };
 
+    /**
+     * A SCHOOL ALREADY ON THE FORM IS NOT AN ENTRY TO ADD.
+     *
+     * The experience loop below has had this guard since a duplicate employer got onto a work
+     * history; education never got one. So on a re-fill of a part-finished application — Workable
+     * keeps them — the committed Carnegie Mellon entry was invisible to this loop, it reached for
+     * "+ Add" (legitimately disabled, the entry is already there), and reported "could not open an
+     * entry for education 1 (Carnegie Mellon University)". A complete application was blocked
+     * because we tried to add a row that was already filled in.
+     */
+    const formText = ((await page
+      .locator('[aria-label*="ducation" i], section, form')
+      .first()
+      .innerText({ timeout: 3_000 })
+      .catch(() => "")) || "").toLowerCase();
+    const schoolListed = (school: string): boolean => {
+      const name = school.toLowerCase().replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, " ").trim();
+      if (name.length < 4) return false;
+      return formText.includes(name) || formText.includes(name.slice(0, 18));
+    };
+
     for (const [index, edu] of history.education.entries()) {
+      if (schoolListed(edu.school)) {
+        console.log(`    [workable] "${edu.school.slice(0, 40)}" is already on the form — not adding it again.`);
+        out.educationCommitted += 1;
+        continue;
+      }
       const panelOpen = async () => (await page.locator('input[name="school"]').count().catch(() => 0)) > 0;
       if (!(await panelOpen()) && !(await this.openNewEntry(page, /^add education$/i, "education", "school"))) {
         out.problems.push(`could not open an entry for education ${index + 1} (${edu.school})`);
