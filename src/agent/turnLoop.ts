@@ -680,7 +680,24 @@ export async function runApplication(
      * READ_TIMEOUT_MS is reported and the run ends — which is a diagnosable minute instead of the
      * twenty the run deadline used to take, three times on this one form.
      */
-    const readMs = Number(process.env.READ_TIMEOUT_MS ?? 60_000);
+    /**
+     * FIVE MINUTES, NOT ONE. 60s was too tight and it killed a healthy run.
+     *
+     * This cap exists to stop a read HANGING for twenty minutes, not to judge a slow page. At 60s
+     * it abandoned Michelin's autofill page — a form with 250-option country lists and seven
+     * experience rows, mid "transient error — refreshing and retrying" — and the re-fill the
+     * candidate was waiting on died on my own guard.
+     *
+     * CLAUDE.md already records this exact mistake one line over: "Do not shorten
+     * FIELD_TIMEOUT_MS. It is 90s. Lowering it to 30s broke Country Phone Code on RTX... The cost
+     * of a field that will never accept a value belongs to whatever DETECTS that, not to a
+     * deadline short enough to fail the slow ones too." A read deadline is the same bargain, and I
+     * picked the same wrong side of it.
+     *
+     * 5 minutes is far past any legitimate read and still a quarter of the run deadline, so a real
+     * hang is caught four times sooner than before this guard existed.
+     */
+    const readMs = Number(process.env.READ_TIMEOUT_MS ?? 5 * 60_000);
     let readTimer: NodeJS.Timeout | undefined;
     const snapshot = await Promise.race([
       driver.read(root),
