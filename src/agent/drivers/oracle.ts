@@ -1,7 +1,7 @@
 import type { Page } from "playwright";
 import { GenericDriver } from "./base.js";
 import { fetchOracleVerificationCode } from "../../knowledge/oracleVerify.js";
-import type { Root } from "../types.js";
+import type { Root, PageSnapshot} from "../types.js";
 
 /**
  * Oracle HCM "CandidateExperience" driver — the tenant-hosted careers site behind
@@ -317,6 +317,55 @@ export class OracleDriver extends GenericDriver {
     const stillGated = await this.atAuthGate(page);
     if (stillGated) console.log("    [oracle] still on the authentication screen after the code — it was not accepted.");
     return !stillGated;
+  }
+
+  /**
+   * DISMISS THE TERMS AND CONDITIONS DIALOG, WHICH IS A FLOATING WINDOW WITH AN "AGREE" BUTTON.
+   *
+   * The candidate spotted this from the live browser and it explains a failure I had been reading
+   * as a checkbox bug: two applications (Universal Health Services, American Express) stopped on
+   * "I agree with the terms and conditions" with "tried but the field would not take it", and no
+   * amount of escalating the CLICK could have helped — a modal was over the page, so every click
+   * landed on the modal. Oracle asks for the same agreement twice, once in a dialog and once as a
+   * checkbox on the form.
+   *
+   * Clicking AGREE is not a submit and not a consent to anything beyond reading the form: the
+   * dialog gates the application screen, and the checkbox it precedes is a REQUIRED field the
+   * candidate's own answer store answers Yes to. It is scoped to a dialog whose text mentions
+   * terms/conditions/privacy so it can never pick up a stray "Agree" elsewhere on a form.
+   */
+  /**
+   * Clear the terms dialog before reading, every turn. It is a floating window, so while it is up
+   * the fields behind it are unreachable — and a click aimed at one of them lands on the dialog,
+   * which is how the required consent checkbox looked like a checkbox that "would not take it".
+   */
+  async read(root: Root): Promise<PageSnapshot> {
+    await this.agreeToTerms(root);
+    return super.read(root);
+  }
+
+  private async agreeToTerms(root: Root): Promise<void> {
+    const page = root as Page;
+    if (!page.locator) return;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const dialog = page
+        .locator('[role="dialog"], [role="alertdialog"], [class*="modal" i]')
+        .filter({ hasText: /terms|conditions|privacy/i })
+        .first();
+      if (!(await dialog.isVisible().catch(() => false))) return;
+      const agree = dialog.getByRole("button", { name: /^(i )?agree\b|^accept\b|^ok$/i }).first();
+      if (!(await agree.isVisible().catch(() => false))) {
+        console.log("    [oracle] a terms dialog is open and has no Agree control — leaving it alone");
+        return;
+      }
+      await agree.click().catch(() => undefined);
+      await page.waitForTimeout(900);
+      if (!(await dialog.isVisible().catch(() => false))) {
+        console.log("    [oracle] dismissed the terms-and-conditions dialog (clicked Agree)");
+        return;
+      }
+    }
+    console.log("    [oracle] the terms dialog will not close — clicks may land on it");
   }
 
   async next(root: Root): Promise<boolean> {

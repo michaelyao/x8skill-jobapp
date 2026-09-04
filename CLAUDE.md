@@ -598,6 +598,12 @@ classifies SmartRecruiters so an unopened listing can say WHY. Cases: `npm run t
   REQUIRED "I agree with the terms and conditions" box is 0x0 and clipped — skipping it would
   leave a required field unfillable and stall the run on the required-field gate, a worse failure
   than the trap. Verified live: the apply screen reads 2 fields, the consent box and not the trap.
+- **Oracle asks for the terms TWICE: a floating dialog with an AGREE button, then a required
+  checkbox.** While the dialog is up every click lands on IT, so the required "I agree with the
+  terms and conditions" box reported *"tried but the field would not take it"* and two applications
+  (UHS, American Express) died there — a checkbox bug that was never a checkbox bug. `agreeToTerms`
+  runs before every Oracle `read()`, scoped to a dialog whose text mentions terms/conditions/privacy
+  so it can never catch a stray "Agree" on a form. The candidate found this from the live browser.
 - **A consent overlay eats the Apply click, and it looks like "Apply did nothing".** The banner is
   fixed-position and animates out; a click issued in the same tick lands on the banner, the URL
   never changes, and nothing says why. Cost a debugging pass on BOTH Workable and Oracle. Dismiss
