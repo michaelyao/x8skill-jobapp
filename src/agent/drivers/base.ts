@@ -600,15 +600,49 @@ export abstract class GenericDriver implements AtsDriver {
            * reaching for.
            */
           if (!grp || grp.querySelectorAll('input[type="checkbox"]').length < 2) {
+            /**
+             * MEMOISED, because this walk is what hung a run.
+             *
+             * The first version queried every ancestor's whole subtree once PER CHECKBOX — eight
+             * levels each — and sibling checkboxes share every one of those ancestors. On Akuna
+             * Capital's form read() never returned: the worker sat at "filling" for twenty-five
+             * minutes with nothing in the log, twice, and the step marker that finally named
+             * "reading the form" is what pointed here.
+             *
+             * The answer per ancestor does not depend on which checkbox asked, so it is computed
+             * once and cached on the element for the rest of this read.
+             */
+            const CACHE = "__jobappGroupOk";
+            const contiguousBoxes = (up) => {
+              if (up[CACHE] !== undefined) return up[CACHE];
+              let ok = false;
+              const inputs = up.querySelectorAll('input:not([type=hidden]), select, textarea');
+              if (inputs.length <= 60) {
+                let first = -1;
+                let last = -1;
+                let boxes = 0;
+                let othersBetween = 0;
+                for (let ix = 0; ix < inputs.length; ix += 1) {
+                  const isBox = (inputs[ix].getAttribute("type") || "").toLowerCase() === "checkbox";
+                  if (isBox) {
+                    if (first < 0) first = ix;
+                    last = ix;
+                    boxes += 1;
+                  }
+                }
+                if (boxes >= 2 && boxes <= 15) {
+                  for (let ix = first; ix <= last; ix += 1) {
+                    if ((inputs[ix].getAttribute("type") || "").toLowerCase() !== "checkbox") othersBetween += 1;
+                  }
+                  ok = othersBetween === 0;
+                }
+              }
+              up[CACHE] = ok;
+              return ok;
+            };
             let up = c.parentElement;
             for (let lvl = 0; lvl < 8 && up; lvl += 1) {
-              const inputs = Array.from(up.querySelectorAll('input:not([type=hidden]), select, textarea'));
-              const isBox = (el) => (el.getAttribute("type") || "").toLowerCase() === "checkbox";
-              const boxAt = inputs.map((el, ix) => (isBox(el) ? ix : -1)).filter((ix) => ix >= 0);
-              if (boxAt.length >= 2 && boxAt.length <= 15) {
-                const between = inputs.slice(boxAt[0], boxAt[boxAt.length - 1] + 1).filter((el) => !isBox(el));
-                if (!between.length) { grp = up; break; }
-              }
+              if (contiguousBoxes(up)) { grp = up; break; }
               up = up.parentElement;
             }
           }
