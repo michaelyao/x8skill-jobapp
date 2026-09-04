@@ -141,10 +141,31 @@ export async function ocrLayoutTiled(
   for (const [i, tile] of tiles.entries()) {
     const file = await shoot(tile, i);
     if (!file) { lastFailure = "the slice could not be captured"; continue; }
-    const one = await ocrLayout(file).catch(() => null);
+    /**
+     * ONE RETRY PER SLICE, because an abort here is usually contention, not a broken service.
+     *
+     * Measured on the last ~150 slice attempts: 20 aborted, and every abort was our own
+     * AbortController while a probe moments later answered in 3-6 seconds. The serialise() gate
+     * above only orders THIS process's requests, and x8ocr serves three API keys — so anything
+     * else talking to it pushes our slice past its clock.
+     *
+     * Skipping the slice was cheap for us and expensive for the verdict: 134 pages in that same
+     * log were read "1 of 4", "1 of 5", which means a "clean" cross-check that saw a fifth of the
+     * form. Worse, two submits were refused outright because the first slice was the one that
+     * aborted. A single retry after a pause costs seconds and recovers most of that.
+     */
+    let one = await ocrLayout(file).catch(() => null);
+    if (!one || one.unavailable) {
+      const first = one?.unavailable ?? "x8ocr returned nothing";
+      await new Promise((r) => setTimeout(r, 2_000));
+      one = await ocrLayout(file).catch(() => null);
+      if (one && !one.unavailable) {
+        console.log(`  [ocr] slice ${i + 1}/${tiles.length} (y=${tile.offsetY}) failed once (${first.slice(0, 60)}) and read on the retry`);
+      }
+    }
     if (!one || one.unavailable) {
       lastFailure = one?.unavailable ?? "x8ocr returned nothing";
-      console.log(`  [ocr] slice ${i + 1}/${tiles.length} (y=${tile.offsetY}) failed: ${lastFailure}`);
+      console.log(`  [ocr] slice ${i + 1}/${tiles.length} (y=${tile.offsetY}) failed twice: ${lastFailure}`);
       continue;
     }
     capability ??= one.capability;
@@ -153,7 +174,13 @@ export async function ocrLayoutTiled(
   }
   if (!perTile.length) return { unavailable: lastFailure || "no slice could be read" } as LayoutResult;
   if (perTile.length < tiles.length) {
-    console.log(`  [ocr] read ${perTile.length} of ${tiles.length} slice(s) — the rest of the page is unread, not wrong`);
+    // Say the COVERAGE, not just the count: "1 of 5" is 20% of the form, and a clean verdict on
+    // that much is much weaker evidence than a clean verdict on all of it.
+    const pct = Math.round((perTile.length / tiles.length) * 100);
+    console.log(
+      `  [ocr] read ${perTile.length} of ${tiles.length} slice(s) — about ${pct}% of the page; ` +
+        `the rest is unread, not wrong`,
+    );
   }
   // The callers that want plain text join the blocks themselves; `texts` is kept only to report
   // how much was read.
