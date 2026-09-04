@@ -618,6 +618,15 @@ classifies SmartRecruiters so an unopened listing can say WHY. Cases: `npm run t
   A CANDIDATE PROFILE at that employer, usually via an emailed verification code. `atAuthGate()`
   recognises it and `next()` refuses with a sentence saying so, rather than stalling namelessly.
   This is why Oracle is behind `ORACLE_ATS=1`.
+- **tesla.com/careers cannot be scraped from here, and it is not a rendering problem.** Every path
+  answers 403 "Access Denied" from Tesla's edge with an Akamai reference number — the API
+  (`/cua-api/...`), the search page and the bare `/careers` — to plain fetch, to headless Chromium,
+  and to headless Chromium with the low-fingerprint launch config `runner.ts` uses for ATS forms.
+  202-211 bytes of denial, before any listing renders, so there is nothing to parse. Tried
+  2026-09-04 at the candidate's request. The one Tesla role we hold (TBNXMG, Vehicle Software) came
+  from a TRACKER, which is how Tesla roles will keep reaching us, and applying to it needs a hand
+  application anyway: `tesla.com/careers` is its own ATS and `detectAtsType` reports it unsupported.
+  Do not answer this with proxies or a fingerprint arms race — same call as the next bullet.
 - **SmartRecruiters is behind DataDome — do not add a driver without a plan.** The first automated
   apply click returned *"Access is temporarily restricted — we detected unusual activity from your
   device or network"*, naming the IP, and served a CAPTCHA. "Never try to defeat explicit
