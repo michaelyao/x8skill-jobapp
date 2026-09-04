@@ -1,3 +1,4 @@
+import { listChooserRow } from "../core/listChooser.js";
 import { normalizeQuestion } from "../utils/normalize.js";
 import { parseResumeHistory } from "../knowledge/resumeHistory.js";
 import { bandContains, bestBand, contradictsResume, degreeLevel, parseGpaBand } from "../core/factChecks.js";
@@ -363,6 +364,21 @@ function workAuthorizationRecords(
     authorized: /^\s*y(es)?\b/i.test(value),
     needsSponsorship: sponsor ? /^\s*y(es)?\b/i.test(String(sponsor.answer)) : undefined,
   };
+}
+
+/**
+ * The options a decision can actually be made against.
+ *
+ * A Workday taxonomy sometimes opens on a CHOOSER — "Partial List (First 500 Entries)" and "All" —
+ * and read() reports those two rows as the field's options. They are not answers. Intel's
+ * "Education — Field of Study*" was refused on exactly that basis: the recorded "Computer and
+ * Information Science" "is not one of them", so nothing was answered, so the fill never ran, so
+ * the code that clicks THROUGH the chooser never got a chance. The list is unknown here, not
+ * wrong, and unknown is what this returns.
+ */
+function usableOptions(options?: string[]): string[] | undefined {
+  if (!options?.length) return undefined;
+  return listChooserRow(options) ? undefined : options;
 }
 
 export function mustComeFromRecords(label: string): boolean {
@@ -870,8 +886,9 @@ export class LlmAgent implements Agent {
       }
       // For a closed list the stored wording may not be one of the options; leave those alone
       // rather than writing a value the widget cannot take.
-      if (field.options?.length && !field.searchable) {
-        const match = optionForRecorded(field.options, value);
+      const choosable = usableOptions(field.options);
+      if (choosable?.length && !field.searchable) {
+        const match = optionForRecorded(choosable, value);
         if (match.kind === "reworded") {
           console.log(
             `  [agent] your recorded ${JSON.stringify(value.slice(0, 40))} is offered as ` +
@@ -892,7 +909,7 @@ export class LlmAgent implements Agent {
           if (/authoriz|authoris/i.test(field.label) && /\bwork\b/i.test(field.label)) {
             const sponsorRecord = storedAnswerFor(ctx.answers, "Do you require sponsorship for employment visa status?")
               ?? storedAnswerFor(ctx.answers, "Will you now or in the future require visa sponsorship?");
-            const derived = workAuthorizationOption(field.options, {
+            const derived = workAuthorizationOption(choosable, {
               authorized: /^\s*y(es)?\b/i.test(value),
               needsSponsorship: sponsorRecord ? /^\s*y(es)?\b/i.test(String(sponsorRecord.answer)) : undefined,
             });
@@ -917,8 +934,8 @@ export class LlmAgent implements Agent {
           const why = match.kind === "ambiguous" ? `matches ${match.among} of them` : "is not one of them";
           console.log(
             `  [agent] your recorded answer for "${field.label.slice(0, 42)}" ` +
-              `(${JSON.stringify(value.slice(0, 40))}) ${why} — the form offers ${field.options.length}: ` +
-              `${field.options.slice(0, 3).map((o) => o.slice(0, 22)).join(" | ")}${field.options.length > 3 ? " …" : ""}`,
+              `(${JSON.stringify(value.slice(0, 40))}) ${why} — the form offers ${choosable.length}: ` +
+              `${choosable.slice(0, 3).map((o) => o.slice(0, 22)).join(" | ")}${choosable.length > 3 ? " …" : ""}`,
           );
           continue;
         }
@@ -1169,7 +1186,8 @@ export class LlmAgent implements Agent {
       const rf = resumeFactsFor(ctx);
       const asksDegree = /\bdegree\b/i.test(field.label) && !/field of study|major|discipline/i.test(field.label);
       const fromResume = (asksDegree ? rf.degree : rf.fieldOfStudy)?.trim();
-      if (fromResume && field.options?.length && asksDegree) {
+      const forDegree = usableOptions(field.options);
+      if (fromResume && forDegree?.length && asksDegree) {
         /**
          * A DEGREE LIST NAMES THE LEVEL, NOT THE AWARD. The resume says "Bachelor of Science";
          * the list offers "Bachelor's Degree". Token matching cannot join those, but degreeLevel
@@ -1178,7 +1196,7 @@ export class LlmAgent implements Agent {
          * "Bachelor of Science" stays a question for a human rather than a coin toss.
          */
         const want = degreeLevel(fromResume);
-        const sameLevel = want ? field.options.filter((o) => degreeLevel(o) === want) : [];
+        const sameLevel = want ? forDegree.filter((o) => degreeLevel(o) === want) : [];
         const exactish = sameLevel.filter((o) => optionForRecorded([o], fromResume).kind !== "absent");
         const pick = exactish.length === 1 ? exactish[0] : sameLevel.length === 1 ? sameLevel[0] : "";
         if (pick) {
@@ -1193,8 +1211,9 @@ export class LlmAgent implements Agent {
           continue;
         }
       }
-      if (fromResume && field.options?.length) {
-        const mapped = optionForRecorded(field.options, fromResume);
+      const forStudy = usableOptions(field.options);
+      if (fromResume && forStudy?.length) {
+        const mapped = optionForRecorded(forStudy, fromResume);
         if (mapped.kind === "exact" || mapped.kind === "reworded") {
           if (mapped.option.trim().toLowerCase() !== answer.value.trim().toLowerCase()) {
             console.log(
