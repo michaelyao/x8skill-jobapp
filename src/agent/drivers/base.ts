@@ -1012,10 +1012,28 @@ export abstract class GenericDriver implements AtsDriver {
         else await locator.uncheck({ force: true }).catch(() => undefined);
         // Custom checkboxes hide the real input and only update on a click of the visible
         // control, same as the radio handling below.
-        if ((await locator.isChecked().catch(() => current)) !== wantChecked) {
+        /**
+         * ESCALATE THE SAME WAY THE RADIO BRANCH DOES.
+         *
+         * Oracle's REQUIRED "I agree with the terms and conditions" is a 0x0 clipped input with no
+         * label[for] — the visible control is an ancestor — so check({force}) did nothing, the one
+         * fallback found no label, and the run stopped on the required-field gate with "tried but
+         * the field would not take it". There is no way for a human to unstick that either; it is
+         * simply an unfillable required field.
+         *
+         * The radio branch below has walked label -> parent -> grandparent -> forced click for
+         * exactly this reason. Every step is CONFIRMED by reading the checked state back, so a
+         * click that dispatched without ticking is still a failure.
+         */
+        const set = async () => (await locator.isChecked().catch(() => current)) === wantChecked;
+        if (!(await set())) {
           const id = await locator.getAttribute("id").catch(() => null);
           if (id) await root.locator(`label[for="${id.replace(/"/g, '\\"')}"]`).first().click().catch(() => undefined);
         }
+        if (!(await set())) await locator.locator("xpath=..").click().catch(() => undefined);
+        if (!(await set())) await locator.locator("xpath=../..").click().catch(() => undefined);
+        if (!(await set())) await locator.click({ force: true }).catch(() => undefined);
+        await locator.page().waitForTimeout(150);
       }
       return (await locator.isChecked().catch(() => current)) === wantChecked;
     }
