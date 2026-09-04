@@ -329,6 +329,34 @@ export async function applyToJob(
     // Identity upgrade: find the EMPLOYER's own requisition id, which most postings print
     // only in the page body. An ATS id identifies a listing; this identifies the job, so
     // it is the one signal that recognises the same opening posted to a second board.
+    /**
+     * LEARN THE TITLE FROM THE PAGE when the job came in as a bare URL.
+     *
+     * A job added by hand starts as "(supplied by URL)" — internshipList has nothing else to put
+     * there. That placeholder then follows it into the ledger and onto the review page, so the
+     * candidate opened /queue/SHNNHM and had to ask what the job even was. The answer was in the
+     * description we had just captured: "SOFTWARE ENGINEER INTERNSHIP, AGENT SYSTEMS", Employment
+     * Type "Intern".
+     *
+     * Requisition ids are already discovered this way (withRequisitionId, right below) for the
+     * same reason: most of what identifies a posting is only readable once the page is open.
+     *
+     * Taken from the first line that looks like a title and not like chrome — "ALL JOBS",
+     * "Location", "Apply" and friends are skipped — and only ever used to REPLACE the
+     * placeholder, never to overwrite a real title from a tracker.
+     */
+    if (/^\(supplied by url\)$/i.test((job.title ?? "").trim()) && jobDescriptionResolved) {
+      const CHROME = /^(all jobs|jobs|apply|apply now|back|home|location|employment type|location type|department|share|save)$/i;
+      const learned = jobDescriptionResolved
+        .split("\n")
+        .map((l) => l.trim())
+        .find((l) => l.length >= 8 && l.length <= 120 && !CHROME.test(l) && /[a-z]/i.test(l));
+      if (learned) {
+        console.log(`  learned the title from the page: ${JSON.stringify(learned.slice(0, 80))}`);
+        job = { ...job, title: learned };
+      }
+    }
+
     const discoveredReqId = findRequisitionId(job.applyUrl, `${pageText}\n${jobDescriptionResolved}`);
     if (discoveredReqId && discoveredReqId !== identity.companyReqId) {
       identity = withRequisitionId(identity, discoveredReqId);
