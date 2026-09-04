@@ -30,6 +30,7 @@ export type CommandName =
   | "sweep"
   | "refresh_list"
   | "update_answers"
+  | "update_guidelines"
   | "visual_check";
 
 interface Base {
@@ -135,6 +136,8 @@ export type Command = Base &
       }
     | { name: "refresh_list" }
     | { name: "update_answers"; entries: Array<{ question: string; answer: string }> }
+  /** The whole guidelines.txt, as edited on /preference. The worker is the only writer. */
+  | { name: "update_guidelines"; text: string }
     | { name: "forget_answers"; questions: string[] }
   );
 
@@ -210,6 +213,8 @@ const PRIORITY: Record<string, number> = {
   // something on the submit path is the kind of silent choice that goes wrong here.
   visual_check: 0,
   update_answers: 1,
+  // A preference the candidate just typed: he is waiting to see it take.
+  update_guidelines: 1,
   forget_answers: 1,
   change: 2,
   retry: 3,

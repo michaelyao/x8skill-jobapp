@@ -31,6 +31,9 @@ import { writeWorkerStatus } from "./knowledge/workerStatus.js";
 import { ensureDir, makeRunDir } from "./utils/log.js";
 import { normalizeUrl } from "./utils/normalize.js";
 import type { FilteredJob } from "./types.js";
+import { parseGuidelines } from "./knowledge/guidelines.js";
+import { GUIDELINES_PATH } from "./config.js";
+import fsp from "node:fs/promises";
 
 /**
  * The worker daemon. It owns Chrome and is the ONLY process that writes application state;
@@ -664,6 +667,30 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
       return { ok: false, message: `[${command.code}] ${why}` };
     }
 
+    case "update_guidelines": {
+      /**
+       * The candidate edits guidelines.txt on /preference; the WORKER writes it.
+       *
+       * Same discipline as every other state file: the website's copy is mounted read-only and
+       * one process does the writing. Parsed before it is written — a file with an unreadable
+       * MATCH would silently stop covering the questions it was meant to, and finding that out on
+       * the next application is far too late.
+       */
+      const text = String(command.text ?? "");
+      if (!text.trim()) return { ok: false, message: "nothing to save — the guidelines were empty" };
+      const parsed = parseGuidelines(text);
+      if (!parsed.length) {
+        return {
+          ok: false,
+          message: "no guideline could be read from that — each block needs a [name] and a MATCH line",
+        };
+      }
+      await fsp.writeFile(GUIDELINES_PATH, text.endsWith("\n") ? text : `${text}\n`, "utf8");
+      return {
+        ok: true,
+        message: `saved ${parsed.length} guideline(s): ${parsed.map((g) => g.name).join(", ")}`,
+      };
+    }
     case "update_answers": {
       // Corrections made while reviewing become the standing answer for that question, so the
       // same mistake is not made on the next twenty applications. This is the whole value of

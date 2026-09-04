@@ -19,6 +19,7 @@ const NAV = [
   { href: "/applications", label: "Applications" },
   { href: "/blocked", label: "Blocked" },
   { href: "/answers", label: "Answers" },
+  { href: "/preference", label: "Preferences" },
   { href: "/history", label: "History" },
   { href: "/runs", label: "Runs" },
 ];

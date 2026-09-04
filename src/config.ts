@@ -28,6 +28,11 @@ export const QA_TEXT_PATH = path.join(ROOT_DIR, "Q&A.txt");
 export const QA_MARKDOWN_PATH = path.join(ROOT_DIR, "Q&A.md");
 export const PROFILE_JSON_PATH = path.join(DATA_DIR, "profile.json");
 /** Hand-curated mapping from a skill to the exact Workday taxonomy entries to select. */
+/**
+ * How to answer a KIND of question — the candidate's own preferences, editable without a code
+ * change. See knowledge/guidelines.ts. Committed, like skill.txt, and lower-case on disk.
+ */
+export const GUIDELINES_PATH = process.env.GUIDELINES_PATH || path.join(ROOT_DIR, "guidelines.txt");
 export const SKILL_PLAN_PATH = process.env.SKILL_PLAN_PATH || path.join(ROOT_DIR, "skill.txt");
 
 export const ANSWERS_JSON_PATH = path.join(DATA_DIR, "answers.json");

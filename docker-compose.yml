@@ -63,6 +63,9 @@ services:
       # the website, absent from the container.
       - ./job_sites.txt:/jobapp/job_sites.txt:ro
       - ./skill.txt:/jobapp/skill.txt:ro
+      # /preference READS this to show what is in force. Writes go through the worker
+      # (update_guidelines), which is why read-only is right here.
+      - ./guidelines.txt:/jobapp/guidelines.txt:ro
       # playwright/ is deliberately absent. The website never drives a browser, so the
       # container has no reason to hold live session cookies.
     healthcheck:

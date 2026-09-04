@@ -1,0 +1,31 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# GUIDELINES — how to answer a KIND of question.
+#
+# Q&A.txt answers ONE question exactly. This file answers a whole class of them,
+# for the questions no store can enumerate because every employer words them
+# differently ("Are you applying to work on something specific at Acme?",
+# "Which areas interest you?", "What would you like to work on?").
+#
+# One block per guideline:
+#
+#   [a short name for it]
+#   MATCH:   regex, case-insensitive, tried against the question's text
+#   PREFER:  comma-separated things to choose or lean towards
+#   AVOID:   comma-separated things never to choose
+#   NOTE:    one sentence of context, passed to the model for free-text answers
+#
+# How each is used:
+#   • an OPTION list  → tick/choose what PREFER matches and AVOID does not.
+#     Nothing matching means the guideline stays silent rather than guessing.
+#   • FREE TEXT       → PREFER / AVOID / NOTE are handed to the model as the
+#     instruction for that field, so prose follows the same rule.
+#
+# Edit this file and the next run picks it up. Nothing here is a fact about the
+# candidate — facts live in Q&A.txt and the resume. This is preference.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[what I want to work on]
+MATCH:  something specific|areas? (of|that) interest|what (would you like|do you want) to work on|which (team|area|group)|what excites you|interested in working on|preferred (area|team|technolog)
+PREFER: software development, software engineering, AI agents, algorithms, LLMs, machine learning, artificial intelligence, backend, distributed systems, data engineering, cloud, full stack, research and development
+AVOID:  QA, quality assurance, test engineering, hardware, firmware, embedded, device drivers, iOS, Android, mobile devices, robotic control, robotics control, manufacturing, mechanical, electrical, sales, marketing, finance, accounting, supply chain
+NOTE:   He is applying for software engineering internships and is strongest in AI/ML and backend work; research and development counts as software.

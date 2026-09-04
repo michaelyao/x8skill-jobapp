@@ -4,6 +4,8 @@ import { parseResumeHistory } from "../knowledge/resumeHistory.js";
 import { bandContains, bestBand, contradictsResume, degreeLevel, parseGpaBand } from "../core/factChecks.js";
 import type { Agent, AgentContext, FieldAnswer, FieldSpec, PageSnapshot } from "./types.js";
 import { loadSkillPicks } from "../knowledge/skillPlan.js";
+import { guidelineFor, guidelineInstruction, loadGuidelines, optionsUnderGuideline } from "../knowledge/guidelines.js";
+import type { Guideline } from "../knowledge/guidelines.js";
 
 // Legal / demographic / compensation fields we must never free-guess. The agent
 // may answer these only from curated Q&A or profile data; otherwise it defers to
@@ -564,7 +566,7 @@ function localToday(): { iso: string; month: string; day: string; year: string; 
   };
 }
 
-function buildPrompt(snapshot: PageSnapshot, ctx: AgentContext): { system: string; user: string } {
+function buildPrompt(snapshot: PageSnapshot, ctx: AgentContext, loadedGuidelines: readonly Guideline[] = []): { system: string; user: string } {
   const today = localToday();
   const system = [
     "You are filling a job application form on behalf of a candidate.",
@@ -591,6 +593,7 @@ function buildPrompt(snapshot: PageSnapshot, ctx: AgentContext): { system: strin
     // answer — it lists seven employers and Michelin is not among them — so this is a fact we
     // hold, not a guess, and leaving it blank was the wrong kind of caution.
     "- The same applies to 'have you already done a co-op / internship / placement / apprenticeship with X', 'have you interned here before', 'are you a returning intern': answer Yes ONLY if X appears in the Employment history below; otherwise No.",
+    "- A field may carry a `guidance` string: that is the candidate's own standing preference for that KIND of question. Follow it — prefer what it prefers, never mention what it says to avoid — while keeping the answer truthful and specific to this company.",
     "- Do NOT answer or reference any submit button.",
     'Respond with ONLY a JSON array: [{"key":"...","value":"...","confidence":0.0-1.0,"needsHuman":false,"draft":false,"blank":false,"reasoning":"short"}]. One object per field, using the exact keys given.',
   ].join("\n");
@@ -607,6 +610,14 @@ function buildPrompt(snapshot: PageSnapshot, ctx: AgentContext): { system: strin
     // the slice — which silently blocked the whole job. Send it as a labelled sample.
     ...(f.searchable ? { searchableTypeahead: true, optionsSample: f.options?.slice(0, 10) } : { options: f.options }),
     sensitive: f.sensitive ?? isSensitive(f.label),
+    /**
+     * The candidate's guideline for this KIND of question, when one covers it — so a prose answer
+     * follows the same preference an option list would. This is how "prefer AI agents, never ask
+     * for iOS work" reaches a free-text "what would you like to work on?".
+     */
+    ...(guidelineFor(loadedGuidelines, f.label)
+      ? { guidance: guidelineInstruction(guidelineFor(loadedGuidelines, f.label)!) }
+      : {}),
   }));
 
   const user = [
@@ -685,7 +696,7 @@ async function callGemini(system: string, user: string): Promise<string> {
 export class LlmAgent implements Agent {
   async decide(snapshot: PageSnapshot, ctx: AgentContext): Promise<FieldAnswer[]> {
     if (snapshot.fields.length === 0) return [];
-    const { system, user } = buildPrompt(snapshot, ctx);
+    const { system, user } = buildPrompt(snapshot, ctx, await loadGuidelines());
 
     let raw: string;
     let provider: string;
@@ -1279,11 +1290,24 @@ export class LlmAgent implements Agent {
      * field.
      */
     for (const field of snapshot.fields) {
-      if (!isAreasOfInterest(field.label) || !field.options?.length) continue;
-      const wanted = softwareInterests(field.options);
+      /**
+       * THE CANDIDATE'S OWN GUIDELINE FIRST.
+       *
+       * guidelines.txt says which KINDS of work to prefer and avoid, and it matches many more
+       * questions than isAreasOfInterest ever did — "Are you applying to work on something
+       * specific at Acme?" is the one he asked about. When a guideline covers the question its
+       * PREFER/AVOID decide; otherwise the built-in software-interest rule still applies, so
+       * deleting the file changes nothing.
+       */
+      const guideline = guidelineFor(await loadGuidelines(), field.label);
+      if (!guideline && !isAreasOfInterest(field.label)) continue;
+      if (!field.options?.length) continue;
+      const wanted = guideline
+        ? optionsUnderGuideline(guideline, field.options)
+        : softwareInterests(field.options);
       if (!wanted.length) {
         console.log(
-          `  [agent] "${field.label.slice(0, 40)}" offers nothing software-related among ` +
+          `  [agent] "${field.label.slice(0, 40)}" offers nothing ${guideline ? `matching your "${guideline.name}" guideline` : "software-related"} among ` +
             `${field.options.length}: ${field.options.slice(0, 4).map((o) => o.slice(0, 18)).join(" | ")}`,
         );
         continue;

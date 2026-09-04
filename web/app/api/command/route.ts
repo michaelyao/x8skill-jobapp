@@ -9,7 +9,7 @@ export const runtime = "nodejs";
  * The worker applies it. Every guard that prevents a double submission lives on the worker
  * side, so a malicious or buggy request here cannot bypass them.
  */
-const ALLOWED = new Set(["approve", "skip", "manual_submit", "apply", "change", "retry", "sweep", "refresh_list", "update_answers", "forget_answers"]);
+const ALLOWED = new Set(["approve", "skip", "manual_submit", "apply", "change", "retry", "sweep", "refresh_list", "update_answers", "forget_answers", "update_guidelines"]);
 
 export async function POST(request: Request): Promise<Response> {
   const user = await requireUser();

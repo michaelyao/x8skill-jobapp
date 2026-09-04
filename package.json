@@ -43,7 +43,8 @@
     "test:groups": "tsx src/debug/fieldGroupCases.ts",
     "test:escapes": "tsx src/debug/evaluateEscapeCases.ts",
     "test:dateparts": "tsx src/debug/datePartCases.ts",
-    "test:chooser": "tsx src/debug/listChooserCases.ts"
+    "test:chooser": "tsx src/debug/listChooserCases.ts",
+    "test:guidelines": "tsx src/debug/guidelineCases.ts"
   },
   "repository": {
     "type": "git",

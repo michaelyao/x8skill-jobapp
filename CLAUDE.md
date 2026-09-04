@@ -50,6 +50,20 @@ txt from that config — the third fallback to a hardcoded `text version.txt` wa
 2026-08-24 along with `PROFILE_TEXT_PATH`, because a stale path that silently wins over the
 configured one is worse than a missing-file error.
 
+`guidelines.txt` is committed too, and is the one place to say **how to answer a KIND of
+question** — the ones no store can enumerate because every employer words them differently ("Are
+you applying to work on something specific at Acme?"). One block per guideline: `[name]`, a `MATCH`
+regex, `PREFER`, `AVOID`, `NOTE`. An option list is filtered by PREFER minus AVOID (AVOID wins on a
+mixed option like "Mobile (iOS/Android) software development"); free text gets all three as the
+model's instruction for that field. **Nothing matching means the guideline stays SILENT** rather
+than picking the least-bad row. It replaced two regexes in `llmAgent`
+(`SOFTWARE_INTEREST`/`NOT_SOFTWARE_INTEREST`), which meant "prefer AI agents, avoid iOS work" was a
+code change; the built-in rule still applies where no guideline matches, so deleting the file
+changes nothing. Editable at **`/preference`** on the website, which enqueues `update_guidelines` —
+the WORKER writes the file, and parses it first so a typo is reported instead of silently
+un-matching. It is PREFERENCE, never fact: facts are the resume and `Q&A.txt`. Cases:
+`npm run test:guidelines`.
+
 `skill.txt` is NOT in this table: it is committed. **Its name is lower-case in the code
 (`SKILL_PLAN_PATH`) and must be lower-case on disk.** It was `Skill.txt` for a while and worked
 only because macOS is case-insensitive by default — the same tree would fail to find it on a
