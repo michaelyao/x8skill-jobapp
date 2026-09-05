@@ -1,4 +1,9 @@
-import { evaluateScreen, missingFromScreen, placeholdersShowing } from "../knowledge/visualCheck.js";
+import {
+  evaluateScreen,
+  extractRefusal,
+  missingFromScreen,
+  placeholdersShowing,
+} from "../knowledge/visualCheck.js";
 
 /**
  * Cases for the visual (OCR) cross-check.  npm run test:visual
@@ -110,6 +115,21 @@ check(
 // nothing" has to mean "no opinion", or every lost job would block its application.
 check(`no OCR text yields no verdict at all`, verdict([["School", "Carnegie Mellon University"]], "").length === 0);
 check(`whitespace-only OCR text yields no verdict`, verdict([["School", "Carnegie Mellon University"]], "   \n  ").length === 0);
+
+/**
+ * WHAT A REFUSAL FROM x8ocr MEANS.
+ *
+ * A blank slice is an ordinary thing to photograph — forms have white space, and a page whose
+ * embedded form has not painted is all white. x8ocr says so precisely, with 422 and reason EMPTY.
+ * Reading that as an outage is what held C3.ai QDLZFL: "the visual checker is down (6 checks
+ * failed ... HTTP 422)" while the checker was up and slice 1 of the same page read perfectly.
+ */
+const EMPTY_BODY = '{"error":"OCR failed: empty OCR result","reason":"EMPTY"}';
+check(`422 EMPTY is a blank picture, not a broken checker`, extractRefusal(422, EMPTY_BODY) === "blank");
+check(`422 for any OTHER reason is still a fault`, extractRefusal(422, '{"error":"bad file","reason":"DECODE"}') === "unavailable");
+check(`a 422 with no reason at all is a fault`, extractRefusal(422, "") === "unavailable");
+check(`500 is a fault however it is worded`, extractRefusal(500, EMPTY_BODY) === "unavailable");
+check(`401 is a fault — an unauthenticated checker verifies nothing`, extractRefusal(401, "") === "unavailable");
 
 console.log(`\n${fail ? "✗" : "✓"} ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

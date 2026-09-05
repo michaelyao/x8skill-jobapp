@@ -602,33 +602,50 @@ export async function runApplication(
         .evaluate("(() => document.documentElement.clientWidth || window.innerWidth)()")
         .catch(() => 1440),
     );
-    const layout = await ocrLayoutTiled(async (tile, i) => {
-      if (planTiles(pageHeight).length === 1) return shot; // already readable; do not re-shoot
+    /**
+     * EVERY SLICE IS SHOT BEFORE ANY OF THEM IS READ.
+     *
+     * The slices used to be captured inside the OCR loop, so slice N+1 was taken a whole engine
+     * ladder after slice N — 30 to 60 seconds. The page does not hold still for that. On C3.ai
+     * QDLZFL the full-page shot has the application form rendered at y=5300 while the slice
+     * covering y=3760-5760, taken a minute later, is 1440x2000 of pure white; three of the four
+     * slices on XHWWCQ went the same way while the full-page shot of that page had content all the
+     * way down. x8ocr then answered 422 EMPTY, correctly, and we read its answer as an outage.
+     *
+     * Shot back to back they are all the same page, and the same page the review screenshot shows.
+     */
+    const tiles = planTiles(pageHeight || 1);
+    const files: Array<string | null> = [];
+    for (const [i, tile] of tiles.entries()) {
+      if (tiles.length === 1) {
+        files.push(shot); // already readable in one piece; do not re-shoot
+        break;
+      }
       const file = path.join(opts.runDir!, `page-${pagesVerified}-slice${i + 1}.png`);
       try {
         /**
          * fullPage IS REQUIRED FOR THE CLIP TO MEAN WHAT WE INTEND.
          *
-         * Without it Playwright clips to the VIEWPORT, so a tile at y=2000 on a 900px viewport is
+         * Without it Playwright clips to the VIEWPORT, so a tile at y=2000 on a 1000px viewport is
          * entirely outside the image: the capture is empty or invalid, and x8ocr rejects it with
          * HTTP 422. That is what stopped ID.me being submitted twice after the candidate approved
          * it - "the visual checker did not answer" was the checker refusing our picture, not the
-         * checker being down.
-         *
-         * It also explains the chronic partial coverage: slice 1 overlapped the viewport and
-         * usually survived, every later slice did not, which is exactly the "read 1 of 4 slice(s)"
-         * seen on 134 pages. The verdicts were being formed from the top of the form only.
+         * checker being down. Verified against Playwright 1.58 on a 10400px page: fullPage + a clip
+         * at y=4000 returns exactly the band at y=4000.
          */
         await page.screenshot({
           path: file,
           fullPage: true,
           clip: { x: 0, y: tile.offsetY, width: width || 1440, height: tile.height },
         });
-        return file;
+        files.push(file);
       } catch {
-        return null;
+        files.push(null);
       }
-    }, pageHeight || 1).catch(() => null);
+    }
+    const layout = await ocrLayoutTiled(async (_tile, i) => files[i] ?? null, pageHeight || 1).catch(
+      () => null,
+    );
     /**
      * A CHECKER THAT IS DOWN STOPS THE RUN.
      *

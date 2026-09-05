@@ -118,6 +118,21 @@ function serialise<T>(work: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * What a non-2xx answer from /v1/extract MEANS: a picture with no text in it, or a checker we
+ * cannot use.
+ *
+ * The distinction is the whole point. Everything non-2xx used to read as "unavailable", and one
+ * blank slice therefore ran the engine ladder twice, counted as a failed check, and helped declare
+ * the checker DOWN — which holds every approved submit. Cases: npm run test:visual
+ */
+export function extractRefusal(status: number, body: string): "blank" | "unavailable" {
+  if (status !== 422) return "unavailable";
+  // x8ocr: {"error":"OCR failed: empty OCR result","reason":"EMPTY"}. Only EMPTY means blank —
+  // a 422 for any other reason (a rejected file, a bad parameter) is still something to report.
+  return /"reason"\s*:\s*"EMPTY"/i.test(body) ? "blank" : "unavailable";
+}
+
+/**
  * READ A PAGE IN SLICES, and return one result in the page's own coordinates.
  *
  * A full-page capture of a long form cannot be read at all — measured, with paddleocr unreachable:
@@ -173,6 +188,22 @@ export async function ocrLayoutTiled(
     for (const b of (one.blocks ?? []) as ScreenBlock[]) if (String(b.text ?? "").trim()) texts.push(String(b.text));
   }
   if (!perTile.length) return { unavailable: lastFailure || "no slice could be read" } as LayoutResult;
+  /**
+   * A PAGE NOTHING COULD BE READ ON IS NOT A CLEAN PAGE.
+   *
+   * A blank slice is fine on its own — forms have white space. But if EVERY slice came back
+   * without a single block, the capture failed, and letting that through would be the worst
+   * outcome this check has: every field would be unattributable, unattributable is deliberately
+   * not reported, and the application would read as visually verified having been verified
+   * against nothing at all.
+   */
+  const blankTiles = perTile.filter((t) => !t.blocks.length).length;
+  if (perTile.every((t) => !t.blocks.length)) {
+    return { unavailable: `the capture was blank — ${perTile.length} slice(s) held no text` } as LayoutResult;
+  }
+  if (blankTiles) {
+    console.log(`  [ocr] ${blankTiles} of ${tiles.length} slice(s) held no text — blank page regions, not a failure`);
+  }
   if (perTile.length < tiles.length) {
     // Say the COVERAGE, not just the count: "1 of 5" is 20% of the form, and a clean verdict on
     // that much is much weaker evidence than a clean verdict on all of it.
@@ -276,7 +307,26 @@ async function ocrLayoutOnce(imagePath: string, timeoutMs: number, engine?: stri
       body,
       signal: controller.signal,
     });
-    if (!res.ok) return { blocks: [], unavailable: `x8ocr answered HTTP ${res.status}` };
+    if (!res.ok) {
+      /**
+       * 422 EMPTY IS A VERDICT ABOUT OUR PICTURE, NOT A FAULT IN THE CHECKER.
+       *
+       * x8ocr answers `{"error":"OCR failed: empty OCR result","reason":"EMPTY"}` with HTTP 422
+       * when the image it was handed carries no text. Read as an outage it was catastrophic: one
+       * blank slice ran the whole engine ladder twice (paddle, sonnet, gemini, 90s+120s+90s, then
+       * the retry), counted as a failed check, and two of those in half an hour declared the
+       * checker DOWN and held every approved submit. C3.ai QDLZFL sat there being told "the visual
+       * checker is down (6 checks failed ... HTTP 422)" while x8ocr was up and correct: slice 1 of
+       * that same page read perfectly, slices 2 and 3 were 1440x2000 of pure white.
+       *
+       * A blank region of a form is an ordinary thing to photograph. It contributes no blocks and
+       * that is the whole of it. The all-blank case is caught by the caller, which will not pass a
+       * page nothing could be read on.
+       */
+      const detail = await res.text().catch(() => "");
+      if (extractRefusal(res.status, detail) === "blank") return { blocks: [] };
+      return { blocks: [], unavailable: `x8ocr answered HTTP ${res.status}` };
+    }
     const json = (await res.json()) as {
       pages?: Array<{ blocks?: ScreenBlock[] }>;
       capability?: ScreenCapability;
