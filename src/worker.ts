@@ -816,11 +816,11 @@ async function main(): Promise<void> {
    * was still on older code. Recorded at startup and compared on every tick, so the mismatch is
    * visible instead of assumed.
    */
-  const loadedAt = gitHead();
+  loadedCommit = gitHead();
   console.log(`worker: started (pid ${process.pid}), tick ${TICK_MS}ms, code ${loadedCommit || "unknown"}`);
   await writeWorkerStatus({ codeVersion: loadedCommit, codeStale: false }).catch(() => undefined);
-const freed = await releaseOrphanedClaims();
-if (freed.length) console.log(`worker: released ${freed.length} command(s) a previous run had claimed but never finished.`);
+  const freed = await releaseOrphanedClaims();
+  if (freed.length) console.log(`worker: released ${freed.length} command(s) a previous run had claimed but never finished.`);
   await writeWorkerStatus({ state: "idle", activity: "waiting for commands" });
 
   // Keep the heartbeat fresh WHILE a command runs. writeWorkerStatus() with no patch only
