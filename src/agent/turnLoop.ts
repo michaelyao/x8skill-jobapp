@@ -419,7 +419,16 @@ export async function runApplication(
          * Only for a REQUIRED field, and only once per field per run: a diagnosis costs a model
          * call, and an optional field that refuses a value is not worth one.
          */
-        if (driver.studyFailedField && field.required && !studied.has(field.label)) {
+        /**
+         * A GROUPED OPTION IS NEVER "required" ON ITS OWN.
+         *
+         * read() deliberately clears `required` on each member of a radio or checkbox group and
+         * puts it on the GROUP ("Please check one of the boxes below:*"), because no single box is
+         * individually mandatory. My trigger asked for field.required, so the one class of field
+         * most likely to refuse a value - a styled radio whose real input is hidden - could never
+         * be studied. Five refusals since study mode shipped, zero studies.
+         */
+        if (driver.studyFailedField && (field.required || field.groupRequired) && !studied.has(field.label)) {
           studied.add(field.label);
           await driver
             .studyFailedField(root, field, {
@@ -848,6 +857,28 @@ export async function runApplication(
         break;
       }
       blockedRequired = missing.map((f) => f.label);
+      /**
+       * STUDY WHAT THE RUN IS ABOUT TO GIVE UP ON.
+       *
+       * Not every failure announces itself as "the field would not take it". The Uline one does
+       * the opposite: the fields report filled, and only the final read finds them empty - so
+       * nothing was ever studied, four retries in a row, and each retry was a hope rather than a
+       * question. His words: "otherwise, you just hope things will fix by itself which it will
+       * NOT."
+       *
+       * At most three, because this costs a model call each and the first three are enough to see
+       * what kind of failure it is.
+       */
+      for (const f of missing.slice(0, 3)) {
+        if (!driver.studyFailedField || studied.has(f.label)) continue;
+        studied.add(f.label);
+        await driver
+          .studyFailedField(root, f, {
+            ats: driver.type ?? "unknown",
+            ...(opts.runDir ? { runDir: opts.runDir } : {}),
+          })
+          .catch(() => "");
+      }
       console.log(`  ⚠ Submit is present but ${missing.length} required field(s) are still empty — NOT advancing to submit: ${blockedRequired.join(" | ")}`);
       break;
     }
