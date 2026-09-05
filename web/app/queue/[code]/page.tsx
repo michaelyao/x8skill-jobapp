@@ -9,7 +9,11 @@ import { ledgerStage } from "@core/core/statusVocabulary.js";
 import { resumeFactsFrom } from "@core/core/queueReadiness.js";
 import { readProfileSnapshot } from "@core/knowledge/profile.js";
 import { currentUser } from "@/lib/session";
-import { fetchStoredJobDescription, loadX8NoteConfig } from "@core/knowledge/x8note.js";
+import {
+  fetchStoredJobDescription,
+  findNoteIdsByLabels,
+  loadX8NoteConfig,
+} from "@core/knowledge/x8note.js";
 
 /** What a queued command is, in the words the buttons use. */
 const DECISION_WORDS: Record<string, string> = {
@@ -98,10 +102,22 @@ export default async function ReviewPage({ params }: { params: Promise<{ code: s
   const profileSnapshot = await readProfileSnapshot();
   const degree = profileSnapshot ? resumeFactsFrom(profileSnapshot).degree : undefined;
 
+  const cfg = entry.code ? await loadX8NoteConfig() : null;
+
   let description = entry.jobDescription ?? "";
-  if (!description && entry.code) {
-    const cfg = await loadX8NoteConfig();
-    if (cfg) description = await fetchStoredJobDescription(cfg, entry.code);
+  if (!description && cfg && entry.code) {
+    description = await fetchStoredJobDescription(cfg, entry.code);
+  }
+
+  // A link to the posting as x8note holds it. The ledger records the note id at write
+  // time, so most jobs cost nothing to link; the by-label lookup is for the ones written
+  // before that field existed. No note found means none was ever stored — say nothing
+  // rather than offer a link that 404s.
+  let noteUrl: string | undefined;
+  if (cfg && entry.code) {
+    let noteId = app?.x8noteId;
+    if (!noteId) noteId = (await findNoteIdsByLabels(cfg, [`jobid_${entry.code}`]))[0];
+    if (noteId) noteUrl = `${cfg.baseUrl}/notes/${noteId}`;
   }
 
   return (
@@ -122,6 +138,7 @@ export default async function ReviewPage({ params }: { params: Promise<{ code: s
       <ReviewPanel
         entry={JSON.parse(JSON.stringify(entry))}
         description={description}
+        noteUrl={noteUrl}
         requisitionId={app?.companyReqId ?? entry.companyReqId}
         role={user?.role ?? "reviewer"}
         hasScreenshot={Boolean(app?.lastRunDir)}

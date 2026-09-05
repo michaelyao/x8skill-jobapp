@@ -12,6 +12,8 @@ import type { PendingEntry } from "@core/knowledge/approvalQueue.js";
 interface Props {
   entry: PendingEntry;
   description: string;
+  /** The x8note note holding this posting, when there is one. Absent means nothing was stored. */
+  noteUrl?: string;
   requisitionId?: string;
   role: string;
   hasScreenshot: boolean;
@@ -49,7 +51,7 @@ const DECIDED: Record<string, string> = {
  * with no LLM involved. "Submitted == approved" holds because the edit happens BEFORE the
  * approval, not after it.
  */
-export function ReviewPanel({ entry, description, requisitionId, role, hasScreenshot, queuedDecision }: Props) {
+export function ReviewPanel({ entry, description, noteUrl, requisitionId, role, hasScreenshot, queuedDecision }: Props) {
   // A held job is the interesting case: the approved answers are stale, and what needs
   // reviewing is what the re-fill actually produced. Show THAT, or approving would authorize
   // a set of values that is no longer what the form holds.
@@ -74,6 +76,7 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
   const [decided, setDecided] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [changeText, setChangeText] = useState("");
+  const [copied, setCopied] = useState<"ok" | "fail" | null>(null);
   const [showChange, setShowChange] = useState(false);
   // Corrections are worth more than this one application: by default they become the standing
   // answer for that question, so the next form asking it is filled correctly without a review.
@@ -194,6 +197,34 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
       if (corrections.length) await send("update_answers", { entries: corrections });
     }
     await send("approve", edited || hold ? { answers: answers.map((a) => ({ ...a, type: "text" })) } : {});
+  }
+
+  /**
+   * Put the whole description on the clipboard. `navigator.clipboard` needs a secure
+   * context, so the textarea fallback is what makes Copy work when the console is
+   * reached over plain http rather than through the https name.
+   */
+  async function copyDescription() {
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(description);
+      ok = true;
+    } catch {
+      try {
+        const box = document.createElement("textarea");
+        box.value = description;
+        box.style.position = "fixed";
+        box.style.opacity = "0";
+        document.body.appendChild(box);
+        box.select();
+        ok = document.execCommand("copy");
+        box.remove();
+      } catch {
+        ok = false;
+      }
+    }
+    setCopied(ok ? "ok" : "fail");
+    setTimeout(() => setCopied(null), 2000);
   }
 
   return (
@@ -453,7 +484,21 @@ export function ReviewPanel({ entry, description, requisitionId, role, hasScreen
         </div>
       </div>
 
-      <h2>Job description</h2>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+        <h2 style={{ marginRight: "auto" }}>Job description</h2>
+        <button
+          style={{ padding: "2px 10px", fontSize: 12 }}
+          disabled={!description}
+          onClick={copyDescription}
+        >
+          {copied === "ok" ? "Copied" : copied === "fail" ? "Copy failed" : "Copy"}
+        </button>
+        {noteUrl ? (
+          <a href={noteUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>
+            x8note copy ↗
+          </a>
+        ) : null}
+      </div>
       <div className="card">
         <pre style={{ whiteSpace: "pre-wrap", margin: 0, font: "inherit", fontSize: 13.5, color: "var(--muted)" }}>
           {description || "(none captured)"}
