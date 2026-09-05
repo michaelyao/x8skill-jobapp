@@ -1211,6 +1211,27 @@ export class WorkdayDriver extends GenericDriver {
      * control. Tab is tried too: moving focus out of the widget closes the ones that ignore
      * Escape. Each is CONFIRMED by re-checking, so nothing is assumed.
      */
+    /**
+     * IS ANY MENU ACTUALLY OPEN? Measured: it usually was not.
+     *
+     * This warning fired 1,383 times against 1,387 option reads - EXACTLY TWICE per read, in
+     * lockstep, because closeOpenMenu runs on both sides of every read. A genuinely stuck menu
+     * does not arrive on a metronome. The locator was matching something permanently in the page,
+     * so every call pressed Escape into nothing, waited, escalated, and logged a failure.
+     *
+     * Two costs, and I paid both: about 1.8 seconds burned per option read, and - worse - I read
+     * the warnings as the CAUSE of three empty fields on Uline and said so. That was correlation
+     * dressed up as evidence.
+     *
+     * A Workday prompt sets aria-expanded="true" on its control while its list is showing. If
+     * nothing on the page is expanded, nothing is open, and there is nothing to close.
+     */
+    const expanded = await root
+      .locator('[aria-expanded="true"]')
+      .count()
+      .catch(() => 0);
+    if (!expanded) return;
+
     const heading = root.locator('h2, h3, [data-automation-id="jobPostingHeader"]').first();
     for (let attempt = 0; attempt < 3; attempt += 1) {
       if (!(await menu.isVisible().catch(() => false))) return;
