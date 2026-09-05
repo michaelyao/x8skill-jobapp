@@ -86,8 +86,10 @@ Workday sign-ins produced "WORKDAY_EMAIL = (EMPTY)" and a confident wrong conclu
 credentials were missing. The same pair doubles as the website's own login.
 
 **`GEMINI_API_KEY` in this file is currently x8note's key, not jobapp's own — replace it.** It was
-copied in from `x8note/.env` during another project's session, while fixing an unrelated dead key,
-and reported afterwards. It works, and it is the FALLBACK answering path (`callGemini`, used when
+copied in from `x8note/.env` during another project's session and reported afterwards. The value it
+replaced was a 39-character `AIzaSy…` key that Google's API is said to have rejected as invalid —
+worth verifying independently before assuming the swap was necessary, because it is this project's
+credential and the evidence for it being dead came from the session that replaced it. It works, and it is the FALLBACK answering path (`callGemini`, used when
 airouter fails — 96 fills against airouter's 1608), so the exposure is bounded but real: usage
 bills to x8note, a quota hit there surfaces here as a failed fill, and a rotation there breaks this
 fallback silently. Issuing jobapp its own key is the fix; nothing in the code needs to change.
@@ -100,11 +102,18 @@ the Gmail API over OAuth, not SMTP.
 
 ### x8ocr (the visual cross-check)
 
-The endpoint is **localhost, and that is a deliberate narrowing**: it used to be
-`192.168.1.210:8799`, which is still up, but the local instance is the one holding this app's API
-key and the payload fix. The cost is that a local x8ocr being down now has no remote to fall back
-to — which is exactly what refused two submits on 2026-09-04 — so if the container is stopped, the
-visual check is unavailable rather than slower.
+The endpoint is **localhost, and `192.168.1.210:8799` is NOT a fallback — do not point back at
+it.** That host answers `/healthz` with 200 and then never answers `/v1/extract` at all: measured
+2026-09-04, 120s and no reply. It is the pre-auth build, so `X8OCR_API_KEY` means nothing there,
+and it still carries the OPTIONAL_PAYLOAD bug that returns empty text for every image — so even a
+reply would be a silent blank rather than an error. A green health check in front of a dead
+endpoint is the same trap our own `probeOcr` had: it posted no image, so it reported a reachable
+service as healthy while every real check failed.
+
+The cost of localhost-only is real and was paid on 2026-09-04: a stopped container means the visual
+check is UNAVAILABLE, not slower, and two submits were refused for it. The answer is to keep the
+local container up, or to deploy the current build to another host and issue it its own key —
+not to revert this line.
 
 ```
 X8OCR_API_ENDPOINT=http://localhost:8799
