@@ -36,10 +36,34 @@ const HEALTH_PATH = path.join(DATA_DIR, "ocr-health.json");
 
 export async function readOcrHealth(): Promise<OcrHealth | null> {
   try {
-    return JSON.parse(await fs.readFile(HEALTH_PATH, "utf8")) as OcrHealth;
+    return agedHealth(JSON.parse(await fs.readFile(HEALTH_PATH, "utf8")) as OcrHealth);
   } catch {
     return null;
   }
+}
+
+/**
+ * DOWN HAS TO EXPIRE BY ITSELF, OR IT IS A DEADLOCK.
+ *
+ * `recordOcrOutcome` ages failures out of the window, but only a real check calls it — and while
+ * the checker reads as down, the gate refuses the fills and submits that would run one. Nothing
+ * writes the file, so nothing ever clears it. QDLZFL sat in exactly that loop: the six 422s that
+ * declared the checker down were nineteen minutes old and no longer inside the thirty-minute
+ * window, the verdict computed from them was frozen in the file, and every approve retried against
+ * it. The failures that were misread as an outage had by then been fixed.
+ *
+ * So the window is applied when the verdict is READ, not only when it is written. This is a pure
+ * function of the stored record and the clock; the file itself is left alone, because the worker
+ * is the only writer of it.
+ */
+export function agedHealth(stored: OcrHealth, now = Date.now()): OcrHealth {
+  const recent = (stored.recentFailures ?? []).filter((t) => Date.parse(t) >= now - WINDOW_MS);
+  if (recent.length >= FAILURES_MEAN_DOWN) return { ...stored, recentFailures: recent };
+  if (stored.ok) return stored;
+  // Below the threshold once the old failures drop off: no longer down. Nothing here claims it is
+  // WORKING - only a real check can say that - so lastOkAt is left exactly as it was.
+  const { reason: _dropped, ...rest } = stored;
+  return { ...rest, ok: true, recentFailures: recent };
 }
 
 /**

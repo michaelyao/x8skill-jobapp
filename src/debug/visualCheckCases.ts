@@ -4,6 +4,7 @@ import {
   missingFromScreen,
   placeholdersShowing,
 } from "../knowledge/visualCheck.js";
+import { agedHealth } from "../knowledge/ocrHealth.js";
 
 /**
  * Cases for the visual (OCR) cross-check.  npm run test:visual
@@ -130,6 +131,33 @@ check(`422 for any OTHER reason is still a fault`, extractRefusal(422, '{"error"
 check(`a 422 with no reason at all is a fault`, extractRefusal(422, "") === "unavailable");
 check(`500 is a fault however it is worded`, extractRefusal(500, EMPTY_BODY) === "unavailable");
 check(`401 is a fault — an unauthenticated checker verifies nothing`, extractRefusal(401, "") === "unavailable");
+
+/**
+ * THE DOWN VERDICT HAS TO EXPIRE.
+ *
+ * Only a real check writes the health file, and while the checker reads as down the gate refuses
+ * the work that would run one — so a stale "down" is permanent. QDLZFL retried against a verdict
+ * built from six failures that were nineteen minutes old and already out of the window.
+ */
+const T0 = Date.parse("2026-09-05T22:17:00.000Z");
+const downAt = (times: string[]) => ({
+  ok: false,
+  checkedAt: times[times.length - 1],
+  reason: "3 checks failed in the last 30 minutes — x8ocr answered HTTP 422",
+  recentFailures: times,
+  consecutiveFailures: times.length,
+});
+const three = ["2026-09-05T22:15:00.000Z", "2026-09-05T22:16:00.000Z", "2026-09-05T22:17:00.000Z"];
+check(`down stays down while the failures are inside the window`, agedHealth(downAt(three), T0 + 60_000).ok === false);
+check(`down expires once the failures age out`, agedHealth(downAt(three), T0 + 31 * 60_000).ok === true);
+check(`the expired verdict drops the reason with it`, agedHealth(downAt(three), T0 + 31 * 60_000).reason === undefined);
+check(
+  `two failures left inside the window is not down`,
+  agedHealth(downAt(three), T0 + 29 * 60_000 + 30_000).ok === true,
+);
+// Expiring says "no longer known to be down", never "working" — only a real check says that.
+check(`expiring does not invent a success`, agedHealth({ ...downAt(three), lastOkAt: "2026-09-05T21:00:00.000Z" }, T0 + 31 * 60_000).lastOkAt === "2026-09-05T21:00:00.000Z");
+check(`an ok record is passed through untouched`, agedHealth({ ok: true, checkedAt: "2026-09-05T22:00:00.000Z" }, T0).ok === true);
 
 console.log(`\n${fail ? "✗" : "✓"} ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
