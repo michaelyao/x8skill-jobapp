@@ -85,14 +85,17 @@ GOG_KEYRING_PASSWORD=your_gog_keyring_passphrase
 Workday sign-ins produced "WORKDAY_EMAIL = (EMPTY)" and a confident wrong conclusion that the
 credentials were missing. The same pair doubles as the website's own login.
 
-**`GEMINI_API_KEY` in this file is currently x8note's key, not jobapp's own — replace it.** It was
+**`GEMINI_API_KEY` in this file came from x8note, and the candidate has confirmed it should
+work — verified here on a real `generateContent` call, not just a models list.** It was
 copied in from `x8note/.env` during another project's session and reported afterwards. The value it
 replaced was a 39-character `AIzaSy…` key that Google's API is said to have rejected as invalid —
 worth verifying independently before assuming the swap was necessary, because it is this project's
 credential and the evidence for it being dead came from the session that replaced it. It works, and it is the FALLBACK answering path (`callGemini`, used when
 airouter fails — 96 fills against airouter's 1608), so the exposure is bounded but real: usage
 bills to x8note, a quota hit there surfaces here as a failed fill, and a rotation there breaks this
-fallback silently. Issuing jobapp its own key is the fix; nothing in the code needs to change.
+fallback silently. So this is not a broken-credential problem; it is a shared-credential one, and whether that
+matters is the candidate's call, not something to "fix" unasked. Issuing jobapp its own key would
+decouple it; nothing in the code changes either way.
 
 `GOG_KEYRING_PASSWORD` is **not** a Google credential — it is the local passphrase encrypting
 gog's OAuth token file. It belongs in `.env` because launchd services do not read `~/.zshrc`:
