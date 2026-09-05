@@ -376,3 +376,37 @@ export async function getIncoming(): Promise<IncomingJob[]> {
     } satisfies IncomingJob;
   });
 }
+
+export interface WorkerHistoryRow {
+  id: string;
+  at: string;
+  name: string;
+  code?: string;
+  ok?: boolean;
+  message: string;
+}
+
+/**
+ * What the worker has finished, newest first.
+ *
+ * Reads the completed COMMAND records - one per job it opened, each carrying the outcome the
+ * worker reported. /runs used to read run directories for a summary.json that nothing writes any
+ * more, so it showed "No completed runs yet" while the worker was busy all day.
+ */
+export async function getWorkerHistory(limit = 50): Promise<WorkerHistoryRow[]> {
+  ensureEnv();
+  const done = await recentCommands(limit).catch(() => []);
+  return done
+    .map((c) => {
+      const any = c as Command & { code?: string; createdAt?: string; result?: { ok?: boolean; message?: string } };
+      return {
+        id: String(any.id ?? `${any.createdAt}-${any.name}`),
+        at: String(any.createdAt ?? ""),
+        name: String(any.name ?? ""),
+        ...(any.code ? { code: String(any.code) } : {}),
+        ...(typeof any.result?.ok === "boolean" ? { ok: any.result.ok } : {}),
+        message: String(any.result?.message ?? "").slice(0, 400),
+      } satisfies WorkerHistoryRow;
+    })
+    .sort((a, b) => b.at.localeCompare(a.at));
+}
