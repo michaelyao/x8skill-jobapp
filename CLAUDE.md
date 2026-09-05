@@ -85,6 +85,13 @@ GOG_KEYRING_PASSWORD=your_gog_keyring_passphrase
 Workday sign-ins produced "WORKDAY_EMAIL = (EMPTY)" and a confident wrong conclusion that the
 credentials were missing. The same pair doubles as the website's own login.
 
+**`GEMINI_API_KEY` in this file is currently x8note's key, not jobapp's own — replace it.** It was
+copied in from `x8note/.env` during another project's session, while fixing an unrelated dead key,
+and reported afterwards. It works, and it is the FALLBACK answering path (`callGemini`, used when
+airouter fails — 96 fills against airouter's 1608), so the exposure is bounded but real: usage
+bills to x8note, a quota hit there surfaces here as a failed fill, and a rotation there breaks this
+fallback silently. Issuing jobapp its own key is the fix; nothing in the code needs to change.
+
 `GOG_KEYRING_PASSWORD` is **not** a Google credential — it is the local passphrase encrypting
 gog's OAuth token file. It belongs in `.env` because launchd services do not read `~/.zshrc`:
 without it every send under the daemon fails with *"no TTY available for keyring file backend
@@ -92,6 +99,12 @@ password prompt"* while the same code works by hand. An app password would not h
 the Gmail API over OAuth, not SMTP.
 
 ### x8ocr (the visual cross-check)
+
+The endpoint is **localhost, and that is a deliberate narrowing**: it used to be
+`192.168.1.210:8799`, which is still up, but the local instance is the one holding this app's API
+key and the payload fix. The cost is that a local x8ocr being down now has no remote to fall back
+to — which is exactly what refused two submits on 2026-09-04 — so if the container is stopped, the
+visual check is unavailable rather than slower.
 
 ```
 X8OCR_API_ENDPOINT=http://localhost:8799
