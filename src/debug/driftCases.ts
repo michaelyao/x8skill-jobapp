@@ -17,6 +17,39 @@ interface Case {
 }
 
 const CASES: Case[] = [
+  /**
+   * A RELABELLED QUESTION IS NOT A CHANGED ANSWER.
+   *
+   * Pony.ai came back with seventeen "differences", not one of which was a different value. Our own
+   * label derivation had changed under a pending approval - "Education - School" became "* School"
+   * - so every answer was counted twice: once as a question that was not approved, once as an
+   * answer that had vanished. The candidate had approved it repeatedly and checked the screenshot
+   * himself, and the system kept handing it back.
+   */
+  {
+    name: "our own code renamed the question - same value, must submit (the ZNSIQU case)",
+    approved: [a("Education - School", "Carnegie Mellon University"), a("Education - Field of Study", "Computer and Information Science")],
+    now: [a("* School", "Carnegie Mellon University"), a("Field of study (Optional)", "Computer and Information Science")],
+    submit: true,
+  },
+  {
+    name: "renamed AND a different value - still blocks",
+    approved: [a("Education - School", "Carnegie Mellon University")],
+    now: [a("* School", "Stanford University")],
+    submit: false,
+  },
+  {
+    name: "a repeated Yes is never paired away by value alone",
+    approved: [a("Are you 18 or over?", "Yes"), a("Do you require sponsorship?", "Yes")],
+    now: [a("Some question we invented", "Yes")],
+    submit: false,
+  },
+  {
+    name: "a genuinely new answer still blocks",
+    approved: [a("Name", "Nathan Yao")],
+    now: [a("Name", "Nathan Yao"), a("Salary expectation", "100000")],
+    submit: false,
+  },
   {
     name: "unchanged form — the 99% case, must submit without a murmur",
     approved: [a("Full name *", "Nathan Yao"), a("GPA*", "3.7")],

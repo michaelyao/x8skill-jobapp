@@ -103,6 +103,38 @@ export function compareToApproved(approved: FilledAnswer[], current: FilledAnswe
       continue;
     }
 
+    /**
+     * A RELABELLED QUESTION IS NOT A CHANGED ANSWER.
+     *
+     * The pairing above needs a 25-character common prefix, and OUR OWN label derivation changed
+     * under a pending approval: "Education — School" became "* School", "Education — Field of
+     * Study" became "Field of study (Optional)". Same question, same value, no prefix in common —
+     * so one answer was reported TWICE, once as a question that was not approved and once as an
+     * answer that had vanished. Pony.ai came back with seventeen "differences" of which zero were
+     * a different value, after the candidate had approved it repeatedly and checked the screenshot
+     * himself.
+     *
+     * The comment above is right: the VALUE is the thing he approved, and the label is our
+     * bookkeeping. So when the value is IDENTICAL and unambiguous — it appears exactly once among
+     * the answers still unaccounted for on each side — pair them regardless of what the label now
+     * says. Nothing new goes into the form; the same string goes into the same box.
+     *
+     * Unambiguous is the whole safety of it. A repeated "Yes" cannot be paired this way, because
+     * moving a Yes from one question to another WOULD change what is submitted, so those still
+     * have to match by label and still block.
+     */
+    const remaining = approved.filter((a) => !consumed.has(a) && a.value);
+    const sameValue = remaining.filter((a) => valueKey(a.value) === valueKey(answer.value));
+    const alsoHereNow = current.filter(
+      (c) => c !== answer && c.value && valueKey(c.value) === valueKey(answer.value),
+    );
+    if (sameValue.length === 1 && alsoHereNow.length === 0 && valueKey(answer.value).length >= 4) {
+      consumed.add(sameValue[0]);
+      matched += 1;
+      rewordedButSame.push({ approvedLabel: sameValue[0].label, nowLabel: answer.label, value: answer.value });
+      continue;
+    }
+
     drifts.push({ label: answer.label, now: answer.value, kind: "question not approved" });
   }
 
