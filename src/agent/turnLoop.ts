@@ -436,6 +436,42 @@ export async function runApplication(
               ...(opts.runDir ? { runDir: opts.runDir } : {}),
             })
             .catch(() => "");
+          /**
+           * AND THEN TRY THE REMEDY, HERE, WHILE THE PAGE IS STILL OPEN.
+           *
+           * "once you fail, immediately kick off the study mode, which will involve LLM, and
+           * figure out why it fail, and try to fix it." A diagnosis filed away for later is not a
+           * fix, and a retry that carries no new question fails the same way - which is what four
+           * GLDUAY retries did.
+           *
+           * The remedy comes from a FIXED set the driver already knows how to perform; the model
+           * only chooses among them. Then the fill is attempted again and its own verification
+           * decides - so a remedy that did not help is reported as still stuck, never as recovered.
+           */
+          const remedy = driver.lastRemedy;
+          if (remedy && remedy !== "none" && driver.applyRemedy) {
+            const applied = await driver.applyRemedy(root, field, remedy).catch(() => false);
+            if (applied) {
+              const second = await withDeadline(
+                driver.fill(root, field, answer),
+                FIELD_TIMEOUT_MS,
+                field.label,
+              ).catch(() => false);
+              if (second) {
+                console.log(`    ✓ recovered after ${remedy}: ${field.label.slice(0, 50)}`);
+                filled.push(`${field.label}: ${answer.value}`);
+                filledLabels.add(field.label);
+                answersByLabel.set(field.label, {
+                  label: field.label,
+                  type: field.type,
+                  value: answer.value,
+                  widget: field.widget,
+                });
+                continue;
+              }
+              console.log(`    ✗ still stuck after ${remedy}: ${field.label.slice(0, 50)}`);
+            }
+          }
         }
       }
     }

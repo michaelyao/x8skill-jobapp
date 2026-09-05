@@ -4,7 +4,7 @@ import { TRANSCRIPT_PATH } from "../../config.js";
 import type { Locator, Page } from "playwright";
 import { loadSkillPicks, loadSkillRemovals, pillsToRemove, type SkillPill } from "../../knowledge/skillPlan.js";
 import { datePartOf, datePartValue } from "../../core/dateParts.js";
-import { explainStuckField } from "../fieldStudy.js";
+import { explainStuckField, type Remedy } from "../fieldStudy.js";
 import { recordFieldNote } from "../../knowledge/fieldNotes.js";
 import {
   chooseOfferedOption,
@@ -378,8 +378,10 @@ export abstract class GenericDriver implements AtsDriver {
     const facts = await control.evaluate(DESCRIBE).catch(() => "");
     if (!facts) return "";
 
-    const note = await explainStuckField(field.label, String(facts)).catch(() => "");
-    const line = note || `no diagnosis; the raw facts were ${String(facts).slice(0, 200)}`;
+    const diagnosis = await explainStuckField(field.label, String(facts)).catch(
+      () => ({ why: "the study itself failed", remedy: "none" as const }),
+    );
+    const line = `${diagnosis.why} → try ${diagnosis.remedy}`;
     console.log(`    🔎 studied "${field.label.slice(0, 46)}": ${line.slice(0, 200)}`);
     if (shot) console.log(`       picture of the control: ${shot}`);
     await recordFieldNote({
@@ -389,7 +391,66 @@ export abstract class GenericDriver implements AtsDriver {
       at: new Date().toISOString(),
       ...(context.code ? { code: context.code } : {}),
     }).catch(() => undefined);
+    this.lastRemedy = diagnosis.remedy;
     return line;
+  }
+
+  /** The remedy the last study chose, for the caller to act on. */
+  lastRemedy: Remedy = "none";
+
+  /**
+   * TRY THE REMEDY THE STUDY CHOSE, then let the caller re-fill and verify.
+   *
+   * Only the fixed set of actions - each one already used elsewhere in this file and each one
+   * checked by the re-fill that follows. The model picks WHICH to try; it never supplies the
+   * action itself.
+   */
+  async applyRemedy(root: Root, field: FieldSpec, remedy: Remedy): Promise<boolean> {
+    const control = root.locator(field.key).first();
+    if (!(await control.count().catch(() => 0))) return false;
+    const page = control.page();
+    switch (remedy) {
+      case "click-label": {
+        const id = await control.getAttribute("id").catch(() => null);
+        const label = id ? root.locator(`label[for="${id.replace(/"/g, '\\"')}"]`).first() : undefined;
+        if (label && (await label.count().catch(() => 0))) {
+          await label.scrollIntoViewIfNeeded().catch(() => undefined);
+          await label.click().catch(() => undefined);
+          return true;
+        }
+        return false;
+      }
+      case "click-parent":
+        await control.locator("xpath=..").click().catch(() => undefined);
+        return true;
+      case "dismiss-overlay": {
+        // Whatever is covering it: close a prompt if one is open, then click inert space.
+        await this.clearOverlayForRemedy(root).catch(() => undefined);
+        return true;
+      }
+      case "scroll-into-view":
+        await control.scrollIntoViewIfNeeded().catch(() => undefined);
+        await page.waitForTimeout(200);
+        return true;
+      case "type-instead-of-click":
+        await control.click().catch(() => undefined);
+        await control.pressSequentially(" ", { delay: 30 }).catch(() => undefined);
+        await control.press("Backspace").catch(() => undefined);
+        return true;
+      case "force-click":
+        await control.click({ force: true }).catch(() => undefined);
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  /** Escape, then a click on inert space - the generic form of "get whatever is on top out of the way". */
+  protected async clearOverlayForRemedy(root: Root): Promise<void> {
+    const page = root as Page;
+    await page.keyboard?.press("Escape").catch(() => undefined);
+    await page.mouse?.click(6, Math.round((page.viewportSize()?.height ?? 800) / 2)).catch(() => undefined);
+    await page.waitForTimeout(250);
   }
 
   async submissionConfirmed(root: Root): Promise<boolean> {

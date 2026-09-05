@@ -180,6 +180,13 @@ export interface AtsDriver {
     field: FieldSpec,
     context: { ats: string; code?: string; runDir?: string },
   ): Promise<string>;
+  /** The remedy the last study chose, from a fixed set. See fieldStudy.REMEDIES. */
+  lastRemedy?: string;
+  /**
+   * Perform one of those remedies. The model chooses WHICH; the driver owns the action, and the
+   * re-fill that follows is what decides whether it worked.
+   */
+  applyRemedy?(root: Root, field: FieldSpec, remedy: string): Promise<boolean>;
   /** Click a repeated section's "Add" until it holds `wanted` rows. See WorkdayDriver. */
   expandRepeatedBlocks?(root: Root, wanted: number): Promise<{ section: string; from: number; to: number }[]>;
   /**
