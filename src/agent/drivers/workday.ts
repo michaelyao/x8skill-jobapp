@@ -1232,16 +1232,62 @@ export class WorkdayDriver extends GenericDriver {
       .catch(() => 0);
     if (!expanded) return;
 
-    const heading = root.locator('h2, h3, [data-automation-id="jobPostingHeader"]').first();
+    /**
+     * DISMISS IT THE WAY A PERSON WOULD: click somewhere else.
+     *
+     * The candidate's point, and the research agrees. Nobody closes a dropdown with Escape; they
+     * click off it. And the alternatives are known to be unreliable: react-select's own onBlur
+     * fires only if the menu got focus first (JedWatson/react-select#2239), and Playwright's
+     * focus() has itself been reported to close and reopen these widgets
+     * (microsoft/playwright#14254). Clicking outside is what the component actually listens for.
+     *
+     * The hard part is WHERE. Clicking an element can activate it - which is why the earlier
+     * heading click was the safest thing I could think of, and why a blind body click is not
+     * acceptable on a live application form. So the point is CHOSEN by asking the page: walk a few
+     * candidate coordinates in the margins and take the first whose topmost element is inert (the
+     * document, the body, or a plain container with no role, no handler-bearing tag and not part
+     * of the menu). If no such point exists, nothing is clicked.
+     */
+    const page = root as Page;
+    const blankPoint = await page
+      .evaluate(`(() => {
+        const inert = (el) => {
+          if (!el) return false;
+          const tag = el.tagName.toLowerCase();
+          if (["html", "body"].includes(tag)) return true;
+          if (["a", "button", "input", "select", "textarea", "label", "svg", "path"].includes(tag)) return false;
+          if (el.getAttribute("role")) return false;
+          if (el.closest('[role="listbox"], [role="option"], [data-automation-id="activeListContainer"]')) return false;
+          if (el.onclick) return false;
+          return true;
+        };
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        const candidates = [[6, Math.round(h / 2)], [w - 6, Math.round(h / 2)], [6, Math.round(h / 4)], [Math.round(w / 2), 4]];
+        for (const [x, y] of candidates) {
+          const el = document.elementFromPoint(x, y);
+          if (inert(el)) return JSON.stringify({ x: x, y: y });
+        }
+        return "";
+      })()`)
+      .catch(() => "");
+
     for (let attempt = 0; attempt < 3; attempt += 1) {
       if (!(await menu.isVisible().catch(() => false))) return;
-      if (attempt === 1) {
-        await (root as Page).keyboard?.press("Tab").catch(() => undefined);
-      } else if (attempt === 2 && (await heading.count().catch(() => 0))) {
-        // Inert by construction: a heading has nothing to activate.
-        await heading.click({ position: { x: 2, y: 2 } }).catch(() => undefined);
+      if (attempt === 0 && blankPoint) {
+        // What a person does. The coordinate was verified inert above, so this cannot activate
+        // anything on the form.
+        const { x, y } = JSON.parse(String(blankPoint)) as { x: number; y: number };
+        await page.mouse.click(x, y).catch(() => undefined);
+      } else if (attempt === 1) {
+        // No click at all: take focus off the widget from inside the page.
+        await page
+          .evaluate('(() => { const el = document.activeElement; if (el && el.blur) el.blur(); return true; })()')
+          .catch(() => undefined);
+      } else {
+        // Last, because it is the one thing people do not do and some widgets ignore it.
+        await page.keyboard?.press("Escape").catch(() => undefined);
       }
-      await (root as Page).keyboard?.press("Escape").catch(() => undefined);
       const gone = await menu.waitFor({ state: "hidden", timeout: 600 }).then(
         () => true,
         () => false,
