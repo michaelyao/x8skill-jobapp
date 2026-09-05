@@ -34,6 +34,8 @@ import type { FilteredJob } from "./types.js";
 import { parseGuidelines } from "./knowledge/guidelines.js";
 import { GUIDELINES_PATH } from "./config.js";
 import fsp from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { ROOT_DIR } from "./config.js";
 
 /**
  * The worker daemon. It owns Chrome and is the ONLY process that writes application state;
@@ -778,11 +780,45 @@ async function tick(): Promise<void> {
     console.log("worker: idle — releasing the browser profile.");
     await closeBrowser();
   }
-  await writeWorkerStatus({ state: context ? "busy" : "idle", activity: context ? undefined : "waiting for commands" });
+  /**
+   * HAS THE TREE MOVED UNDER US? tsx loads once, so a commit made after startup changes nothing
+   * until a restart. Three fixes were reported as live today while this process ran older code.
+   * Checked here, on the idle path, where it costs nothing and is seen before the next job.
+   */
+  const nowHead = gitHead();
+  const stale = Boolean(loadedCommit && nowHead && nowHead !== loadedCommit);
+  if (stale && !staleAnnounced) {
+    staleAnnounced = true;
+    console.log(
+      `worker: ⚠ running code ${loadedCommit} but the tree is at ${nowHead} — restart to pick up the change`,
+    );
+  }
+  await writeWorkerStatus({ state: context ? "busy" : "idle", activity: context ? undefined : "waiting for commands", codeStale: stale });
+}
+
+/** The commit this process loaded, and whether the mismatch has been announced. */
+let loadedCommit = "";
+let staleAnnounced = false;
+
+/** The current commit, short form. Empty when git cannot answer - never a reason to fail. */
+function gitHead(): string {
+  try {
+    return execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: ROOT_DIR, encoding: "utf8" }).trim();
+  } catch {
+    return "";
+  }
 }
 
 async function main(): Promise<void> {
-  console.log(`worker: started (pid ${process.pid}), tick ${TICK_MS}ms`);
+  /**
+   * THE COMMIT THIS PROCESS IS RUNNING. tsx loads the code once, so a commit made afterwards
+   * changes nothing until a restart - and three fixes were reported as live today while the worker
+   * was still on older code. Recorded at startup and compared on every tick, so the mismatch is
+   * visible instead of assumed.
+   */
+  const loadedAt = gitHead();
+  console.log(`worker: started (pid ${process.pid}), tick ${TICK_MS}ms, code ${loadedCommit || "unknown"}`);
+  await writeWorkerStatus({ codeVersion: loadedCommit, codeStale: false }).catch(() => undefined);
 const freed = await releaseOrphanedClaims();
 if (freed.length) console.log(`worker: released ${freed.length} command(s) a previous run had claimed but never finished.`);
   await writeWorkerStatus({ state: "idle", activity: "waiting for commands" });

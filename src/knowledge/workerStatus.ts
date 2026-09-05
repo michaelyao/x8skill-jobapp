@@ -25,6 +25,19 @@ export interface WorkerStatus {
   lastTickAt: string; // ISO — staleness check: no tick for a while means the worker is down
   lastError?: string;
   pid: number;
+  /**
+   * The commit the worker LOADED, and whether the tree has moved since.
+   *
+   * Three times in one session a fix was committed, reported as live, and never ran: tsx loads the
+   * code once at startup, so a commit changes nothing until the worker is restarted. The option
+   * chooser and study mode were committed fifteen minutes AFTER the worker that was meant to be
+   * using them started, and their markers appear zero times in the log.
+   *
+   * Making the version part of the heartbeat turns "is the fix live?" into something checkable
+   * rather than something I assert.
+   */
+  codeVersion?: string;
+  codeStale?: boolean;
   /** Does the worker currently hold the browser? A manual CLI run must not start meanwhile. */
   holdsBrowserLock: boolean;
 }
