@@ -187,6 +187,10 @@ export interface AtsDriver {
    * re-fill that follows is what decides whether it worked.
    */
   applyRemedy?(root: Root, field: FieldSpec, remedy: string): Promise<boolean>;
+  /** A remedy already known to work for this field on this ATS, from data/field-notes.json. */
+  knownRemedy?(ats: string, label: string): Promise<string | undefined>;
+  /** Record whether a remedy recovered the field, so the note is worth reading next time. */
+  recordRemedyOutcome?(ats: string, label: string, remedy: string, worked: boolean): Promise<void>;
   /** Click a repeated section's "Add" until it holds `wanted` rows. See WorkdayDriver. */
   expandRepeatedBlocks?(root: Root, wanted: number): Promise<{ section: string; from: number; to: number }[]>;
   /**

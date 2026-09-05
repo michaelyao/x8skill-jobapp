@@ -5,7 +5,7 @@ import type { Locator, Page } from "playwright";
 import { loadSkillPicks, loadSkillRemovals, pillsToRemove, type SkillPill } from "../../knowledge/skillPlan.js";
 import { datePartOf, datePartValue } from "../../core/dateParts.js";
 import { explainStuckField, type Remedy } from "../fieldStudy.js";
-import { recordFieldNote } from "../../knowledge/fieldNotes.js";
+import { noteFor, readFieldNotes, recordFieldNote } from "../../knowledge/fieldNotes.js";
 import {
   chooseOfferedOption,
   hearAboutUsPlan,
@@ -389,6 +389,7 @@ export abstract class GenericDriver implements AtsDriver {
       label: field.label,
       note: line.slice(0, 500),
       at: new Date().toISOString(),
+      remedy: diagnosis.remedy,
       ...(context.code ? { code: context.code } : {}),
     }).catch(() => undefined);
     this.lastRemedy = diagnosis.remedy;
@@ -397,6 +398,37 @@ export abstract class GenericDriver implements AtsDriver {
 
   /** The remedy the last study chose, for the caller to act on. */
   lastRemedy: Remedy = "none";
+
+  /**
+   * WHAT WE ALREADY LEARNED ABOUT THIS FIELD ON THIS ATS.
+   *
+   * Consulted BEFORE the study, because the same tenant asks the same question of every applicant
+   * and its widgets do not change between Tuesday and Wednesday. A note that says "click-label
+   * recovered it" turns the next encounter into one action; a note that says a remedy did not help
+   * stops it being tried again. Both save a model call, and more importantly they stop the same
+   * discovery being made twice.
+   */
+  async knownRemedy(ats: string, label: string): Promise<Remedy | undefined> {
+    const notes = await readFieldNotes().catch(() => []);
+    const note = noteFor(notes, ats, label);
+    if (!note?.remedy || note.remedy === "none") return undefined;
+    if (note.worked === false) return undefined; // tried, did not help - do not repeat it
+    return note.remedy as Remedy;
+  }
+
+  /** Record whether the remedy actually recovered the field, so the note is worth reading. */
+  async recordRemedyOutcome(ats: string, label: string, remedy: string, worked: boolean): Promise<void> {
+    const notes = await readFieldNotes().catch(() => []);
+    const previous = noteFor(notes, ats, label);
+    await recordFieldNote({
+      ats,
+      label,
+      note: previous?.note ?? `${remedy} was tried here`,
+      at: new Date().toISOString(),
+      remedy,
+      worked,
+    }).catch(() => undefined);
+  }
 
   /**
    * TRY THE REMEDY THE STUDY CHOSE, then let the caller re-fill and verify.

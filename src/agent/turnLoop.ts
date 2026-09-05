@@ -430,6 +430,34 @@ export async function runApplication(
          */
         if (driver.studyFailedField && (field.required || field.groupRequired) && !studied.has(field.label)) {
           studied.add(field.label);
+          const ats = driver.type ?? "unknown";
+          /**
+           * WHAT DID WE LEARN LAST TIME? Asked before the study, because the same tenant asks the
+           * same question of every applicant and its widgets do not change overnight. A note
+           * saying "click-label recovered it" makes this one action instead of a model call and
+           * four guesses; a note saying a remedy did not help stops it being repeated.
+           */
+          const learned = driver.knownRemedy ? await driver.knownRemedy(ats, field.label).catch(() => undefined) : undefined;
+          if (learned && driver.applyRemedy) {
+            console.log(`    📓 seen before on ${ats}: ${learned} recovered "${field.label.slice(0, 40)}" — trying that first`);
+            const ok = await driver.applyRemedy(root, field, learned).catch(() => false);
+            const again = ok
+              ? await withDeadline(driver.fill(root, field, answer), FIELD_TIMEOUT_MS, field.label).catch(() => false)
+              : false;
+            await driver.recordRemedyOutcome?.(ats, field.label, learned, Boolean(again)).catch(() => undefined);
+            if (again) {
+              console.log(`    ✓ recovered from what we learned before: ${field.label.slice(0, 46)}`);
+              filled.push(`${field.label}: ${answer.value}`);
+              filledLabels.add(field.label);
+              answersByLabel.set(field.label, {
+                label: field.label,
+                type: field.type,
+                value: answer.value,
+                widget: field.widget,
+              });
+              continue;
+            }
+          }
           await driver
             .studyFailedField(root, field, {
               ats: driver.type ?? "unknown",
@@ -457,6 +485,9 @@ export async function runApplication(
                 FIELD_TIMEOUT_MS,
                 field.label,
               ).catch(() => false);
+              await driver.recordRemedyOutcome?.(driver.type ?? "unknown", field.label, remedy, Boolean(second)).catch(
+                () => undefined,
+              );
               if (second) {
                 console.log(`    ✓ recovered after ${remedy}: ${field.label.slice(0, 50)}`);
                 filled.push(`${field.label}: ${answer.value}`);

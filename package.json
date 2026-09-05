@@ -46,7 +46,8 @@
     "test:chooser": "tsx src/debug/listChooserCases.ts",
     "test:guidelines": "tsx src/debug/guidelineCases.ts",
     "test:dupes": "tsx src/debug/duplicateEntryCases.ts",
-    "test:drift": "tsx src/debug/driftCases.ts"
+    "test:drift": "tsx src/debug/driftCases.ts",
+    "test:notes": "tsx src/debug/fieldNoteCases.ts"
   },
   "repository": {
     "type": "git",

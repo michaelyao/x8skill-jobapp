@@ -611,6 +611,16 @@ model and applied unseen is the false success everything else here guards agains
 `guidelines.txt` (general, top layer); an observation about one field on one ATS goes in
 `data/field-notes.json`.
 
+**And the note is READ BEFORE the next study, or it is just a diary.** A note records the remedy
+that was tried AND whether the field then took its value. On the next refusal the driver looks it
+up first (`knownRemedy`): a remedy that worked is tried immediately — one action instead of a model
+call and four guesses — and one that did NOT work is never tried again. The outcome is written back
+every time, so the note improves rather than ossifies. Matching is exact first, then the same ATS
+with a label differing only in the ways labels differ between runs (a required marker, an
+`(Optional)`, a prefix our own reader added). **Never across ATSes**: how a control behaves is a
+property of that tenant's widget, and a Workday observation says nothing about the same question on
+Greenhouse. Cases: `npm run test:notes`.
+
 ## Job identity, storage and failure modes
 
 The reasoning, the measurements and the per-bug history live in **[DESIGN.md](DESIGN.md)** —
