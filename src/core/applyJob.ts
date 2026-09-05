@@ -621,7 +621,7 @@ export async function applyToJob(
     await scrollToTop(jobPage);
     const shotKind = await captureFormShot(jobPage, shotPath);
     console.log(
-      `  Review screenshot: ${shotPath}${shotKind === "frame" ? " (the form is in an embedded frame — photographed the frame)" : ""}`,
+      `  Review screenshot: ${shotPath}${shotKind === "tall" ? "" : " (fullPage fallback — an embedded form may be missing from it)"}`,
     );
 
     /**

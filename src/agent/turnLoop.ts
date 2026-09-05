@@ -4,6 +4,7 @@ import { boxesAreExact, textIsLiteral, unansweredOnScreen } from "../knowledge/s
 import type { Page } from "playwright";
 import type { DocumentUploads, HistoryOutcome, Agent, AgentContext, AtsDriver, FieldSpec, FilledAnswer } from "./types.js";
 import { ocrLayoutTiled } from "../knowledge/visualCheck.js";
+import { captureFormShot, captureTallTiles } from "./formShot.js";
 import { planTiles } from "../knowledge/tiles.js";
 import { judgePageLanguage } from "../core/pageLanguage.js";
 import { isExclusiveGroup } from "../core/fieldGroups.js";
@@ -588,7 +589,7 @@ export async function runApplication(
         })()`)
         .catch(() => undefined);
       await page.waitForTimeout(250);
-      await page.screenshot({ path: shot, fullPage: true });
+      await captureFormShot(page, shot);
       pageHeight = Number(
         await page.evaluate(
           "(() => Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0))()",
@@ -630,6 +631,17 @@ export async function runApplication(
      */
     const shootTiles = async (viewportAtATime: boolean): Promise<Array<string | null>> => {
       const plan = viewportAtATime ? planTiles(pageHeight || 1, viewportHeight) : planTiles(pageHeight || 1);
+      if (!viewportAtATime) {
+        /**
+         * Cut the slices out of a capture taken with the WHOLE DOCUMENT on screen — see formShot.
+         * An embedded cross-origin form paints only where the viewport is, so slices clipped out
+         * of an ordinary fullPage capture hold white where the application should be.
+         */
+        const tall = await captureTallTiles(page, plan, (i) =>
+          path.join(opts.runDir!, `page-${pagesVerified}-slice${i + 1}.png`),
+        );
+        if (tall) return tall;
+      }
       const out: Array<string | null> = [];
       for (const [i, tile] of plan.entries()) {
         if (!viewportAtATime && plan.length === 1) {
