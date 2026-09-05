@@ -602,50 +602,110 @@ export async function runApplication(
         .evaluate("(() => document.documentElement.clientWidth || window.innerWidth)()")
         .catch(() => 1440),
     );
+    const viewportHeight = page.viewportSize()?.height ?? 1000;
+
     /**
-     * EVERY SLICE IS SHOT BEFORE ANY OF THEM IS READ.
+     * PHOTOGRAPH THE PAGE, THEN CHECK THE PHOTOGRAPHS ARE OF THE PAGE.
      *
-     * The slices used to be captured inside the OCR loop, so slice N+1 was taken a whole engine
-     * ladder after slice N — 30 to 60 seconds. The page does not hold still for that. On C3.ai
-     * QDLZFL the full-page shot has the application form rendered at y=5300 while the slice
-     * covering y=3760-5760, taken a minute later, is 1440x2000 of pure white; three of the four
-     * slices on XHWWCQ went the same way while the full-page shot of that page had content all the
-     * way down. x8ocr then answered 422 EMPTY, correctly, and we read its answer as an outage.
+     * Two passes, and the second only when the first gives us reason.
      *
-     * Shot back to back they are all the same page, and the same page the review screenshot shows.
+     * FIRST PASS — one full-page capture clipped into tall slices. Correct and cheap for a form
+     * served in the top document, which is every ATS we drive directly.
+     *
+     * SECOND PASS — a viewport at a time, scrolling to each band first. This is for a form that
+     * is NOT in the top document: C3.ai serves the Greenhouse form as a cross-origin frame
+     * injected at runtime, Chromium renders that out of process, and a capture beyond the viewport
+     * leaves it WHITE. QDLZFL's full-page shot is 1440x9423 with 5000px of nothing where the
+     * application is, and the slices disagree with that same shot band for band even when all of
+     * them are taken inside one second: slice2 has content where the full page is blank, slice5 is
+     * blank where the full page is at its densest. There is no offset to correct — the frame paints
+     * wherever the viewport is at the moment of the capture. What the viewport shows is the only
+     * thing that can be trusted, so the fallback photographs the screen.
+     *
+     * The trigger is EVIDENCE, not a guess about the page: a slice x8ocr read and found no text in.
+     * A heuristic (does this page hold a big cross-origin iframe?) could not be checked here —
+     * headless, and without the session, C3.ai never renders the embed at all — and a detector
+     * nobody can test is worse than a signal we already receive. Blankness also has causes beyond
+     * iframes, and this catches those too.
      */
-    const tiles = planTiles(pageHeight || 1);
-    const files: Array<string | null> = [];
-    for (const [i, tile] of tiles.entries()) {
-      if (tiles.length === 1) {
-        files.push(shot); // already readable in one piece; do not re-shoot
-        break;
+    const shootTiles = async (viewportAtATime: boolean): Promise<Array<string | null>> => {
+      const plan = viewportAtATime ? planTiles(pageHeight || 1, viewportHeight) : planTiles(pageHeight || 1);
+      const out: Array<string | null> = [];
+      for (const [i, tile] of plan.entries()) {
+        if (!viewportAtATime && plan.length === 1) {
+          out.push(shot); // already readable in one piece; do not re-shoot
+          break;
+        }
+        const file = path.join(
+          opts.runDir!,
+          `page-${pagesVerified}-slice${i + 1}${viewportAtATime ? "-vp" : ""}.png`,
+        );
+        try {
+          if (viewportAtATime) {
+            await page.evaluate(`(() => window.scrollTo(0, ${tile.offsetY}))()`).catch(() => undefined);
+            await page.waitForTimeout(400);
+            const scrolled = Number(
+              await page.evaluate("(() => window.scrollY)()").catch(() => tile.offsetY),
+            );
+            // Clip VIEWPORT-relative here, which is the whole point: what the viewport shows is
+            // what has actually painted. At the bottom the page stops scrolling, so the band sits
+            // lower in the viewport than its offset suggests.
+            const top = Math.max(0, Math.min(tile.offsetY - scrolled, viewportHeight - 1));
+            const height = Math.max(1, Math.min(tile.height, viewportHeight - top));
+            await page.screenshot({ path: file, clip: { x: 0, y: top, width: width || 1440, height } });
+          } else {
+            /**
+             * fullPage IS REQUIRED FOR THE CLIP TO MEAN WHAT WE INTEND.
+             *
+             * Without it Playwright clips to the VIEWPORT, so a tile at y=2000 on a 1000px
+             * viewport is entirely outside the image: the capture is empty or invalid, and x8ocr
+             * rejects it. That is what stopped ID.me being submitted twice after the candidate
+             * approved it — "the visual checker did not answer" was the checker refusing our
+             * picture, not the checker being down. Verified against Playwright 1.58 on a 10400px
+             * page: fullPage with a clip at y=4000 returns exactly the band at y=4000.
+             *
+             * EVERY SLICE IS SHOT BEFORE ANY OF THEM IS READ. They used to be captured inside the
+             * OCR loop, an engine ladder apart — 30 to 60 seconds — and the page does not hold
+             * still for that.
+             */
+            await page.screenshot({
+              path: file,
+              fullPage: true,
+              clip: { x: 0, y: tile.offsetY, width: width || 1440, height: tile.height },
+            });
+          }
+          out.push(file);
+        } catch {
+          out.push(null);
+        }
       }
-      const file = path.join(opts.runDir!, `page-${pagesVerified}-slice${i + 1}.png`);
-      try {
-        /**
-         * fullPage IS REQUIRED FOR THE CLIP TO MEAN WHAT WE INTEND.
-         *
-         * Without it Playwright clips to the VIEWPORT, so a tile at y=2000 on a 1000px viewport is
-         * entirely outside the image: the capture is empty or invalid, and x8ocr rejects it with
-         * HTTP 422. That is what stopped ID.me being submitted twice after the candidate approved
-         * it - "the visual checker did not answer" was the checker refusing our picture, not the
-         * checker being down. Verified against Playwright 1.58 on a 10400px page: fullPage + a clip
-         * at y=4000 returns exactly the band at y=4000.
-         */
-        await page.screenshot({
-          path: file,
-          fullPage: true,
-          clip: { x: 0, y: tile.offsetY, width: width || 1440, height: tile.height },
-        });
-        files.push(file);
-      } catch {
-        files.push(null);
-      }
-    }
-    const layout = await ocrLayoutTiled(async (_tile, i) => files[i] ?? null, pageHeight || 1).catch(
+      return out;
+    };
+
+    const firstFiles = await shootTiles(false);
+    let layout = await ocrLayoutTiled(async (_tile, i) => firstFiles[i] ?? null, pageHeight || 1).catch(
       () => null,
     );
+    if (layout && !layout.unavailable && (layout.blankTiles ?? 0) > 0) {
+      console.log(
+        `  [ocr] ${layout.blankTiles} of ${layout.tileCount} slice(s) held no text — re-reading the page a viewport at a time`,
+      );
+      const vpFiles = await shootTiles(true);
+      await page.evaluate("(() => window.scrollTo(0, 0))()").catch(() => undefined);
+      const second = await ocrLayoutTiled(
+        async (_tile, i) => vpFiles[i] ?? null,
+        pageHeight || 1,
+        viewportHeight,
+      ).catch(() => null);
+      // Keep whichever pass actually saw the page. The second is normally the fuller one; if it
+      // is not, the first was fine and the blank slices were honest white space.
+      if (second && !second.unavailable && second.blocks.length > layout.blocks.length) {
+        console.log(
+          `  [ocr] the viewport pass read ${second.blocks.length} blocks against ${layout.blocks.length} — using it`,
+        );
+        layout = second;
+      }
+    }
     /**
      * A CHECKER THAT IS DOWN STOPS THE RUN.
      *

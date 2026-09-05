@@ -92,6 +92,13 @@ export interface LayoutResult {
    * genuinely has no text is not a reason to stop, and a checker that is down is.
    */
   unavailable?: string;
+  /**
+   * How many slices were read but held no text at all, and how many there were. A page whose form
+   * did not paint reads exactly like a page with a lot of white space, and the caller is the only
+   * one that can do anything about it — see the second, faithful pass in turnLoop.
+   */
+  blankTiles?: number;
+  tileCount?: number;
 }
 
 /**
@@ -147,8 +154,13 @@ export function extractRefusal(status: number, body: string): "blank" | "unavail
 export async function ocrLayoutTiled(
   shoot: (tile: Tile, index: number) => Promise<string | null>,
   pageHeight: number,
+  /**
+   * Shorter tiles for a page that has to be photographed a viewport at a time — see the framed
+   * capture in turnLoop. Omitted, tiles are as tall as the reader can comfortably take.
+   */
+  maxTileHeight?: number,
 ): Promise<LayoutResult | null> {
-  const tiles = planTiles(pageHeight);
+  const tiles = maxTileHeight ? planTiles(pageHeight, maxTileHeight) : planTiles(pageHeight);
   const perTile: Array<{ tile: Tile; blocks: ScreenBlock[] }> = [];
   const texts: string[] = [];
   let capability: ScreenCapability | undefined;
@@ -202,7 +214,7 @@ export async function ocrLayoutTiled(
     return { unavailable: `the capture was blank — ${perTile.length} slice(s) held no text` } as LayoutResult;
   }
   if (blankTiles) {
-    console.log(`  [ocr] ${blankTiles} of ${tiles.length} slice(s) held no text — blank page regions, not a failure`);
+    console.log(`  [ocr] ${blankTiles} of ${tiles.length} slice(s) held no text`);
   }
   if (perTile.length < tiles.length) {
     // Say the COVERAGE, not just the count: "1 of 5" is 20% of the form, and a clean verdict on
@@ -216,7 +228,7 @@ export async function ocrLayoutTiled(
   // The callers that want plain text join the blocks themselves; `texts` is kept only to report
   // how much was read.
   void texts;
-  return { blocks: mergeTileBlocks(perTile), capability };
+  return { blocks: mergeTileBlocks(perTile), capability, blankTiles, tileCount: tiles.length };
 }
 
 export async function ocrLayout(
