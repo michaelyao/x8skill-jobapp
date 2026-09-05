@@ -2,6 +2,7 @@ import type { Page } from "playwright";
 import { GenericDriver, SUBMIT } from "./base.js";
 import type { AgentContext, HistoryOutcome, Root } from "../types.js";
 import { parseResumeHistory } from "../../knowledge/resumeHistory.js";
+import { duplicateEntriesToDelete } from "../../core/duplicateEntries.js";
 
 const SUBMIT_BTN = 'button[type="submit"], input[type="submit"]';
 
@@ -225,6 +226,90 @@ export class WorkableDriver extends GenericDriver {
    * that, and a committed entry's fields disappear from the DOM. Reading the form once and filling
    * what you see gets you a single uncommitted entry — which is exactly what shipped.
    */
+  /**
+   * DELETE DUPLICATE COMMITTED ENTRIES before anything is read or filled.
+   *
+   * Pony.ai reached review listing Carnegie Mellon THREE times and Bay Area Rapid Transit twice.
+   * The guards below stop us ADDING a duplicate; nothing removed one already on the form, whether
+   * the ATS's resume parse put it there or an earlier run did.
+   *
+   * Same shape as pruneSkills, and for the same reason: the page script only OBSERVES and clicks a
+   * marked control, the decision is a pure function that can be tested
+   * (src/debug/duplicateEntryCases.ts), and every deletion is CONFIRMED by re-counting. A delete
+   * that dispatched without removing anything is reported, never assumed.
+   */
+  async pruneDuplicateEntries(root: Root): Promise<string[]> {
+    const page = root as Page;
+    if (!page.locator) return [];
+    const MARK = "data-jobapp-dupe";
+
+    const OBSERVE = `(() => {
+      const clean = (t) => (t || "").replace(/\\s+/g, " ").trim();
+      const out = [];
+      let n = 0;
+      for (const head of Array.from(document.querySelectorAll("h1, h2, h3, h4, legend, div, section"))) {
+        const name = clean(head.childNodes.length ? (head.firstChild && head.firstChild.textContent) || "" : "");
+        if (!/^(education|experience)\\b/i.test(name)) continue;
+        const box = head.parentElement;
+        if (!box) continue;
+        // A committed row is one that carries its own delete control; the open editor does not.
+        const rows = Array.from(box.querySelectorAll("li, tr, div")).filter((el) => {
+          const t = clean(el.textContent);
+          if (!t || t.length < 20 || t.length > 900) return false;
+          if (!/(school|company)\\s/i.test(t)) return false;
+          return Boolean(el.querySelector('button[aria-label*="delete" i], button[aria-label*="remove" i], [data-ui="delete"], svg[class*="trash" i]'));
+        });
+        // Keep only the outermost row of each nest, so one entry is not counted three times.
+        const kept = rows.filter((el) => !rows.some((other) => other !== el && other.contains(el)));
+        for (const [i, el] of kept.entries()) {
+          const mark = el.getAttribute("${MARK}") || String(n++);
+          el.setAttribute("${MARK}", mark);
+          out.push({ section: name.toLowerCase().slice(0, 20), index: i, text: clean(el.textContent).slice(0, 400), mark: mark });
+        }
+      }
+      return out;
+    })()`;
+
+    type Seen = { section: string; index: number; text: string; mark: string };
+    const observe = async (): Promise<Seen[]> =>
+      ((await page.evaluate(OBSERVE).catch(() => [])) ?? []) as Seen[];
+
+    const before = await observe();
+    if (before.length < 2) return [];
+    const drop = duplicateEntriesToDelete(before);
+    if (!drop.length) return [];
+
+    const removed: string[] = [];
+    for (const d of drop) {
+      const row = page.locator(`[${MARK}="${(d as Seen).mark}"]`).first();
+      if (!(await row.count().catch(() => 0))) continue;
+      const del = row
+        .locator('button[aria-label*="delete" i], button[aria-label*="remove" i], [data-ui="delete"]')
+        .first();
+      if (!(await del.count().catch(() => 0))) continue;
+      await del.scrollIntoViewIfNeeded().catch(() => undefined);
+      await del.click().catch(() => undefined);
+      await page.waitForTimeout(700);
+      // Some profiles ask to confirm. Take only a clearly affirmative control.
+      const confirm = page.getByRole("button", { name: /^(delete|remove|yes|confirm)$/i }).first();
+      if (await confirm.isVisible().catch(() => false)) {
+        await confirm.click().catch(() => undefined);
+        await page.waitForTimeout(700);
+      }
+      const after = await observe();
+      if (after.length < before.length - removed.length) {
+        removed.push(`${d.section}: ${d.text.slice(0, 60)}`);
+      } else {
+        console.log(`    [workable] a duplicate ${d.section} row would not delete — leaving it`);
+      }
+    }
+    if (removed.length) {
+      console.log(`    [workable] removed ${removed.length} duplicate entr(ies) the form already carried:`);
+      for (const r of removed) console.log(`       - ${r}`);
+    }
+    return removed;
+  }
+
   async fillHistorySections(root: Root, ctx: AgentContext): Promise<HistoryOutcome> {
     const page = root as Page;
     const history = parseResumeHistory(ctx.resumeText || ctx.profile?.rawText || "");

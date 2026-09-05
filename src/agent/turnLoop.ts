@@ -648,6 +648,18 @@ export async function runApplication(
       }
     }
 
+    /**
+     * DUPLICATES FIRST. Pony.ai reached review listing Carnegie Mellon three times and BART twice,
+     * because the ATS's own resume parse committed them and nothing ever removed one. Before the
+     * read, for the same reason as the skills prune: the review has to show the form as it will be
+     * submitted, and a duplicate that appears after the read is one nobody sees.
+     */
+    step("removing duplicate profile entries");
+    if (driver.pruneDuplicateEntries) {
+      const gone = await driver.pruneDuplicateEntries(root).catch(() => [] as string[]);
+      for (const g of gone) filled.push(`removed a duplicate entry the form already carried: ${g}`);
+    }
+
     step("pruning autofilled skills");
     if (driver.pruneSkills) {
       const dropped = await driver.pruneSkills(root).catch(() => [] as string[]);

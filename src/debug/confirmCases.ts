@@ -64,5 +64,24 @@ check(`"Next" is NOT`, !submits("Next"));
 check(`"Submit a question to the recruiter" is NOT an application submit`,
   !submits("Submit a question to the recruiter"), SUBMIT.exec("Submit a question to the recruiter"));
 
+/**
+ * A CLICK THAT CHANGES NOTHING IS NOT A SUBMIT.
+ *
+ * PIBFFI was recorded as submitted on the strength of a dispatched click. The candidate then
+ * submitted it by hand, got the acknowledgement email, and reported that the real page says
+ * "Success — Your application was successfully submitted." So the click had not gone through and
+ * the ledger said it had — which, because every dedupe guard keys off that status, meant the
+ * application would never be sent at all.
+ */
+console.log("\nwhat a submitted page says");
+check(`Hadrian's real confirmation is recognised`,
+  confirmsSubmission("Success\nYour application was successfully submitted. We'll contact you if there are next steps.") === true);
+check(`the same wording without the apostrophe`,
+  confirmsSubmission("Your application was successfully submitted.") === true);
+check(`a form still showing its submit button is NOT a confirmation`,
+  confirmsSubmission("Submit application\nRequired fields are marked *") === false);
+check(`an error banner is not a confirmation`,
+  confirmsSubmission("Please check one of the boxes below: is required and must have a value") === false);
+
 console.log(`\n${fail ? "✗" : "✓"} ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

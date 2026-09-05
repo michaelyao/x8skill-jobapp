@@ -348,15 +348,32 @@ export abstract class GenericDriver implements AtsDriver {
     const confirmed = await this.submissionConfirmed(root).catch(() => false);
     const moved = Boolean(page && page.url() !== before);
     const gone = (await btn.count().catch(() => 1)) === 0;
+    /**
+     * A CLICK THAT CHANGED NOTHING DID NOT SUBMIT, AND MUST NOT BE RECORDED AS ONE.
+     *
+     * I argued the opposite an hour ago — that returning false would invite a second submit, so
+     * "clicked" should always mean submitted. Then the candidate submitted PIBFFI by hand, got the
+     * acknowledgement email, and reported that the real page says "Success — Your application was
+     * successfully submitted." So our click had NOT gone through, and the ledger said it had.
+     *
+     * That is the worse error by a distance. A double submit is embarrassing; an application
+     * recorded as sent that was never sent is never retried, and the opportunity is lost in
+     * silence. The dedupe guards all key off this status, so the mistake is permanent.
+     *
+     * So: evidence decides. Confirmed, navigated, or the control gone — that is a submit. Nothing
+     * changed at all — that is a click that did not take, reported as such, and the caller records
+     * it as needing a look rather than as done.
+     */
     this.lastSubmitEvidence = confirmed
       ? "the page confirmed it"
       : moved
         ? "the page navigated away from the form"
         : gone
           ? "the submit control disappeared"
-          : "NOTHING CHANGED ON THE PAGE — the click may not have registered";
+          : "NOTHING CHANGED ON THE PAGE — the click did not register";
+    const landed = confirmed || moved || gone;
     console.log(`      submit clicked — ${this.lastSubmitEvidence}`);
-    return true;
+    return landed;
   }
 
   /** What the page did after the last submit click. Read by applyJob so the record can say. */

@@ -686,10 +686,19 @@ export async function applyToJob(
        * either employer, and there was no way to tell from the record whether the click had landed.
        */
       submitEvidence = (driver as { lastSubmitEvidence?: string }).lastSubmitEvidence ?? "";
+      /**
+       * THREE OUTCOMES, NOT TWO. "Submit control not found" was the only failure this could
+       * report, so a click that landed on a real button and changed nothing came out sounding
+       * like a missing button — or, worse, was recorded as a submit. PIBFFI was: the candidate
+       * submitted it by hand afterwards, got the acknowledgement, and told us the real page says
+       * "Success — Your application was successfully submitted."
+       */
       console.log(
         submitted
-          ? `  ✅ Submit clicked — ${submitEvidence || "no evidence either way"}.`
-          : "  ⚠️ Submit control not found.",
+          ? `  ✅ Submitted — ${submitEvidence || "no evidence either way"}.`
+          : submitEvidence
+            ? `  ⛔ NOT submitted — ${submitEvidence}. Nothing was sent; this needs looking at on the ATS.`
+            : "  ⚠️ Submit control not found — nothing was sent.",
       );
       await jobPage.waitForTimeout(2000);
     };
