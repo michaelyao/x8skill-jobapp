@@ -1246,14 +1246,17 @@ export class WorkdayDriver extends GenericDriver {
           if (box.width < 2 || box.height < 2) continue;
           if (!list.querySelector('[role="option"], [data-automation-id="promptOption"]')) continue;
           const id = list.getAttribute("id");
-          if (id) {
-            const owner = document.querySelector('[aria-controls="' + id + '"]');
-            if (owner && owner.getAttribute("aria-expanded") === "true") return true;
-          }
+          let owner = id ? document.querySelector('[aria-controls="' + id + '"]') : null;
+          if (owner && owner.getAttribute("aria-expanded") !== "true") owner = null;
           // No id to key off: accept an expanded control that CONTAINS this list, which is how a
           // Workday multiSelectContainer renders its own open prompt.
-          const near = list.closest('[aria-expanded="true"]');
-          if (near) return true;
+          if (!owner) owner = list.closest('[aria-expanded="true"]');
+          if (owner) {
+            // Mark the control so it can be clicked shut - the way a person closes a dropdown they
+            // opened. Returning a selector rather than the node keeps the decision in TypeScript.
+            owner.setAttribute("data-jobapp-open-prompt", "1");
+            return true;
+          }
         }
         return false;
       })()`)
@@ -1300,14 +1303,26 @@ export class WorkdayDriver extends GenericDriver {
       })()`)
       .catch(() => "");
 
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
       if (!(await menu.isVisible().catch(() => false))) return;
-      if (attempt === 0 && blankPoint) {
+      if (attempt === 0) {
+        /**
+         * CLICK THE DROPDOWN AGAIN. It is the first thing a person does with a menu they opened,
+         * and it is the one action the widget certainly listens for - it opened on this control,
+         * so it toggles shut on it. Tried before clicking away, because clicking away depends on
+         * the component watching the document, which react-select is documented not to do
+         * reliably (JedWatson/react-select#2239).
+         */
+        const opener = page.locator('[data-jobapp-open-prompt="1"]').first();
+        if (await opener.count().catch(() => 0)) {
+          await opener.click({ timeout: 2000 }).catch(() => undefined);
+        }
+      } else if (attempt === 1 && blankPoint) {
         // What a person does. The coordinate was verified inert above, so this cannot activate
         // anything on the form.
         const { x, y } = JSON.parse(String(blankPoint)) as { x: number; y: number };
         await page.mouse.click(x, y).catch(() => undefined);
-      } else if (attempt === 1) {
+      } else if (attempt === 2) {
         // No click at all: take focus off the widget from inside the page.
         await page
           .evaluate('(() => { const el = document.activeElement; if (el && el.blur) el.blur(); return true; })()')
