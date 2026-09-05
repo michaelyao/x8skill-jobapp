@@ -103,6 +103,15 @@ X8OCR_CALLBACK_TOKEN=<shared secret, any random string>
 x8ocr now **requires** an API key: without `X8OCR_API_KEY` every extract/job call answers 401
 and the visual cross-check silently records itself as unavailable.
 
+**The engine ladder is paddle → airouter/sonnet → gemini flash-2.5**, pinned per request via
+x8ocr's `engine` parameter (`/openapi.json`: `paddleocr`, or `vision:<provider>[:<model>]`).
+Unpinned, x8ocr runs its own cascade — paddle, then the DEFAULT vision provider, which is gemini —
+so sonnet never got a turn and one slow engine spent the whole budget. Each rung now has its own
+clock (90s / 120s / 90s), measured: paddleocr 3-6s, airouter:sonnet 47-62s. **Only paddle returns
+exact boxes**, so a vision rung still answers the text-level checks while the capability gate keeps
+field-level pairing off — a fallback that reads the page is worth having, one that pretends to know
+where the words are is not.
+
 The cross-check is **asynchronous**. The fill run submits the review screenshot as an x8ocr job
 and returns; x8ocr POSTs the result to `X8OCR_CALLBACK_URL`, which is the website's receiver, and
 the website enqueues a `visual_check` command that the WORKER applies — the worker is still the

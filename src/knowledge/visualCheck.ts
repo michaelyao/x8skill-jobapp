@@ -212,7 +212,40 @@ export async function ocrLayout(
   timeoutMs = 300_000,
 ): Promise<LayoutResult | null> {
   if (!fs.existsSync(imagePath)) return null;
-  const result = await serialise(() => ocrLayoutOnce(imagePath, timeoutMs));
+  /**
+   * PADDLE FIRST, THEN AIROUTER/SONNET, THEN GEMINI FLASH — the candidate's order.
+   *
+   * x8ocr takes an `engine` per request (`/openapi.json`): "paddleocr", or
+   * "vision:<provider>[:<model>]" with airouter (sonnet) and gemini (gemini-2.5-flash)
+   * configured. Left unpinned it runs its own cascade, which is paddle then the DEFAULT vision
+   * provider — gemini — so sonnet never got a turn and a slow paddle meant a slow everything.
+   *
+   * Measured on a real review screenshot: paddleocr 3-6s, airouter:sonnet 47-62s,
+   * gemini-2.5-flash a few seconds. So each rung gets its own budget rather than sharing one
+   * clock: a paddle that has gone quiet costs 90s and then we move on, instead of burning the
+   * whole 300s and reporting the checker unavailable — which is what refused two submits today.
+   *
+   * ONLY PADDLE GIVES EXACT BOXES. The vision rungs still answer the text-level checks (is this
+   * required question answered on screen?), and the capability gate above them keeps field-level
+   * pairing off unless the boxes are exact. A fallback that reads the page is worth having; a
+   * fallback that pretends to know where the words are is not.
+   */
+  const LADDER: Array<{ engine: string; ms: number }> = [
+    { engine: "paddleocr", ms: Math.min(90_000, timeoutMs) },
+    { engine: "vision:airouter:sonnet", ms: Math.min(120_000, timeoutMs) },
+    { engine: "vision:gemini:gemini-2.5-flash", ms: Math.min(90_000, timeoutMs) },
+  ];
+  let result: LayoutResult | null = null;
+  for (const [i, rung] of LADDER.entries()) {
+    result = await serialise(() => ocrLayoutOnce(imagePath, rung.ms, rung.engine));
+    if (result && !result.unavailable) {
+      if (i > 0) console.log(`  [ocr] ${rung.engine} answered after ${LADDER.slice(0, i).map((r) => r.engine).join(", ")} did not`);
+      break;
+    }
+    if (i < LADDER.length - 1) {
+      console.log(`  [ocr] ${rung.engine} did not answer (${result?.unavailable ?? "no result"}) — trying ${LADDER[i + 1].engine}`);
+    }
+  }
   /**
    * TELL THE HEALTH FILE WHAT ACTUALLY HAPPENED. probeOcr posts no image, so it reports a
    * reachable service as healthy while every real check fails — which is exactly what happened
@@ -224,7 +257,7 @@ export async function ocrLayout(
   return result;
 }
 
-async function ocrLayoutOnce(imagePath: string, timeoutMs: number): Promise<LayoutResult | null> {
+async function ocrLayoutOnce(imagePath: string, timeoutMs: number, engine?: string): Promise<LayoutResult | null> {
   if (!fs.existsSync(imagePath)) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -233,6 +266,10 @@ async function ocrLayoutOnce(imagePath: string, timeoutMs: number): Promise<Layo
     const bytes = await fs.promises.readFile(imagePath);
     body.append("file", new Blob([bytes], { type: "image/png" }), path.basename(imagePath));
     body.append("includeLayout", "true");
+    // Pinning the engine disables x8ocr's own cascade, which is the point: the ladder above
+    // decides the order, so a rung that fails falls to the NEXT one we chose rather than to
+    // whatever the service defaults to.
+    if (engine) body.append("engine", engine);
     const res = await fetch(`${endpoint().replace(/\/$/, "")}/v1/extract`, {
       method: "POST",
       headers: apiKeyHeader(),
