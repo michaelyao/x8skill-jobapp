@@ -174,6 +174,12 @@ export interface AtsDriver {
   pruneSkills?(root: Root): Promise<string[]>;
   /** Delete duplicate committed profile entries (Workable). See WorkableDriver. */
   pruneDuplicateEntries?(root: Root): Promise<string[]>;
+  /** Diagnose a control that would not take a value, from the live page. See GenericDriver. */
+  studyFailedField?(
+    root: Root,
+    field: FieldSpec,
+    context: { ats: string; code?: string; runDir?: string },
+  ): Promise<string>;
   /** Click a repeated section's "Add" until it holds `wanted` rows. See WorkdayDriver. */
   expandRepeatedBlocks?(root: Root, wanted: number): Promise<{ section: string; from: number; to: number }[]>;
   /**

@@ -383,6 +383,73 @@ function usableOptions(options?: string[]): string[] | undefined {
   return listChooserRow(options) ? undefined : options;
 }
 
+/**
+ * THE TOP LAYER'S JOB: decide WHICH OFFERED OPTION MEANS THE ANSWER WE HOLD.
+ *
+ * The ATS layer knows how to open a menu, read its rows and click one. It does not know that
+ * "University Job Site / Handshake" is the Handshake row, that "United States +1" is the US
+ * dialling code, that "Information Systems Technology" is the same course as "Computer and
+ * Information Science", or that "I am authorized to work in the United States for any employer"
+ * answers "Yes". Every one of those was a hand-written rule in the fill path, and every one was
+ * written only AFTER it had cost an application: five of them in a single day.
+ *
+ * They were all the same question — "which of these rows means what we already decided?" — asked
+ * of string matching, which cannot answer it. It belongs here, where the meaning lives.
+ *
+ * Strictly a MAPPING. It is given the answer we already hold and the rows the form is showing, and
+ * it may only return one of those rows verbatim, or nothing. It cannot introduce a value, cannot
+ * be reached for a field we have no answer for, and its reply is checked against the list before
+ * use — a model that invents a row is treated as having chosen none.
+ */
+export async function chooseOfferedOption(
+  question: string,
+  intended: string,
+  options: readonly string[],
+): Promise<{ option: string; why: string } | undefined> {
+  const rows = options.map((o) => (o ?? "").trim()).filter((o) => o && !/^(select one|no items)/i.test(o));
+  if (!intended.trim() || rows.length < 2 || rows.length > 120) return undefined;
+
+  const system = [
+    "You map an answer that is already decided onto the choices a form actually offers.",
+    "You are NOT answering the question. The answer is given to you.",
+    "Reply with ONLY a JSON object: {\"option\":\"<one of the choices, copied exactly>\",\"why\":\"<six words>\"}.",
+    'If no choice carries the same meaning, reply {"option":null,"why":"..."} — a wrong choice on an application is worse than an unanswered field.',
+    "Copy the chosen text EXACTLY as given, including punctuation and case.",
+  ].join("\n");
+  const user = [
+    `Question on the form: ${question}`,
+    `The answer we hold: ${intended}`,
+    "The choices the form is showing:",
+    ...rows.map((o, i) => `${i + 1}. ${o}`),
+  ].join("\n");
+
+  let raw = "";
+  try {
+    raw = await callAirouter(system, user);
+  } catch {
+    try {
+      raw = await callGemini(system, user);
+    } catch {
+      return undefined;
+    }
+  }
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) return undefined;
+  let parsed: { option?: string | null; why?: string };
+  try {
+    parsed = JSON.parse(match[0]) as { option?: string | null; why?: string };
+  } catch {
+    return undefined;
+  }
+  const picked = (parsed.option ?? "").trim();
+  if (!picked) return undefined;
+  // It may only choose a row that is ON THE LIST. Compared leniently on whitespace only, so a
+  // trimmed copy still counts, but never so leniently that a near-miss passes as a choice.
+  const exact = rows.find((o) => o === picked) ?? rows.find((o) => o.replace(/\s+/g, " ") === picked.replace(/\s+/g, " "));
+  if (!exact) return undefined;
+  return { option: exact, why: (parsed.why ?? "").slice(0, 60) || "it carries the same meaning" };
+}
+
 export function mustComeFromRecords(label: string): boolean {
   /**
    * A GPA QUESTION IS NOT A DEGREE QUESTION, even when it mentions one.

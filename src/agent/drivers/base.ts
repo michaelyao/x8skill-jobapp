@@ -4,7 +4,17 @@ import { TRANSCRIPT_PATH } from "../../config.js";
 import type { Locator, Page } from "playwright";
 import { loadSkillPicks, loadSkillRemovals, pillsToRemove, type SkillPill } from "../../knowledge/skillPlan.js";
 import { datePartOf, datePartValue } from "../../core/dateParts.js";
-import { hearAboutUsPlan, isPhoneCountryCode, isSensitive, optionForRecorded, preferredHearAboutUs, workAuthorizationOption } from "../llmAgent.js";
+import { explainStuckField } from "../fieldStudy.js";
+import { recordFieldNote } from "../../knowledge/fieldNotes.js";
+import {
+  chooseOfferedOption,
+  hearAboutUsPlan,
+  isPhoneCountryCode,
+  isSensitive,
+  optionForRecorded,
+  preferredHearAboutUs,
+  workAuthorizationOption,
+} from "../llmAgent.js";
 import { listChooserRow } from "../../core/listChooser.js";
 import type { AtsDriver, DocumentUploads, FieldAnswer, FieldSpec, PageSnapshot, Root } from "../types.js";
 
@@ -310,6 +320,78 @@ export abstract class GenericDriver implements AtsDriver {
    * Deliberately narrow: these are the words an ATS shows AFTER a submission, not words that appear
    * on a form. "Submit application" as a button label must never match.
    */
+  /**
+   * STUDY A FIELD THAT WOULD NOT FILL, instead of reporting it and moving on.
+   *
+   * Every diagnosis in this project has been made the same way: a human crops the screenshot,
+   * dumps the DOM, and sees that Workable hides its radios behind styled labels, or that a
+   * question lives in a fieldset legend, or that a menu is covering the control. That is exactly
+   * what a run can do for itself at the moment it fails, while the page is still open - and the
+   * candidate asked for precisely that: "if you fail on a page, you should study that page and
+   * figure it out how to fix AUTOMATICALLY."
+   *
+   * It captures the evidence (the control's own HTML, its ancestry, and a picture of it), asks
+   * what kind of control it is and why a click or a type would not land, and writes the answer
+   * where the next run and a person can both see it. It changes nothing on the page: a diagnosis
+   * is not a fix, and pretending otherwise is how a false success gets written.
+   */
+  async studyFailedField(
+    root: Root,
+    field: FieldSpec,
+    context: { ats: string; code?: string; runDir?: string },
+  ): Promise<string> {
+    const control = root.locator(field.key).first();
+    if (!(await control.count().catch(() => 0))) return "";
+
+    const shot = context.runDir
+      ? path.join(context.runDir, `field-${(field.label || "unnamed").replace(/[^a-z0-9]+/gi, "-").slice(0, 40)}.png`)
+      : "";
+    if (shot) await control.screenshot({ path: shot }).catch(() => undefined);
+
+    const DESCRIBE = `(el) => {
+      const clean = (t) => (t || "").replace(/\\s+/g, " ").trim();
+      const box = el.getBoundingClientRect();
+      const at = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      const chain = [];
+      let up = el;
+      for (let i = 0; i < 4 && up; i += 1) {
+        chain.push(up.tagName.toLowerCase() + (up.getAttribute("data-automation-id") ? "[" + up.getAttribute("data-automation-id") + "]" : "") + (up.className && typeof up.className === "string" ? "." + up.className.split(/\\s+/)[0] : ""));
+        up = up.parentElement;
+      }
+      return JSON.stringify({
+        tag: el.tagName.toLowerCase(),
+        type: el.getAttribute("type") || "",
+        role: el.getAttribute("role") || "",
+        disabled: el.disabled === true || el.getAttribute("aria-disabled") === "true",
+        readOnly: el.readOnly === true,
+        ariaHidden: el.getAttribute("aria-hidden") || "",
+        size: Math.round(box.width) + "x" + Math.round(box.height),
+        onScreen: box.width > 0 && box.height > 0,
+        // What is actually under the middle of this control - if it is not the control, something
+        // is covering it, which is the single most common reason a click does nothing.
+        topmost: at ? clean(at.tagName.toLowerCase() + " " + (at.textContent || "").slice(0, 40)) : "(nothing)",
+        coveredBySomethingElse: Boolean(at && at !== el && !el.contains(at)),
+        ancestry: chain.join(" < "),
+        html: clean(el.outerHTML).slice(0, 400),
+      });
+    }`;
+    const facts = await control.evaluate(DESCRIBE).catch(() => "");
+    if (!facts) return "";
+
+    const note = await explainStuckField(field.label, String(facts)).catch(() => "");
+    const line = note || `no diagnosis; the raw facts were ${String(facts).slice(0, 200)}`;
+    console.log(`    🔎 studied "${field.label.slice(0, 46)}": ${line.slice(0, 200)}`);
+    if (shot) console.log(`       picture of the control: ${shot}`);
+    await recordFieldNote({
+      ats: context.ats,
+      label: field.label,
+      note: line.slice(0, 500),
+      at: new Date().toISOString(),
+      ...(context.code ? { code: context.code } : {}),
+    }).catch(() => undefined);
+    return line;
+  }
+
   async submissionConfirmed(root: Root): Promise<boolean> {
     const text = ((await root.locator("body").innerText({ timeout: 3_000 }).catch(() => "")) || "")
       .replace(/\s+/g, " ")
@@ -2389,6 +2471,31 @@ export abstract class GenericDriver implements AtsDriver {
       }
       if (idx < 0 && staticList && attempt === 0) {
         console.log(`      ↳ this list does not filter as you type — searching it by position instead`);
+      }
+      /**
+       * ASK THE TOP LAYER WHICH ROW MEANS THE ANSWER WE HOLD.
+       *
+       * Everything above here is string matching, and by this point it has failed. That is exactly
+       * the moment to stop matching harder: the rows are on screen, the answer is already decided,
+       * and knowing that "University Job Site / Handshake" is the Handshake row is a question about
+       * MEANING, not characters.
+       *
+       * Five hand-written rules in this file are the same question in disguise - the hear-about-us
+       * tree, work-authorisation sentences, dialling-code wordings, closed-list majors, degree
+       * levels - and each was written only after it had cost an application. They stay, being free
+       * and deterministic; this catches the sixth wording nobody has met yet.
+       *
+       * It MAPS, never invents: handed the answer we hold, it may only return a row from the list,
+       * and it is never reached for a field we have no answer for. The clicked row is what the
+       * commit is verified against, so a wrong choice still fails loudly.
+       */
+      if (idx < 0 && value.trim() && texts.length > 1) {
+        const chosen = await chooseOfferedOption(label ?? value, value, texts).catch(() => undefined);
+        const at = chosen ? texts.findIndex((t) => t.trim() === chosen.option.trim()) : -1;
+        if (at >= 0) {
+          idx = at;
+          trace(`asked the model: ${JSON.stringify(chosen!.option.slice(0, 44))} - ${chosen!.why}`);
+        }
       }
       if (idx < 0) {
         console.log(

@@ -155,6 +155,8 @@ export async function runApplication(
   const answers = () => [...answersByLabel.values()];
   // How many times a field we believe we filled has come back empty on re-read.
   const disputed = new Map<string, number>();
+  // Fields already studied this run, so one refusal costs at most one diagnosis.
+  const studied = new Set<string>();
   const TRUST_LIMIT = 2;
   /**
    * A required field blocks if it reads empty and we have no credible claim to have
@@ -405,6 +407,27 @@ export async function runApplication(
       } else {
         if (!failedToFill.includes(field.label)) failedToFill.push(field.label);
         console.log(`    ✗ tried but the field would not take it: ${field.label}`);
+        /**
+         * STUDY IT NOW, while the page is still open.
+         *
+         * Every diagnosis in this project has been made afterwards, by hand, from a screenshot and
+         * a DOM dump - and usually after the failure had already cost an application. The run can
+         * do that itself at the moment it fails: what the control is, whether anything is covering
+         * it, what its own HTML says. Recorded against this ATS and this field, so the next run
+         * and a person both start from what was already learned.
+         *
+         * Only for a REQUIRED field, and only once per field per run: a diagnosis costs a model
+         * call, and an optional field that refuses a value is not worth one.
+         */
+        if (driver.studyFailedField && field.required && !studied.has(field.label)) {
+          studied.add(field.label);
+          await driver
+            .studyFailedField(root, field, {
+              ats: driver.type ?? "unknown",
+              ...(opts.runDir ? { runDir: opts.runDir } : {}),
+            })
+            .catch(() => "");
+        }
       }
     }
   };

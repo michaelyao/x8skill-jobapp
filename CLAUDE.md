@@ -576,6 +576,41 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   with *"94085 is not a valid postal code for Pennsylvania"* because the street came from the
   stored Sunnyvale address while the state was inferred from the resume's Pittsburgh schooling.
 
+## The two layers, and where a decision belongs
+
+The candidate's framing, and the one to hold to:
+
+- **The top layer understands the QUESTION.** It reads the field, finds the answer in the fact
+  store, and knows that "field of study" and "major" are the same question, that "Information
+  Systems" and "Computer and Information Science" name the same course, that
+  "I am authorized to work in the United States for any employer" answers "Yes". Meaning lives
+  here: `llmAgent`, `guidelines.txt`, the answer store.
+- **The ATS layer knows how to DETECT, READ and FILL that field** on that tenant — a Workday prompt
+  versus a react-select, a radio hidden behind a styled label, a menu that must be closed before
+  the next click lands. Mechanics only. It must not be deciding what an answer MEANS.
+- **The guardrail checks the result against the SCREENSHOT** — what is actually on the page, read
+  by OCR — not against our own bookkeeping, which is what produced "3 required fields have no
+  answer" for three fields that were filled.
+
+Five hand-written rules in the fill path were the top layer's job leaking into the ATS layer — the
+hear-about-us tree, work-authorisation sentences, dialling-code wordings, closed-list majors,
+degree levels — and each was written only after it cost an application. `chooseOfferedOption` is
+the general form: when matching fails, the model is asked which offered row means the answer we
+already hold. It MAPS and never invents (it may only return a row from the list, is never reached
+for a field with no answer, and the clicked row is still verified), so the deterministic rules stay
+in front of it and it catches the wording nobody has met yet.
+
+**A failure studies itself.** `studyFailedField` runs when a REQUIRED field refuses a value, while
+the page is still open: it captures the control's own HTML, its ancestry, its size, and **what is
+topmost at its centre** (a covering element is the commonest reason a click does nothing), takes a
+picture of it, and asks what a human would click instead. The answer is recorded in
+`data/field-notes.json` against that ATS and that field. It DIAGNOSES ONLY — a fix invented by a
+model and applied unseen is the false success everything else here guards against.
+
+**Feedback is remembered where it belongs**: a preference about a KIND of question goes in
+`guidelines.txt` (general, top layer); an observation about one field on one ATS goes in
+`data/field-notes.json`.
+
 ## Job identity, storage and failure modes
 
 The reasoning, the measurements and the per-bug history live in **[DESIGN.md](DESIGN.md)** —
