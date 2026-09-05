@@ -1226,11 +1226,39 @@ export class WorkdayDriver extends GenericDriver {
      * A Workday prompt sets aria-expanded="true" on its control while its list is showing. If
      * nothing on the page is expanded, nothing is open, and there is nothing to close.
      */
-    const expanded = await root
-      .locator('[aria-expanded="true"]')
-      .count()
-      .catch(() => 0);
-    if (!expanded) return;
+    /**
+     * A LISTBOX IS ONLY OPEN IF ITS OWN CONTROL SAYS SO.
+     *
+     * My first gate asked whether ANYTHING on the page had aria-expanded="true", and the warning
+     * rate barely moved: 15 across 16 option reads, still one per read. Workday keeps expanded
+     * regions on the page (collapsible sections), so a page-wide question can never distinguish an
+     * open prompt from ordinary furniture. That was a loose test dressed up as a precise one.
+     *
+     * The precise test is ownership: a prompt's control carries aria-controls pointing at the
+     * listbox's id, and aria-expanded="true" while that list is showing. A listbox nobody claims
+     * to have expanded is furniture, whatever it contains.
+     */
+    const reallyOpen = await (root as Page)
+      .evaluate(`(() => {
+        const lists = Array.from(document.querySelectorAll('[role="listbox"], [data-automation-id="activeListContainer"]'));
+        for (const list of lists) {
+          const box = list.getBoundingClientRect();
+          if (box.width < 2 || box.height < 2) continue;
+          if (!list.querySelector('[role="option"], [data-automation-id="promptOption"]')) continue;
+          const id = list.getAttribute("id");
+          if (id) {
+            const owner = document.querySelector('[aria-controls="' + id + '"]');
+            if (owner && owner.getAttribute("aria-expanded") === "true") return true;
+          }
+          // No id to key off: accept an expanded control that CONTAINS this list, which is how a
+          // Workday multiSelectContainer renders its own open prompt.
+          const near = list.closest('[aria-expanded="true"]');
+          if (near) return true;
+        }
+        return false;
+      })()`)
+      .catch(() => false);
+    if (!reallyOpen) return;
 
     /**
      * DISMISS IT THE WAY A PERSON WOULD: click somewhere else.
