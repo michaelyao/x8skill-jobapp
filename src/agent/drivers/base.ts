@@ -319,14 +319,48 @@ export abstract class GenericDriver implements AtsDriver {
   }
 
   /** Click the final Submit button. Only invoked after explicit user confirmation. */
+  /**
+   * CLICK SUBMIT, THEN ASK THE PAGE WHETHER IT TOOK.
+   *
+   * This returned true because a button EXISTED and a click had been dispatched — the click's own
+   * error swallowed, the page never consulted. So "✅ Submitted." meant "we clicked", and the
+   * ledger's `submitted` rested on it. The candidate noticed the gap the only way anyone could:
+   * two applications recorded as submitted with no acknowledgement email from either employer.
+   *
+   * It is the same false-success this codebase refuses everywhere else — a fill that reports true
+   * without re-reading, a checkbox that reports ticked while the box is empty — sitting in the one
+   * place where being wrong is unrecoverable.
+   *
+   * What can be verified without leaving the page: a confirmation in the text
+   * (submissionConfirmed, the same reader the fill path uses), the URL changing, or the submit
+   * control going away. Any of those is evidence the click landed. NONE of them is evidence it did
+   * not — an employer may confirm by email only — so the return value still says "clicked", and
+   * the EVIDENCE is reported separately for the caller to record. Returning false here would be
+   * worse than the bug: it would invite a second submit.
+   */
   async submit(root: Root): Promise<boolean> {
     const btn = root.getByRole("button", { name: SUBMIT }).first();
-    if (await btn.count().catch(() => 0)) {
-      await btn.click().catch(() => undefined);
-      return true;
-    }
-    return false;
+    if (!(await btn.count().catch(() => 0))) return false;
+    const page = "url" in root ? (root as Page) : undefined;
+    const before = page?.url() ?? "";
+    await btn.click().catch(() => undefined);
+    await page?.waitForTimeout(2500);
+    const confirmed = await this.submissionConfirmed(root).catch(() => false);
+    const moved = Boolean(page && page.url() !== before);
+    const gone = (await btn.count().catch(() => 1)) === 0;
+    this.lastSubmitEvidence = confirmed
+      ? "the page confirmed it"
+      : moved
+        ? "the page navigated away from the form"
+        : gone
+          ? "the submit control disappeared"
+          : "NOTHING CHANGED ON THE PAGE — the click may not have registered";
+    console.log(`      submit clicked — ${this.lastSubmitEvidence}`);
+    return true;
   }
+
+  /** What the page did after the last submit click. Read by applyJob so the record can say. */
+  lastSubmitEvidence = "";
 
   async read(root: Root): Promise<PageSnapshot> {
     // String form so tsx/esbuild doesn't inject helpers unavailable in the browser.

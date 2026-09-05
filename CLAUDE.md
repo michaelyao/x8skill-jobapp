@@ -342,7 +342,15 @@ playwright/.auth/  persistent browser profile for Google login (git-ignored)
   like a confirmed fact when all it meant was that a submit had been clicked. Labels, one-line
   meanings and tone now come from that module; do not write a fourth map.
   **`submitted` means WE CLICKED and the run reported success — not that the employer confirmed
-  anything.** The only status resting on the employer's word is `already_applied_on_site`.
+  anything.** And "the run reported success" used to mean only that a submit BUTTON EXISTED and a
+  click was dispatched — `submit()` swallowed the click's error and returned true without ever
+  consulting the page. Two applications carried the word with no acknowledgement email from either
+  employer, which is how the candidate found it. `submit()` now waits and reports what the page
+  did: confirmed / navigated away / the control disappeared / **nothing changed**, and that
+  sentence goes into the ledger note beside the status. The return value still says "clicked" in
+  every case — an employer may confirm by email only, so absence of evidence is not evidence the
+  click failed, and returning false would invite a SECOND submit, which is the one unrecoverable
+  mistake here. The only status resting on the employer's word is `already_applied_on_site`.
   `confirmed` is deliberately absent: nothing yet reads the acknowledgement email, and adding the
   word before the mechanism repeats the "applied" mistake. When it exists it is its own stage, never
   folded into `submitted`.

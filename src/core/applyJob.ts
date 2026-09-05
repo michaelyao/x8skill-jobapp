@@ -213,6 +213,7 @@ export async function applyToJob(
   let resumeName: string | undefined;
   let resumeStandard: boolean | undefined;
   let submitted = false;
+  let submitEvidence = "";
   let queued = false;
   // Set when this job looks like one we already engaged but shares no hard identifier.
   // Carried into the review email so the human — not this code — makes the call.
@@ -679,7 +680,17 @@ export async function applyToJob(
       }
       const root = await driver.resolveRoot(jobPage);
       submitted = await driver.submit(root).catch(() => false);
-      console.log(submitted ? "  ✅ Submitted." : "  ⚠️ Submit control not found.");
+      /**
+       * SAY WHAT THE PAGE DID, not just that we clicked. "✅ Submitted." rested on a click having
+       * been dispatched; two applications carried that word with no acknowledgement email from
+       * either employer, and there was no way to tell from the record whether the click had landed.
+       */
+      submitEvidence = (driver as { lastSubmitEvidence?: string }).lastSubmitEvidence ?? "";
+      console.log(
+        submitted
+          ? `  ✅ Submit clicked — ${submitEvidence || "no evidence either way"}.`
+          : "  ⚠️ Submit control not found.",
+      );
       await jobPage.waitForTimeout(2000);
     };
 
@@ -823,7 +834,11 @@ export async function applyToJob(
       notes: [
         `turns: ${result.turns}`,
         ...(result.drafts.length ? [`drafts to review: ${result.drafts.join("; ")}`] : []),
-        submitted ? "submitted on approval" : queued ? "queued for approval" : "submit not clicked",
+        submitted
+          ? `submitted on approval — ${submitEvidence || "the page gave no signal either way"}`
+          : queued
+            ? "queued for approval"
+            : "submit not clicked",
       ],
     });
     // (A "submitted" confirmation email used to go out here. The website's history page is

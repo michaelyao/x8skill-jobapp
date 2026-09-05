@@ -65,9 +65,31 @@ export default async function QueuePage() {
    * be replaced, so approving it would send answers that are being rewritten as you look at them.
    * It showed here with a "retry queued" badge and an Approve button, which is a footgun.
    */
+  /**
+   * EVERY APPLICATION AWAITING A DECISION IS LISTED HERE. The candidate decides which proceed.
+   *
+   * This filtered to `readyKeys` — the ones the readiness gate approves of — and sent the rest to
+   * /status with a count. So thirteen of nineteen were invisible on the page he makes decisions
+   * on, including four the gate will never pass on its own (a GPA it believes is wrong, a posting
+   * it reads as requiring a PhD). Those are not "in progress"; they are decisions, and the gate
+   * had quietly made them.
+   *
+   * His words: "You do not get decide what i do. You need bring them back to me and make them
+   * work. I AM THE ONE WHO DECIDE WHICH ONE TO PROCEED." He is right, and the original reasoning
+   * for the split does not cover this case: it was written to keep an Approve button away from a
+   * copy being re-filled underneath you — a race — not to withhold a finished application because
+   * a check dislikes it.
+   *
+   * So: still hidden while the WORKER holds it (that race is real), and everything else is listed,
+   * with whatever the gate objected to shown beside it so the decision is informed rather than
+   * blind.
+   */
   const awaiting = queue
-    .filter((e) => e.status === "awaiting_approval" && readyKeys.has(e.key) && !withWorker(e.code ?? e.key))
+    .filter((e) => e.status === "awaiting_approval" && !withWorker(e.code ?? e.key))
     .sort((a, b) => (b.reviewSentAt ?? "").localeCompare(a.reviewSentAt ?? ""));
+  const problemsFor = new Map<string, string[]>(
+    [...split.ready, ...split.needsWork].map((r) => [r.entry.key, r.problems ?? []]),
+  );
 
   // "submitting" means two very different things, and conflating them is alarming: a submit
   // running RIGHT NOW, or one whose outcome was never recorded because the process died.
@@ -224,6 +246,20 @@ export default async function QueuePage() {
                     <td>
                       {(e.answers ?? []).length}
                       {drafts ? <span className="pill warn" style={{ marginLeft: 6 }}>{drafts} draft</span> : null}
+                    </td>
+                    {/* The gate's objection, SHOWN rather than used to hide the row. He decides. */}
+                    <td style={{ maxWidth: 300 }}>
+                      {(problemsFor.get(e.key) ?? []).length === 0 ? (
+                        <span className="muted">nothing</span>
+                      ) : (
+                        <span
+                          className="pill warn"
+                          style={{ fontSize: 12 }}
+                          title={(problemsFor.get(e.key) ?? []).join(" · ")}
+                        >
+                          {((problemsFor.get(e.key) ?? [])[0] ?? "").slice(0, 88)}
+                        </span>
+                      )}
                     </td>
                     <td className="right muted nowrap">{(e.reviewSentAt ?? "").slice(0, 16).replace("T", " ")}</td>
                   </tr>
