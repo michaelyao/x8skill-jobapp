@@ -1197,8 +1197,29 @@ export class WorkdayDriver extends GenericDriver {
     const menu = root
       .locator('[data-automation-id="activeListContainer"]:visible, [role="listbox"]:visible:has([role="option"])')
       .first();
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    /**
+     * ESCAPE IS NOT ENOUGH, AND AN OPEN MENU EATS EVERY LATER CLICK.
+     *
+     * On Uline this warning fired hundreds of times in one run: the fields were filled ("✓ Country
+     * Phone Code*", "✓ Country", "✓ Phone Device Type"), then a menu stayed open, the next clicks
+     * landed on IT instead of the controls, the re-read found those fields empty, and the run ended
+     * "3 field(s) the form marks REQUIRED have no answer" — the exact three it had just filled.
+     * Reported as a warning the whole time, which is why it read as noise rather than the cause.
+     *
+     * Escape is only the first thing to try. A click on inert page furniture — the step heading —
+     * dismisses a Workday prompt reliably, and unlike a blind body click it cannot land on a
+     * control. Tab is tried too: moving focus out of the widget closes the ones that ignore
+     * Escape. Each is CONFIRMED by re-checking, so nothing is assumed.
+     */
+    const heading = root.locator('h2, h3, [data-automation-id="jobPostingHeader"]').first();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
       if (!(await menu.isVisible().catch(() => false))) return;
+      if (attempt === 1) {
+        await (root as Page).keyboard?.press("Tab").catch(() => undefined);
+      } else if (attempt === 2 && (await heading.count().catch(() => 0))) {
+        // Inert by construction: a heading has nothing to activate.
+        await heading.click({ position: { x: 2, y: 2 } }).catch(() => undefined);
+      }
       await (root as Page).keyboard?.press("Escape").catch(() => undefined);
       const gone = await menu.waitFor({ state: "hidden", timeout: 600 }).then(
         () => true,
@@ -1207,7 +1228,13 @@ export class WorkdayDriver extends GenericDriver {
       if (gone) return;
     }
     if (await menu.isVisible().catch(() => false)) {
-      console.log("    [workday] a prompt menu will not close — the next click may land on it");
+      // Loud, because this is not cosmetic: an open menu swallows the clicks meant for the next
+      // field, and the run then reports those fields as unanswered. On Uline that cost three
+      // required fields it had already filled.
+      console.log(
+        "    ⚠ [workday] a prompt menu will NOT close after Escape, Tab and a click on the heading — " +
+          "the next clicks will land on it and their fields will read as empty",
+      );
     }
   }
 
