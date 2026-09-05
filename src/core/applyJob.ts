@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { BrowserContext, Page } from "playwright";
 import { AshbyDriver } from "../agent/drivers/ashby.js";
+import { captureFormShot } from "../agent/formShot.js";
 import { GreenhouseDriver } from "../agent/drivers/greenhouse.js";
 import { WorkdayDriver } from "../agent/drivers/workday.js";
 import { LeverDriver } from "../agent/drivers/lever.js";
@@ -564,7 +565,7 @@ export async function applyToJob(
     if (!result.reachedReview) {
       const dbg = path.join(runDir, `debug-${job.id ?? "job"}.png`);
       await scrollToTop(jobPage);
-      await jobPage.screenshot({ path: dbg, fullPage: true }).catch(() => undefined);
+      await captureFormShot(jobPage, dbg);
       console.log(`  ⚠ stopped before review (${result.filled.length} filled) — debug: ${dbg}`);
       if (result.blockedRequired.length) {
         console.log(`  ⛔ blocked by ${result.blockedRequired.length} empty required field(s): ${result.blockedRequired.join(" | ")}`);
@@ -618,8 +619,10 @@ export async function applyToJob(
     // is already on the queue entry written below.
     const shotPath = path.join(runDir, `review-${job.id ?? "job"}.png`);
     await scrollToTop(jobPage);
-    await jobPage.screenshot({ path: shotPath, fullPage: true }).catch(() => undefined);
-    console.log(`  Review screenshot: ${shotPath}`);
+    const shotKind = await captureFormShot(jobPage, shotPath);
+    console.log(
+      `  Review screenshot: ${shotPath}${shotKind === "frame" ? " (the form is in an embedded frame — photographed the frame)" : ""}`,
+    );
 
     /**
      * Cross-check the SCREEN against what we believe we filled — ASYNCHRONOUSLY.
