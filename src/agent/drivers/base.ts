@@ -4,7 +4,7 @@ import { TRANSCRIPT_PATH } from "../../config.js";
 import type { Locator, Page } from "playwright";
 import { loadSkillPicks, loadSkillRemovals, pillsToRemove, type SkillPill } from "../../knowledge/skillPlan.js";
 import { datePartOf, datePartValue } from "../../core/dateParts.js";
-import { hearAboutUsPlan, isSensitive, preferredHearAboutUs, workAuthorizationOption } from "../llmAgent.js";
+import { hearAboutUsPlan, isPhoneCountryCode, isSensitive, optionForRecorded, preferredHearAboutUs, workAuthorizationOption } from "../llmAgent.js";
 import { listChooserRow } from "../../core/listChooser.js";
 import type { AtsDriver, DocumentUploads, FieldAnswer, FieldSpec, PageSnapshot, Root } from "../types.js";
 
@@ -2128,6 +2128,29 @@ export abstract class GenericDriver implements AtsDriver {
        * capture finds none here and this path finds five — so the facts that decide it ride along
        * on the answer and the choice is made where the options actually are.
        */
+      /**
+       * A DIALLING CODE IS WORDED DIFFERENTLY BY EVERY TENANT, and the options are usually unknown
+       * until the menu is open.
+       *
+       * Workday says "United States of America (+1)". Uline says "United States +1" — no
+       * parentheses — so the recorded value matched nothing and "Country Phone Code*" stayed empty
+       * on two applications, which is the single worst field in this log's history. The answering
+       * path already knows the fallbacks (+1, United States, USA, US); it just cannot use them
+       * when read() reports no options, which is exactly when it matters.
+       *
+       * So try them here, against the real list, using the same tested matcher.
+       */
+      if (idx < 0 && label && isPhoneCountryCode(label)) {
+        for (const candidate of ["United States of America (+1)", "United States", "+1", "USA", "US"]) {
+          const m = optionForRecorded(texts, candidate);
+          if (m.kind !== "exact" && m.kind !== "reworded") continue;
+          const at = texts.findIndex((t) => t.trim() === m.option.trim());
+          if (at < 0) continue;
+          idx = at;
+          trace(`dialling code: ${JSON.stringify(candidate)} matches ${JSON.stringify(m.option)}`);
+          break;
+        }
+      }
       if (idx < 0 && records && label && /authoriz|authoris/i.test(label) && /\bwork\b/i.test(label)) {
         const derived = workAuthorizationOption(texts.filter((t) => t && !/^no items/i.test(t)), records);
         const at = derived ? texts.findIndex((t) => t.trim() === derived.option.trim()) : -1;
