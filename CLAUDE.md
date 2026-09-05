@@ -600,6 +600,16 @@ already hold. It MAPS and never invents (it may only return a row from the list,
 for a field with no answer, and the clicked row is still verified), so the deterministic rules stay
 in front of it and it catches the wording nobody has met yet.
 
+**EVERY failure is looked at, without being asked — at two levels.** Field-level study covers a
+control that refuses a value. That is not most failures: ID.me failed at the RUN level (the OCR
+cross-check answered HTTP 422 because the slice we sent it was empty) and nothing was watching, so
+it sat in the queue until the candidate asked what the message meant. `diagnoseRunFailure` now runs
+in the worker, at the single point every command outcome passes through, whatever kind of failure it
+was — it reads the failure, says which subsystem it thinks is at fault (distinguishing a service
+that is DOWN from one that REJECTED us, where an HTTP status is decisive), and files it against the
+ATS in `data/run-notes.json`, so a pattern shows on its second occurrence rather than when someone
+notices. **Diagnosis only** — it changes no status and touches no form.
+
 **A failure studies itself.** `studyFailedField` runs when a REQUIRED field refuses a value, while
 the page is still open: it captures the control's own HTML, its ancestry, its size, and **what is
 topmost at its centre** (a covering element is the commonest reason a click does nothing), takes a

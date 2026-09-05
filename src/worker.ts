@@ -36,6 +36,7 @@ import { GUIDELINES_PATH } from "./config.js";
 import fsp from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { ROOT_DIR } from "./config.js";
+import { diagnoseRunFailure } from "./agent/runStudy.js";
 
 /**
  * The worker daemon. It owns Chrome and is the ONLY process that writes application state;
@@ -771,6 +772,31 @@ async function tick(): Promise<void> {
     }
     didWork = true; // only a COMPLETED command counts; a deferred one must let the idle timer run
     console.log(`worker:   → ${result.ok ? "ok" : "FAILED"}: ${result.message}`);
+    /**
+     * EVERY FAILURE GETS LOOKED AT, HERE, WITHOUT BEING ASKED.
+     *
+     * Field-level study covers one thing: a control that refuses a value. ID.me failed at the RUN
+     * level - the OCR cross-check answered HTTP 422 because we were sending it an empty slice -
+     * and nothing was watching that, so it sat in the queue until the candidate asked what the
+     * message meant. His objection is exact: why wait to be asked.
+     *
+     * This is the one place every command outcome passes through, whatever kind of failure it was,
+     * so the diagnosis belongs here rather than at each of applyJob's exits. It reads the failure,
+     * says what it thinks went wrong, and records it against the ATS in data/run-notes.json - so a
+     * pattern is visible on its second occurrence instead of after someone notices.
+     *
+     * DIAGNOSIS ONLY. It changes no status and touches no form.
+     */
+    if (!result.ok) {
+      const code = "code" in claimed.command ? String(claimed.command.code ?? "") : "";
+      const why = await diagnoseRunFailure({
+        ats: (await atsForCode(code).catch(() => "")) || "unknown",
+        ...(code ? { code } : {}),
+        outcome: String(claimed.command.name ?? "run"),
+        message: String(result.message ?? "").slice(0, 400),
+      }).catch(() => "");
+      if (why) console.log(`worker:   🔎 ${why}`);
+    }
     await completeCommand(claimed.file, result);
   }
 
@@ -794,6 +820,14 @@ async function tick(): Promise<void> {
     );
   }
   await writeWorkerStatus({ state: context ? "busy" : "idle", activity: context ? undefined : "waiting for commands", codeStale: stale });
+}
+
+/** The ATS a job is on, from the ledger - so a run note can be filed against the right tenant. */
+async function atsForCode(code: string): Promise<string> {
+  if (!code) return "";
+  const records = await loadApplications().catch(() => []);
+  const hit = records.find((r) => String((r as { code?: string }).code ?? "") === code);
+  return String((hit as { ats?: string } | undefined)?.ats ?? "");
 }
 
 /** The commit this process loaded, and whether the mismatch has been announced. */
