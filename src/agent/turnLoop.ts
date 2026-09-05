@@ -606,8 +606,22 @@ export async function runApplication(
       if (planTiles(pageHeight).length === 1) return shot; // already readable; do not re-shoot
       const file = path.join(opts.runDir!, `page-${pagesVerified}-slice${i + 1}.png`);
       try {
+        /**
+         * fullPage IS REQUIRED FOR THE CLIP TO MEAN WHAT WE INTEND.
+         *
+         * Without it Playwright clips to the VIEWPORT, so a tile at y=2000 on a 900px viewport is
+         * entirely outside the image: the capture is empty or invalid, and x8ocr rejects it with
+         * HTTP 422. That is what stopped ID.me being submitted twice after the candidate approved
+         * it - "the visual checker did not answer" was the checker refusing our picture, not the
+         * checker being down.
+         *
+         * It also explains the chronic partial coverage: slice 1 overlapped the viewport and
+         * usually survived, every later slice did not, which is exactly the "read 1 of 4 slice(s)"
+         * seen on 134 pages. The verdicts were being formed from the top of the form only.
+         */
         await page.screenshot({
           path: file,
+          fullPage: true,
           clip: { x: 0, y: tile.offsetY, width: width || 1440, height: tile.height },
         });
         return file;
