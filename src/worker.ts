@@ -194,6 +194,9 @@ const findEntry = async (code: string): Promise<PendingEntry | undefined> =>
  */
 const NEEDS_VERIFICATION = new Set(["apply", "retry", "change", "approve", "sweep"]);
 
+/** The last deferral printed, so a hold does not repeat itself on every tick. */
+let lastDeferral = { message: "", at: 0 };
+
 async function runCommand(command: Command): Promise<{ ok: boolean; message: string; defer?: boolean }> {
   /**
    * REFUSE TO FILL WITHOUT THE CHECKER.
@@ -766,7 +769,18 @@ async function tick(): Promise<void> {
     if (result.defer) {
       // Put it back rather than recording an outcome: the work has not been done, and
       // consuming it here would drop the user's approval while claiming it would retry.
-      console.log(`worker:   ⏸ ${result.message}`);
+      /**
+       * SAY IT ONCE. A deferral repeats on every tick for as long as whatever blocks it lasts, and
+       * the same sentence over and over is how worker.log filled with hundreds of identical
+       * "holding — the visual checker is down" lines while QDLZFL waited out a verdict that was
+       * already stale. Repeat only when the reason CHANGES, or every five minutes so a long hold
+       * still shows a pulse rather than looking like a stopped worker.
+       */
+      const heldAt = Date.now();
+      if (result.message !== lastDeferral.message || heldAt - lastDeferral.at > 5 * 60_000) {
+        console.log(`worker:   ⏸ ${result.message}`);
+        lastDeferral = { message: result.message, at: heldAt };
+      }
       await releaseCommand(claimed.file);
       break; // stop draining this tick — whatever blocks it blocks the rest too
     }
