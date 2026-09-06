@@ -429,7 +429,19 @@ export async function runApplication(
          * most likely to refuse a value - a styled radio whose real input is hidden - could never
          * be studied. Five refusals since study mode shipped, zero studies.
          */
-        if (driver.studyFailedField && (field.required || field.groupRequired) && !studied.has(field.label)) {
+        /**
+         * AND NOT ONLY WHEN SOMETHING SAYS IT IS REQUIRED.
+         *
+         * Uline's CC-305 boxes carry neither flag — the group detection did not attach the
+         * question on that tenant, so `groupRequired` was false too — and the box that refused to
+         * tick was therefore never studied. data/field-notes.json did not exist at all when the
+         * candidate asked why the same application kept coming back to him. Requiredness is a
+         * property of the FORM; a control that was told to take a value and did not is a failure
+         * whatever the form thinks, and it is the only moment the page is still open to look at.
+         *
+         * Still once per field per run, so a diagnosis stays bounded.
+         */
+        if (driver.studyFailedField && !studied.has(field.label)) {
           studied.add(field.label);
           const ats = driver.type ?? "unknown";
           /**

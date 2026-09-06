@@ -1,0 +1,31 @@
+<!doctype html>
+<!--
+  Uline GLDUAY's Self Identify page, reduced to the thing that broke it.
+
+  Workday gives every box in a CC-305 group the SAME name and no id, so a selector built from the
+  name identifies all three at once. Playwright refuses a multi-match in strict mode, and the
+  checkbox ladder swallows every error, so the field reported "tried but the field would not take
+  it" having touched nothing — four times over, on a REQUIRED question, holding an approved
+  application out of the queue.
+
+  The two boxes either side reported SUCCESS in the same run, because their answer was No and no
+  click is needed to leave a box clear. That asymmetry is the signature.
+-->
+<html>
+  <head><meta charset="utf-8" /><title>Self Identify</title></head>
+  <body>
+    <div data-automation-id="formField-disabilityStatus">
+      <label>Please check one of the boxes below: *</label>
+      <div class="group">
+        <label><input type="checkbox" name="disabilityStatus" /> Yes, I have a disability, or have had one in the past</label>
+        <label><input type="checkbox" name="disabilityStatus" /> No, I do not have a disability and have not had one in the past</label>
+        <label><input type="checkbox" name="disabilityStatus" /> I do not want to answer</label>
+      </div>
+    </div>
+
+    <!-- A lone consent box WITH an id: the ordinary case, which must keep its stable selector. -->
+    <div data-automation-id="formField-consent">
+      <label for="agree"><input type="checkbox" id="agree" name="agree" /> I agree to the terms</label>
+    </div>
+  </body>
+</html>

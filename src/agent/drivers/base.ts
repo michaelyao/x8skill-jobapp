@@ -716,12 +716,30 @@ export abstract class GenericDriver implements AtsDriver {
           continue;
         }
 
-        // Prefer stable id/name selectors (React re-renders strip custom attrs).
+        /**
+         * Prefer stable id/name selectors (React re-renders strip custom attrs) — BUT ONLY IF THE
+         * SELECTOR IDENTIFIES ONE CONTROL.
+         *
+         * A Workday checkbox group shares a single name across every box, so '[name="..."]'
+         * matched all three of Uline's CC-305 boxes at once. Playwright refuses a multi-match in
+         * strict mode, every step of the checkbox ladder swallows its own error, and isChecked()
+         * throws the same way — so the field reported "tried but the field would not take it"
+         * having never touched anything. The two boxes beside it reported SUCCESS, because their
+         * answer was No and no click was needed to leave a box clear. That is the whole signature
+         * seen on GLDUAY: the one box we actually had to tick was the one that failed, four times
+         * over, through label, parent, grandparent and a forced click.
+         *
+         * A stamped key is not as durable across a re-render, which is why it is the fallback and
+         * not the default. A key that points at three controls is not durable at all.
+         */
         const idAttr = c.getAttribute("id");
         const nameAttr = c.getAttribute("name");
+        const identifiesOne = (sel) => {
+          try { return document.querySelectorAll(sel).length === 1; } catch (e) { return false; }
+        };
         let key;
-        if (idAttr) key = '[id="' + idAttr + '"]';
-        else if (nameAttr) key = '[name="' + nameAttr + '"]';
+        if (idAttr && identifiesOne('[id="' + idAttr + '"]')) key = '[id="' + idAttr + '"]';
+        else if (nameAttr && identifiesOne('[name="' + nameAttr + '"]')) key = '[name="' + nameAttr + '"]';
         else { const dk = "f" + (i++); c.setAttribute("data-agent-key", dk); key = '[data-agent-key="' + dk + '"]'; }
         let label = labelFor(c).slice(0, 140);
         // Bare sub-field labels are meaningless alone. A Workday experience page presents 44
@@ -1369,6 +1387,20 @@ export abstract class GenericDriver implements AtsDriver {
       // name" into the review email's "no answer available" list, even though the answer
       // (No) was known all along, and left the field looking unresolved.
       const wantChecked = /^(yes|true|y|i agree|agree|i acknowledge|check)/i.test(value.trim());
+      /**
+       * SAY IT WHEN THE SELECTOR IS AMBIGUOUS. Every action below swallows its own error, so a
+       * locator pointing at more than one control fails exactly like a covered one and the log
+       * reads "the field would not take it" either way. read() now stamps a unique key rather
+       * than reusing a shared name, so this should not happen — and if it does, it should be a
+       * sentence rather than four silent no-ops.
+       */
+      const matched = await locator.count().catch(() => 1);
+      if (matched !== 1) {
+        console.log(
+          `      · ${field.label.slice(0, 50)}: the selector matches ${matched} controls — cannot fill one of them`,
+        );
+        return false;
+      }
       const current = await locator.isChecked().catch(() => false);
       if (current !== wantChecked) {
         /**
