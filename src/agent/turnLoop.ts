@@ -5,6 +5,7 @@ import type { Page } from "playwright";
 import type { DocumentUploads, HistoryOutcome, Agent, AgentContext, AtsDriver, FieldSpec, FilledAnswer } from "./types.js";
 import { ocrLayoutTiled } from "../knowledge/visualCheck.js";
 import { captureFormShot, captureTallTiles } from "./formShot.js";
+import { CAPTCHA_PROBE } from "../core/captchaGate.js";
 import { planTiles } from "../knowledge/tiles.js";
 import { judgePageLanguage } from "../core/pageLanguage.js";
 import { isExclusiveGroup } from "../core/fieldGroups.js";
@@ -200,6 +201,20 @@ export async function runApplication(
 
   await driver.openApplication(page);
   let root = await driver.resolveRoot(page);
+  /**
+   * A CHALLENGE IN FRONT OF THE FORM IS NOT A FIELD THAT WILL NOT TAKE A VALUE.
+   *
+   * ACDS MWSNDJ came back six times as "blocked on: Current location ✱" — a plain text input that
+   * study mode found enabled, writable and uncovered. Two hCaptcha iframes were sitting over the
+   * whole viewport with the keyboard focus, so "Sun" typed into the field landed and was wiped
+   * 300ms later. Said plainly, it stops; said as a stuck field, it is a re-fill loop with no end.
+   *
+   * ASKED WHEN A FIELD REFUSES, not on arrival. Measured on that posting: eight seconds after load
+   * the probe says clear, and the overlay is up during the interaction — a pre-flight check would
+   * have passed and taught us nothing. The symptom is the right moment to look.
+   */
+  const challengeInTheWay = async (): Promise<string> =>
+    String((await root.evaluate(CAPTCHA_PROBE).catch(() => "")) || "");
   if (await driver.isAlreadyApplied(root)) {
     return { turns: 0, filled, answers: answers(), drafts, unknown, failedToFill, observedFields: [], reachedReview: false, alreadyApplied: true, blockedRequired, resumeAttached: false, documents: { attached: [], missing: [] } };
   }
@@ -426,6 +441,18 @@ export async function runApplication(
       } else {
         if (!failedToFill.includes(field.label)) failedToFill.push(field.label);
         console.log(`    ✗ tried but the field would not take it: ${field.label}`);
+        // Before blaming the control: is a challenge standing in front of the form right now?
+        const blocking = await challengeInTheWay();
+        if (blocking) {
+          console.log(`    ⛔ ${blocking} — this application needs a person; we do not answer challenges.`);
+          if (!blockedRequired.some((b) => b.includes("CAPTCHA"))) {
+            blockedRequired = [
+              ...blockedRequired,
+              `${blocking} — a CAPTCHA stands in front of this form, so it needs a person`,
+            ];
+          }
+          break;
+        }
         /**
          * STUDY IT NOW, while the page is still open.
          *
