@@ -252,8 +252,18 @@ const PRIORITY: Record<string, number> = {
  * skip, visual_check — seconds each, and one of them gates a submit) and above every re-fill,
  * apply and sweep.
  */
-const rank = (cmd: { name: string; priority?: number }): number =>
-  typeof cmd.priority === "number" ? cmd.priority : (PRIORITY[cmd.name] ?? 2);
+/**
+ * An explicit priority may PROMOTE a command, never demote it.
+ *
+ * `--now` sets priority 1, which is right for a re-fill the candidate asked for by name and wrong
+ * for a decision: `approve` already ranks 0, so `jobapp approve CODE --now` was writing rank 1 and
+ * pushing his own approval BEHIND the ordinary decisions it should sit among. Seen live on QCJHTQ,
+ * queued behind 243 re-runs. "Do this now" cannot be the thing that makes it wait.
+ */
+const rank = (cmd: { name: string; priority?: number }): number => {
+  const natural = PRIORITY[cmd.name] ?? 2;
+  return typeof cmd.priority === "number" ? Math.min(cmd.priority, natural) : natural;
+};
 
 /**
  * Release commands a dead worker had claimed.
