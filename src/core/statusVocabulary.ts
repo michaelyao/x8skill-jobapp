@@ -108,6 +108,17 @@ export const QUEUE_STAGES: Record<string, StageWords> = {
   submitted: LEDGER_STAGES.submitted,
   manual_submitted: LEDGER_STAGES.manual_submitted,
   skipped: LEDGER_STAGES.skipped_existing,
+  /**
+   * THE POSTING CLOSED, which is not a failure and not a decision anyone has to take.
+   *
+   * The expiry check writes the LEDGER and stopped there, so four of the six applications on the
+   * candidate's "Stopped — nothing was sent" list were dead postings still being offered to him
+   * with their last live reason attached — "Country Phone Code*", "did not reach review on
+   * replay" — and a link labelled "open posting". Uline JABTXR, Securityriskadvisors NMVTAA,
+   * Hypercubic JNBEPY and Blockhouse QWRTQA were all closed, and re-filling them could only ever
+   * produce the same list again. Two stores, and only one of them was told.
+   */
+  expired: LEDGER_STAGES.expired,
   error: {
     label: "gave up — nothing sent",
     meaning: "Approved, but the submit failed three times and it stopped trying. Nothing was sent.",

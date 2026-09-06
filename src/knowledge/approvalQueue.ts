@@ -21,7 +21,15 @@ const QUEUE_PATH = path.join(DATA_DIR, "pending-approvals.json");
  * went in and must never be re-opened, re-filled or re-submitted. Recording it as a skip is
  * how a live application gets applied for a second time on the next sweep.
  */
-export type PendingStatus = "awaiting_approval" | "submitting" | "submitted" | "manual_submitted" | "skipped" | "error";
+export type PendingStatus =
+  | "awaiting_approval"
+  | "submitting"
+  | "submitted"
+  | "manual_submitted"
+  | "skipped"
+  /** The posting closed. Not a failure and not a decision — it simply cannot be applied to. */
+  | "expired"
+  | "error";
 
 /**
  * Queue statuses that mean the application WENT IN — by us or by hand.

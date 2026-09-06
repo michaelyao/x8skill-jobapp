@@ -647,6 +647,22 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
       // of the 82 entries in the failure list were listings that simply no longer exist. That
       // buries the real failures and invites debugging a filling bug that is not there.
       if (outcome.summaryItem?.outcome === "expired") {
+        /**
+         * AND CLOSE THE QUEUE ENTRY, not only the ledger.
+         *
+         * This wrote `expired` to the ledger and left the queue entry on whatever it last failed
+         * with, so four of the six applications on the candidate's "Stopped — nothing was sent"
+         * list were dead postings still being offered to him under their last live reason —
+         * "Country Phone Code*", "did not reach review on replay" — beside a link labelled "open
+         * posting". Re-filling them could only ever reproduce the list. Every dedupe guard reads
+         * the ledger, so nothing was at risk; what was wrong was what he was being shown.
+         */
+        const closed = await findEntry(command.code);
+        if (closed && !isSubmittedStatus(closed.status)) {
+          await updatePendingStatus(closed.key, "expired", {
+            lastError: "the posting closed — nothing to apply to",
+          }).catch(() => undefined);
+        }
         return { ok: true, message: `[${command.code}] posting is closed — recorded as expired, will not be re-opened` };
       }
       /**

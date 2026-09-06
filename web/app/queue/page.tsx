@@ -99,6 +99,13 @@ export default async function QueuePage() {
   // and /blocked skips anything that has a queue entry — so it was visible on neither page. It
   // needs you more than anything else here.
   const gaveUp = queue.filter((e) => e.status === "error");
+  /**
+   * Closed postings leave this page, because there is no decision left to take — but they are
+   * COUNTED, not silently dropped. Four of the six on the "Stopped" list were dead listings still
+   * being offered under their last live reason, and going straight from six rows to two with no
+   * explanation would read as though they had been sent.
+   */
+  const closed = queue.filter((e) => e.status === "expired");
   const submitting = queue.filter((e) => e.status === "submitting");
   // Two liveness signals, because the heartbeat alone is not enough: it can freeze while the
   // worker is inside a long submit, and a frozen heartbeat would make a live submission look
@@ -117,6 +124,14 @@ export default async function QueuePage() {
           <>
             {" "}
             {elsewhere} more are still being worked on — see <a href="/status">Status</a>.
+          </>
+        ) : null}
+        {closed.length ? (
+          <>
+            {" "}
+            {closed.length} {closed.length === 1 ? "posting has" : "postings have"} closed while
+            queued — nothing to apply to, and no sweep will re-open{" "}
+            {closed.length === 1 ? "it" : "them"}.
           </>
         ) : null}
       </p>
