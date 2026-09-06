@@ -3,7 +3,7 @@ import { GenericDriver } from "./base.js";
 import { isSensitive } from "../llmAgent.js";
 import { fetchWorkdayActivateLink, fetchWorkdayResetLink } from "../../knowledge/workdayReset.js";
 import type { FieldAnswer, FieldSpec, PageSnapshot, Root } from "../types.js";
-import { recordAuthAlert, clearAuthAlert } from "../../knowledge/authAlerts.js";
+import { recordAuthAlert, clearAuthAlert, readAuthAlerts } from "../../knowledge/authAlerts.js";
 import { preferredHearAboutUs } from "../llmAgent.js";
 import { bestBand } from "../../core/factChecks.js";
 
@@ -232,6 +232,36 @@ export class WorkdayDriver extends GenericDriver {
     // Per policy: CREATE ACCOUNT first (uses the current resume via "Autofill with
     // Resume" — never "Use My Last Application", which carries stale data). Only
     // fall back to Sign In when Workday says the account already exists.
+    /**
+     * A TENANT WE ALREADY KNOW WE CANNOT GET INTO IS NOT TRIED AGAIN.
+     *
+     * recordAuthAlert has been writing these all along and nothing ever read them back, so every
+     * run walked the whole create → sign-in → reset ladder against tenants that had already
+     * exhausted it. Thirteen tenants are in that file, all at "create, sign-in and password reset
+     * all failed", covering 23 of the failed applications — and one had been hit SEVEN times.
+     *
+     * That is worse than wasted minutes. Each pass submits another wrong password and another
+     * reset request to a real employer's account, which is a good way to get "your account might be
+     * locked" to become true, and the tenant's answer is deliberately ambiguous so we cannot tell
+     * whether we just did.
+     *
+     * One account, created by hand, fixes every job on that tenant — which is why the alert counts
+     * hits. It expires after twelve hours so a tenant that has been fixed, or has changed its mind,
+     * is tried again without anyone having to clear anything; any success clears it outright.
+     */
+    const tenant = tenantOf(startUrl);
+    const HOLD_MS = 12 * 60 * 60 * 1000;
+    const known = (await readAuthAlerts().catch(() => []))
+      .find((a) => a.tenant === tenant && Date.now() - Date.parse(a.at) < HOLD_MS);
+    if (known) {
+      const age = Math.round((Date.now() - Date.parse(known.at)) / 60000);
+      console.log(
+        `[workday] ${tenant} already refused create, sign-in and reset ${known.hits}× (last ${age} min ago) — not asking again. ` +
+          `Create the candidate account by hand and every job on this tenant unblocks.`,
+      );
+      return;
+    }
+
     let triedCreate = false;
     let triedSignIn = false;
     let triedReset = false;
@@ -438,11 +468,20 @@ export class WorkdayDriver extends GenericDriver {
         continue;
       }
 
-      // Resume upload step.
+      /**
+       * Resume upload step — HAND IT OVER rather than fight it.
+       *
+       * This clicked Continue and looped. On "Autofill with Resume" that can never work: the page
+       * will not advance until a file is attached, and this function has no resume to attach — the
+       * turn loop owns documents. So it burned all sixteen tries, gave up, and the turn loop then
+       * uploaded the resume onto a page nothing knew how to advance from. 130 runs ended there.
+       *
+       * Returning hands the page to the caller in the state it wants it: upload step reached,
+       * signed in, resume not yet attached. It attaches the resume and next() advances.
+       */
       if (await count('input[type="file"]')) {
-        if (!(await count(NEXT_BTN))) await clickRole(/continue|next|save/i);
-        await page.waitForTimeout(2000);
-        continue;
+        console.log("[workday] at the resume upload step — handing over so the resume can be attached");
+        return;
       }
 
       // Job posting page → Apply.
@@ -1386,8 +1425,33 @@ export class WorkdayDriver extends GenericDriver {
   async next(root: Root): Promise<boolean> {
     await this.clearOverlay(root);
     const page = root as Page;
-    const btn = root.locator(NEXT_BTN).first();
-    if (!(await btn.count().catch(() => 0))) return false;
+    let btn = root.locator(NEXT_BTN).first();
+    if (!(await btn.count().catch(() => 0))) {
+      /**
+       * THE AUTOFILL PAGE HAS NO pageFooterNextButton, AND IT IS WHERE 130 RUNS DIED.
+       *
+       * "Autofill with Resume" is the single commonest place a Workday run stopped at turn one:
+       * 130 of the 344 zero-field stops in the log, every one of them reading "0 field(s)" and
+       * then "No next control — stopping". The page is an upload step, so it legitimately has no
+       * form fields — and its footer control is not the one every later page uses, so next() saw
+       * nothing to click and the run ended before the application had begun.
+       *
+       * The order in the log is what gives it away: openApplication reaches this page and cannot
+       * advance because no resume has been attached yet, gives up after its sixteen tries, and the
+       * TURN LOOP then attaches the resume — "✓ resume attached (the form is showing the file)" —
+       * at which point the page is ready to advance and nothing knows how to.
+       *
+       * So fall back to the button by its words. Never a submit: the /submit/ guard below applies
+       * to whatever is found here, and the SUBMIT blocklist sits in front of all of it.
+       */
+      const byWords = root
+        .getByRole("button", { name: /^(continue|next|save and continue)$/i })
+        .first();
+      if (!(await byWords.count().catch(() => 0))) return false;
+      if (!(await byWords.isVisible().catch(() => false))) return false;
+      console.log("    [workday] no page-footer button — advancing with the page's own Continue");
+      btn = byWords;
+    }
     // On the Review step the footer button reads "Submit" — never click it here.
     const text = ((await btn.innerText().catch(() => "")) || "").toLowerCase();
     if (/submit/.test(text)) return false;
