@@ -1565,6 +1565,22 @@ export abstract class GenericDriver implements AtsDriver {
         return false;
       }
     }
+    /**
+     * A DATE PART IS COMMITTED BY LEAVING IT, not by holding the right characters.
+     *
+     * fillDate has known this for a while — "Blur commits the same value and cannot submit
+     * anything" — and the date PART path never learned it. Uline's CC-305 signature date showed
+     * 09/05/2026 in the box, red-bordered, while Workday answered "The field Date is required and
+     * must have a value" to every Save and Continue: the characters were in the input and the
+     * widget had never been told the entry was finished.
+     *
+     * Only for date parts. An ordinary text field commits on input and blurring each one would be
+     * three extra round trips per field for nothing.
+     */
+    if (datePartOf(field.label)) {
+      await locator.blur().catch(() => undefined);
+      await locator.page().waitForTimeout(80);
+    }
     return true;
   }
 
