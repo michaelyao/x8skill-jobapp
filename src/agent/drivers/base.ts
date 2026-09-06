@@ -340,8 +340,21 @@ export abstract class GenericDriver implements AtsDriver {
     field: FieldSpec,
     context: { ats: string; code?: string; runDir?: string },
   ): Promise<string> {
+    /**
+     * EVERY WAY OUT OF HERE SAYS WHY.
+     *
+     * This returned "" from three places without a word, so a study that never ran and a study
+     * that ran and found nothing were the same thing from outside: no log line, no note, nothing
+     * in data/field-notes.json — which is why that file did not exist at all while GLDUAY came
+     * back to the candidate a third time. The mechanism whose whole job is to explain a failure
+     * must not be the quietest thing in the run.
+     */
     const control = root.locator(field.key).first();
-    if (!(await control.count().catch(() => 0))) return "";
+    const found = await control.count().catch(() => 0);
+    if (!found) {
+      console.log(`    🔬 cannot study "${field.label.slice(0, 46)}": ${field.key} matches nothing now`);
+      return "";
+    }
 
     const shot = context.runDir
       ? path.join(context.runDir, `field-${(field.label || "unnamed").replace(/[^a-z0-9]+/gi, "-").slice(0, 40)}.png`)
@@ -375,8 +388,15 @@ export abstract class GenericDriver implements AtsDriver {
         html: clean(el.outerHTML).slice(0, 400),
       });
     }`;
-    const facts = await control.evaluate(DESCRIBE).catch(() => "");
-    if (!facts) return "";
+    const facts = await control.evaluate(DESCRIBE).catch((error: Error) => {
+      console.log(`    🔬 cannot study "${field.label.slice(0, 46)}": ${error.message.split("\n")[0].slice(0, 90)}`);
+      return "";
+    });
+    if (!facts) {
+      console.log(`    🔬 "${field.label.slice(0, 46)}" described itself as nothing`);
+      return "";
+    }
+    console.log(`    🔬 ${field.label.slice(0, 46)}: ${String(facts).slice(0, 300)}`);
 
     const diagnosis = await explainStuckField(field.label, String(facts)).catch(
       () => ({ why: "the study itself failed", remedy: "none" as const }),
@@ -391,7 +411,10 @@ export abstract class GenericDriver implements AtsDriver {
       at: new Date().toISOString(),
       remedy: diagnosis.remedy,
       ...(context.code ? { code: context.code } : {}),
-    }).catch(() => undefined);
+      // A note that failed to write is a lesson lost, and this swallowed it.
+    }).catch((error: Error) => {
+      console.log(`    🔬 could not record the note: ${error.message.split("\n")[0].slice(0, 100)}`);
+    });
     this.lastRemedy = diagnosis.remedy;
     return line;
   }

@@ -476,7 +476,11 @@ export async function runApplication(
               ats: driver.type ?? "unknown",
               ...(opts.runDir ? { runDir: opts.runDir } : {}),
             })
-            .catch(() => "");
+            // A study that throws used to vanish here, which is the same silence it exists to end.
+            .catch((error: Error) => {
+              console.log(`    🔬 the study itself threw: ${error.message.split("\n")[0].slice(0, 100)}`);
+              return "";
+            });
           /**
            * AND THEN TRY THE REMEDY, HERE, WHILE THE PAGE IS STILL OPEN.
            *
