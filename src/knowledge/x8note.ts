@@ -121,10 +121,41 @@ export function noteMarkdown(record: ApplicationRecord): string {
     "## Resume",
     resumeSection(record),
     "",
+    "## Review screenshot",
+    screenshotSection(record),
+    "",
     "## Job description",
     record.jobDescription || "_none captured_",
   ];
   return lines.filter((line) => line !== "").join("\n");
+}
+
+/**
+ * WHERE THE PICTURE OF THE FILLED FORM IS, rather than the picture itself.
+ *
+ * The note LINKS to the screenshot; it does not embed it. save-article takes `imageUrls` and
+ * downloads them, so embedding would mean serving the image to a remote fetcher — x8note is behind
+ * Cloudflare, not on this machine — and it would then be re-hosted on x8img. That screenshot is the
+ * filled application: name, email, phone, home address and every answer. `/api/screenshot/[code]`
+ * says it plainly — "Screenshots show the filled application — PII. Never serve one without a
+ * session" — and that is a decision already taken in this codebase, not one to reverse in passing.
+ *
+ * A link costs nothing and gives up nothing: the note is read in a browser, and the browser either
+ * has the session or is asked for it.
+ */
+function screenshotSection(record: ApplicationRecord): string {
+  if (!record.code) return "_no code — cannot link a screenshot_";
+  // PUBLIC_URL is deliberately unset in .env so the LAN address and the public name both work; the
+  // note is read by a person, so it gets the name they actually browse.
+  const base = (process.env.PUBLIC_URL?.trim() || "https://job.studiox8.com").replace(/\/+$/, "");
+  if (!record.lastRunDir) return "_none captured for this run_";
+  return [
+    `[The filled form as it was photographed](${base}/api/screenshot/${record.code})`,
+    "",
+    `[Review page](${base}/queue/${record.code}) — the same screenshot beside the answers, with the buttons.`,
+    "",
+    "_Sign-in required: the screenshot carries the address and phone number that were filled in._",
+  ].join("\n");
 }
 
 interface SaveArticleResponse {
