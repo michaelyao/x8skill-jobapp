@@ -277,6 +277,57 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
       };
     }
 
+    case "mark_closed": {
+      /**
+       * THE CANDIDATE CAN SEE A DEAD POSTING IN A SECOND; WE NEED A WHOLE RUN TO FIND OUT.
+       *
+       * Four of the six applications on his "Stopped — nothing was sent" list were listings that
+       * no longer existed, and discovering that cost an evening of re-fills. He asked for a button.
+       *
+       * BOTH STORES, for the same reason manual_submit writes both: the queue entry is what the
+       * page shows, and the LEDGER is what every dedupe and sweep guard reads. Marking only the
+       * queue would leave the next sweep free to pick the dead posting up again.
+       *
+       * Never over a submitted status. If it went in, it went in — the posting closing afterwards
+       * is the normal life of a job listing and says nothing about our application.
+       */
+      const entry = await findEntry(command.code);
+      const applications = await loadApplications();
+      const record = applications.find((a) => a.code === command.code || a.id === command.code);
+      if (!entry && !record) return { ok: false, message: `no job known as ${command.code}` };
+      if (entry && isSubmittedStatus(entry.status)) {
+        return { ok: false, message: `[${command.code}] is already ${entry.status} — a posting closing after we applied changes nothing` };
+      }
+      if (entry?.status === "submitting") {
+        return {
+          ok: false,
+          message: `[${command.code}] is stuck mid-submit — confirm on the ATS before closing it out`,
+        };
+      }
+
+      const closedAt = new Date().toISOString();
+      const by = command.actor ?? command.source;
+      const wrote: string[] = [];
+      const why = command.note?.trim() || "the posting is closed";
+      if (entry) {
+        await upsertPending({ ...entry, status: "expired", decidedAt: closedAt, approvedBy: by });
+        wrote.push("queue");
+      }
+      if (record) {
+        // setApplicationStatus, never recordApplication: ledger records are slim and the full
+        // writer would write the description and answers back empty.
+        const result = await setApplicationStatus(record.id, "expired", `${why} — marked by ${by}`);
+        if (result.unchangedBecause) wrote.push(`ledger unchanged (${result.unchangedBecause})`);
+        else if (result.record) wrote.push("ledger");
+      } else {
+        wrote.push("no ledger record");
+      }
+      return {
+        ok: true,
+        message: `[${command.code}] recorded as a closed posting${by ? ` by ${by}` : ""} (${wrote.join(", ")}) — no sweep will re-open it`,
+      };
+    }
+
     case "approve": {
       const entry = await findEntry(command.code);
       if (!entry) return { ok: false, message: `no queue entry for ${command.code}` };

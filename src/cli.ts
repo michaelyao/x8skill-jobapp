@@ -51,6 +51,7 @@ Usage
   jobapp change <CODE> --hint TEXT    re-fill applying a correction, then re-review
   jobapp skip <CODE>                  drop it from the queue — no application was filed
   jobapp manual-submit <CODE>         you filled and submitted it yourself on the ATS
+  jobapp mark-closed <CODE>           the posting is gone — stop offering it
   jobapp history <CODE>               every recorded copy of that application
   jobapp notes [--all]                what the reviewer said is wrong, from the review page
   jobapp notes done <ID> --hint TEXT  mark a note dealt with, saying what was done
@@ -297,6 +298,8 @@ switch (verb) {
   case "apply":
   case "skip":
   case "manual-submit":
+  case "mark-closed":
+  case "mark_closed":
   case "manual_submit":
   case "change": {
     if (!code) {
@@ -310,7 +313,7 @@ switch (verb) {
       break;
     }
     // The verb is hyphenated for typing; the command name is not.
-    exit = await send(verb === "manual-submit" ? "manual_submit" : verb, code, args);
+    exit = await send(verb === "manual-submit" ? "manual_submit" : verb === "mark-closed" ? "mark_closed" : verb, code, args);
     break;
   }
   /**

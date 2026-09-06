@@ -24,6 +24,7 @@ export type CommandName =
   | "approve"
   | "skip"
   | "manual_submit"
+  | "mark_closed"
   | "apply"
   | "change"
   | "retry"
@@ -73,6 +74,18 @@ export type Command = Base &
          * no application exists.
          */
         name: "manual_submit";
+        code: string;
+        /** Optional free-text note, kept on the ledger record. */
+        note?: string;
+      }
+    | {
+        /**
+         * The candidate looked at the posting and it is gone. Same shape as manual_submit and for
+         * the same reason: he can see in a second what costs us a whole run to discover, and four
+         * of the six applications on his "Stopped" list turned out to be dead listings we had
+         * spent an evening re-filling.
+         */
+        name: "mark_closed";
         code: string;
         /** Optional free-text note, kept on the ledger record. */
         note?: string;
@@ -206,6 +219,9 @@ const PRIORITY: Record<string, number> = {
   skip: 0,
   // A decision, like approve and skip: it takes no browser and the user is waiting on it.
   manual_submit: 0,
+  // A decision too, and a cheap one: no browser, two file writes, and it stops a dead posting
+  // being re-filled while it waits its turn.
+  mark_closed: 0,
   // Same class, for the same two reasons: it is a JSON evaluation and a file write (no browser),
   // and its verdict GATES the submit — an approved application sits unsent until this lands. Left
   // to the default rank of 2 it would queue behind a `change`, and behind whatever fill is already

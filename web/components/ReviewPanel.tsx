@@ -6,7 +6,7 @@ import { useMemo, useState } from "react";
  * Commands that settle what happens to this application. `update_answers` is not one — it teaches
  * the answer store and is sent as part of approving, so it must not lock anything on its own.
  */
-const DECISIONS = new Set(["approve", "skip", "manual_submit", "change"]);
+const DECISIONS = new Set(["approve", "skip", "manual_submit", "mark_closed", "change"]);
 import type { PendingEntry } from "@core/knowledge/approvalQueue.js";
 
 interface Props {
@@ -41,6 +41,8 @@ const DECIDED: Record<string, string> = {
   manual_submitted: "Submitted by hand on the employer's site",
   submitted: "Submitted",
   skipped: "Skipped — no application was filed",
+  // A closed posting is settled too: there is nothing to approve, and nothing to re-fill.
+  expired: "The posting is closed — nothing to apply to",
 };
 
 /**
@@ -245,6 +247,17 @@ export function ReviewPanel({ entry, description, noteUrl, requisitionId, role, 
           <button onClick={() => send("skip")} disabled={busy !== null || decided !== null || Boolean(queuedDecision)}>Skip</button>
           <button onClick={() => setConfirmManual(true)} disabled={busy !== null || decided !== null || Boolean(queuedDecision) || confirmManual}>
             I submitted this myself…
+          </button>
+          {/*
+            You can see a dead posting in a second; finding out by re-filling costs a whole run.
+            Four of the six on the "Stopped" list turned out to be closed listings.
+          */}
+          <button
+            onClick={() => send("mark_closed")}
+            disabled={busy !== null || decided !== null || Boolean(queuedDecision)}
+            title="The posting is gone. Records it in both stores so no sweep re-opens it."
+          >
+            {busy === "mark_closed" ? "Closing…" : "Posting is closed"}
           </button>
           <button onClick={() => setShowChange((v) => !v)} disabled={busy !== null || decided !== null || Boolean(queuedDecision)}>Request re-fill…</button>
           {edited ? <span className="pill warn">{editedCount} edited — these become the approved answers</span> : null}
