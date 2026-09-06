@@ -412,6 +412,22 @@ export abstract class GenericDriver implements AtsDriver {
       console.log(`    🔬 "${field.label.slice(0, 46)}" described itself as nothing`);
       return "";
     }
+    /**
+     * THE FACTS GO TO A FILE, not only to a log line.
+     *
+     * The line is capped at 300 characters and the control's own HTML is the last key in the
+     * object, so it was always the part that got cut — three separate times I went looking for
+     * what a stuck control actually IS and found `"html":"<input id=\"64cbff5f...` and nothing
+     * more. The whole point of studying a field while the page is open is that the evidence
+     * survives the run.
+     */
+    if (shot) {
+      try {
+        fs.writeFileSync(shot.replace(/\.png$/, ".json"), `${String(facts)}\n`, "utf8");
+      } catch {
+        // a diagnosis we could not file is still a diagnosis in the log
+      }
+    }
     console.log(`    🔬 ${field.label.slice(0, 46)}: ${String(facts).slice(0, 300)}`);
 
     const diagnosis = await explainStuckField(field.label, String(facts)).catch(
