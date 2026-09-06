@@ -357,6 +357,25 @@ export async function runApplication(
             if (!unknown.includes(field.label)) unknown.push(field.label);
             continue;
           }
+          /**
+           * A FIELD WE LEAVE ALONE BECAUSE IT IS FILLED IS FILLED, WHETHER OR NOT WE CAN READ IT.
+           *
+           * These two were the same statement, so a control that read() reports as filled but
+           * whose value it cannot hand back was skipped AND left out of filledLabels — and the
+           * readiness gate then refused the whole application over it.
+           *
+           * GLDUAY reached Review complete and was blocked on "2 field(s) the form marks REQUIRED
+           * have no answer: start Date - From* - Work Experience 6 - Month, end Date - To* - Work
+           * Experience 6 - Month". The screenshot of that very run shows From 06/2023 and To
+           * 08/2023, filled, on the page. Nothing was wrong with the form; we simply had no answer
+           * recorded for a field we had decided not to touch. That is the "3 required fields have
+           * no answer for three fields that were filled" failure, again.
+           *
+           * Whether we can quote the value is a separate question from whether the form has one:
+           * the answer is recorded only when it can be read, and the field counts as satisfied
+           * either way. Nothing is submitted here that was not already on the page.
+           */
+          filledLabels.add(field.label);
           if (field.value?.trim()) {
             answersByLabel.set(field.label, {
               label: field.label,
@@ -364,7 +383,6 @@ export async function runApplication(
               value: field.value.trim(),
               widget: field.widget,
             });
-            filledLabels.add(field.label);
           }
           console.log(
             `    ↳ already has a value, leaving it: ${field.label.slice(0, 48)}` +
