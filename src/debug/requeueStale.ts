@@ -40,7 +40,18 @@ const alreadyQueued = new Set(
 );
 
 const stale = applications
-  .filter((a) => a.status === "error")
+  /**
+   * "Stale" is anything the candidate cannot act on: a run that FAILED, and — the case he found
+   * himself — a run that FINISHED and was never queued. CDRDUK (Johnson & Johnson) reached Review
+   * on 6 September, recorded prefilled_pending_submit, and had no queue entry at all, so
+   * /applications showed it as done while /queue had nothing. Ten were in that state going back to
+   * 27 August. A finished application nobody can see is worse than a failed one.
+   */
+  .filter(
+    (a) =>
+      a.status === "error" ||
+      (a.status === "prefilled_pending_submit" && !(a.code && byCode.has(a.code))),
+  )
   .filter((a) => {
     const entry = a.code ? byCode.get(a.code) : undefined;
     if (entry && isSubmittedStatus(entry.status)) return false;

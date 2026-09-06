@@ -773,17 +773,60 @@ export async function applyToJob(
         });
         await jobPage.close().catch(() => undefined);
 
-        // A PREVIOUS fill of this job may already be sitting in the queue as awaiting_approval —
-        // that is exactly the case on a re-fill, which is when this fires. Blocking the new attempt
-        // while leaving the old entry approvable is the worst of both: the run says the application
-        // is not worth sending, and the website still offers an Approve button for the older,
-        // equally incomplete copy of it. Seen on NMVTAA (1 of 7 roles). Mark it `error` — it is
-        // excluded from listAwaiting(), so approve and retry both refuse it until a good re-fill
-        // replaces it.
-        await retireStaleQueuedCopy(job.id || identity.identityKey, `incomplete: ${describeProblems(gaps)}`, job.id);
+        /**
+         * The previous copy is REPLACED rather than retired.
+         *
+         * This used to mark the old entry `error` so nobody could approve a stale incomplete copy
+         * (NMVTAA, 1 of 7 roles) — correct when the new attempt was not going to be queued at all.
+         * Now it is: the upsert below writes THIS fill's answers under the same key, with the
+         * reason attached, so what the candidate sees is the latest state of the application rather
+         * than a parked older one. Retiring it here would only be undone a few lines later, and its
+         * log line — "marked error so it cannot be approved" — would be false as soon as it printed.
+         */
 
-        // NOT queued for approval — it goes to /blocked with the reason, so nobody is asked to
-        // approve an application with no education on it.
+        /**
+         * IT IS QUEUED ANYWAY, and that is a reversal.
+         *
+         * This used to return here without writing a queue entry — "it goes to /blocked with the
+         * reason, so nobody is asked to approve an application with no education on it". The
+         * result: the ledger recorded `prefilled_pending_submit`, /applications showed the job as
+         * finished, and /queue had nothing at all. The candidate found CDRDUK (Johnson & Johnson)
+         * that way and asked why a finished application was not there for him to review. TEN were
+         * in that state, from 27 August onwards, across five ATSes — finished, recorded, invisible.
+         *
+         * His instruction on this is explicit and was given twice: "You need bring them back to me
+         * and make them work. I AM THE ONE WHO DECIDE WHICH ONE TO PROCEED." Withholding an
+         * application because we judged it not worth sending is exactly the decision that is his.
+         *
+         * Safe to queue, because two things independently refuse to send it: splitQueue re-derives
+         * the problems from the entry, so it lists under "needs work" rather than as ready to
+         * approve; and the worker's approve path already answers "NOT submitting — the queued
+         * application is incomplete". So this makes it VISIBLE without making it sendable.
+         */
+        await upsertPending({
+          key: job.id || identity.identityKey,
+          code: job.id,
+          identityKey: identity.identityKey,
+          externalJobId: identity.externalJobId || undefined,
+          companyReqId: identity.companyReqId,
+          ats: recordedAts,
+          company: job.company,
+          title: job.title,
+          applyUrl: job.applyUrl,
+          location: job.location,
+          region: job.region,
+          resumeName: resume.name,
+          resumeStandard: resume.isStandard,
+          jobDescription: jobDescriptionResolved,
+          filledFields: result.filled,
+          answers: result.answers,
+          reviewSentAt: new Date().toISOString(),
+          status: "awaiting_approval",
+          attempts: 0,
+          lastError: `incomplete: ${describeProblems(gaps)}`,
+          reapproval: undefined,
+          visualCheck,
+        });
         return finish("prefilled_pending_submit", [`incomplete: ${describeProblems(gaps)}`], {
           blockedRequired: gaps.map((g) => g.message),
         });
