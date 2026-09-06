@@ -262,6 +262,10 @@ export async function applyToJob(
         let result = await postApplicationNote(x8note, saved);
         if (!result.noteId) result = await postApplicationNote(x8note, saved);
         if (result.noteId) saved.x8noteId = result.noteId;
+        if (result.screenshotUrl && saved.lastRunDir) {
+          saved.x8noteScreenshotUrl = result.screenshotUrl;
+          saved.x8noteScreenshotRun = path.basename(saved.lastRunDir);
+        }
         console.log(`  x8note: ${result.status}${result.noteId ? "" : " — content NOT stored, re-run this job to retry"}`);
       }
     }

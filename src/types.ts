@@ -183,6 +183,10 @@ export interface ApplicationRecord {
     otherStatus?: string;
   };
   x8noteId?: string; // the note this application is stored in
+  /** The review screenshot in x8note's image store, embedded in that note. */
+  x8noteScreenshotUrl?: string;
+  /** Which run that upload is of, so a re-sync re-uses it instead of uploading another copy. */
+  x8noteScreenshotRun?: string;
   status:
     | "prefilled_pending_submit"
     | "submitted"

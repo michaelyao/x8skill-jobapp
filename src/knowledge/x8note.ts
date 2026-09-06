@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
-import { X8NOTE_CONFIG_PATH } from "../config.js";
+import path from "node:path";
+import { LOGS_DIR, X8NOTE_CONFIG_PATH } from "../config.js";
 import type { ApplicationRecord } from "../types.js";
 
 export interface X8NoteConfig {
@@ -75,7 +76,7 @@ function resumeSection(record: ApplicationRecord): string {
  * pairs with the same draft flags, and the FULL job description. The note is the
  * durable copy of what was reviewed, so it must not be a summary of it.
  */
-export function noteMarkdown(record: ApplicationRecord): string {
+export function noteMarkdown(record: ApplicationRecord, screenshotUrl?: string): string {
   // Prefer the structured answers; fall back to parsing the "label: value" strings so
   // records written before answers were stored still read like the email.
   const answers =
@@ -122,12 +123,70 @@ export function noteMarkdown(record: ApplicationRecord): string {
     resumeSection(record),
     "",
     "## Review screenshot",
-    screenshotSection(record),
+    screenshotSection(record, screenshotUrl),
     "",
     "## Job description",
     record.jobDescription || "_none captured_",
   ];
   return lines.filter((line) => line !== "").join("\n");
+}
+
+/**
+ * Put the review screenshot in x8note's own image store and return the URL it hands back.
+ *
+ * `POST /api/images/upload` takes multipart `images` and proxies to x8img with x8note's own
+ * credential, so this needs nothing from us but the token we already hold — which is why it is the
+ * way in rather than serving the file to a remote fetcher off our own website.
+ *
+ * NOTE THE HEADERS. `headers()` sets Content-Type: application/json, and setting any content type
+ * by hand on a FormData body loses the multipart boundary, so only the Authorization header goes.
+ *
+ * THE URL IT RETURNS IS PUBLIC. Verified: fetching one with no credential at all answers 200. The
+ * id is eight random characters, so it is unguessable rather than listed, but it is not protected —
+ * and the image is the filled application. `X8NOTE_EMBED_SCREENSHOT=0` turns the upload off and
+ * leaves the note with links only.
+ */
+export async function uploadNoteImage(config: X8NoteConfig, filePath: string): Promise<string | null> {
+  try {
+    const bytes = await fs.readFile(filePath);
+    const body = new FormData();
+    body.append("images", new Blob([bytes], { type: "image/png" }), path.basename(filePath));
+    const response = await fetch(`${config.baseUrl}/api/images/upload`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${config.token}` },
+      body,
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!response.ok) return null;
+    const json = (await response.json().catch(() => ({}))) as {
+      data?: { images?: Array<{ url?: string }> };
+    };
+    return json.data?.images?.[0]?.url ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The review screenshot on disk, or null. `lastRunDir` is an absolute HOST path and this may be
+ * running somewhere that path does not exist, so the run's NAME is also tried against the local
+ * logs directory — the same correction `findScreenshot` needed on the website.
+ */
+export async function reviewScreenshotPath(record: ApplicationRecord): Promise<string | null> {
+  if (!record.code || !record.lastRunDir) return null;
+  const name = `review-${record.code}.png`;
+  for (const candidate of [
+    path.join(record.lastRunDir, name),
+    path.join(LOGS_DIR, path.basename(record.lastRunDir), name),
+  ]) {
+    try {
+      await fs.access(candidate);
+      return candidate;
+    } catch {
+      // try the next one
+    }
+  }
+  return null;
 }
 
 /**
@@ -143,18 +202,22 @@ export function noteMarkdown(record: ApplicationRecord): string {
  * A link costs nothing and gives up nothing: the note is read in a browser, and the browser either
  * has the session or is asked for it.
  */
-function screenshotSection(record: ApplicationRecord): string {
+function screenshotSection(record: ApplicationRecord, screenshotUrl?: string): string {
   if (!record.code) return "_no code — cannot link a screenshot_";
   // PUBLIC_URL is deliberately unset in .env so the LAN address and the public name both work; the
   // note is read by a person, so it gets the name they actually browse.
   const base = (process.env.PUBLIC_URL?.trim() || "https://job.studiox8.com").replace(/\/+$/, "");
   if (!record.lastRunDir) return "_none captured for this run_";
   return [
-    `[The filled form as it was photographed](${base}/api/screenshot/${record.code})`,
+    // The image when it is in x8note's own store, and a link back to ours when it is not — an
+    // upload that failed should still leave the note pointing at the picture.
+    screenshotUrl
+      ? `![The filled form as it was photographed](${screenshotUrl})`
+      : `[The filled form as it was photographed](${base}/api/screenshot/${record.code})`,
     "",
     `[Review page](${base}/queue/${record.code}) — the same screenshot beside the answers, with the buttons.`,
     "",
-    "_Sign-in required: the screenshot carries the address and phone number that were filled in._",
+    "_The screenshot carries the address and phone number that were filled in._",
   ].join("\n");
 }
 
@@ -181,8 +244,27 @@ interface SaveArticleResponse {
 export async function postApplicationNote(
   config: X8NoteConfig,
   record: ApplicationRecord,
-): Promise<{ status: string; noteId?: string }> {
+): Promise<{ status: string; noteId?: string; screenshotUrl?: string }> {
   try {
+    /**
+     * The picture goes into x8note's OWN image store, and the note embeds the URL that comes
+     * back. Uploaded once per run: `x8noteScreenshotRun` records which run the stored URL is of,
+     * so a re-sync of the same application re-uses it rather than leaving another copy behind
+     * every time a status changes. A new run means a new picture and a new upload.
+     *
+     * X8NOTE_EMBED_SCREENSHOT=0 skips the upload; the note then links back to our own
+     * session-guarded copy instead. See uploadNoteImage for what the URL does and does not
+     * protect.
+     */
+    let screenshotUrl = record.x8noteScreenshotUrl;
+    const runName = record.lastRunDir ? path.basename(record.lastRunDir) : "";
+    if (process.env.X8NOTE_EMBED_SCREENSHOT !== "0" && runName && record.x8noteScreenshotRun !== runName) {
+      const file = await reviewScreenshotPath(record);
+      if (file) {
+        const uploaded = await uploadNoteImage(config, file);
+        if (uploaded) screenshotUrl = uploaded;
+      }
+    }
     // x8note is the ONLY store, so a writer that has no description must never replace one
     // that is already there. Anything that reaches this point without text — a blocked
     // re-run, a status-only update, a re-sync from the metadata ledger — keeps what the
@@ -203,7 +285,7 @@ export async function postApplicationNote(
         // Palantir "Software Engineer Intern" listings QHKEQP and DWOXTX, where the second
         // overwrote the first's content and labels while keeping the first's source_url.
         title: noteTitle(record),
-        content: noteMarkdown(toWrite),
+        content: noteMarkdown(toWrite, screenshotUrl),
         notebook: config.notebook,
         url: record.applyUrl, // the upsert key — one note per posting
         upsert: true,
@@ -216,7 +298,7 @@ export async function postApplicationNote(
     // save-article returns data.noteId — NOT data.id like POST /api/notes.
     const noteId = json.data?.noteId;
     if (noteId) await replaceLabels(config, noteId, noteLabels(record));
-    return { status: noteId ? "synced" : json.message || "x8note ok", noteId };
+    return { status: noteId ? "synced" : json.message || "x8note ok", noteId, screenshotUrl };
   } catch (error) {
     return { status: `x8note error: ${(error as Error).message}` };
   }
