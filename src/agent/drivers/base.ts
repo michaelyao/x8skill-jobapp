@@ -361,7 +361,23 @@ export abstract class GenericDriver implements AtsDriver {
       : "";
     if (shot) await control.screenshot({ path: shot }).catch(() => undefined);
 
-    const DESCRIBE = `(el) => {
+    /**
+     * AN INVOKED IIFE, LOOKING THE ELEMENT UP ITSELF.
+     *
+     * This was `(el) => { ... }` — a bare arrow as a STRING, the one trap this project already
+     * knows about and states as an invariant: "page.evaluate() takes a STRING and it must be an
+     * invoked IIFE — a non-invoked arrow silently returns undefined". It was the ONLY evaluate in
+     * the whole codebase written that way, and it silently returned nothing every time.
+     *
+     * So studyFailedField has never once produced a diagnosis since it shipped. It read as "we
+     * studied it and learned nothing" — no note, no log line, data/field-notes.json never created —
+     * while the candidate watched GLDUAY come back three times with the same objection and asked
+     * why he had to be the one to raise it. The mechanism built to answer that question was the
+     * thing that was broken.
+     */
+    const DESCRIBE = `(() => {
+      const el = document.querySelector(${JSON.stringify(field.key)});
+      if (!el) return "";
       const clean = (t) => (t || "").replace(/\\s+/g, " ").trim();
       const box = el.getBoundingClientRect();
       const at = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
@@ -387,8 +403,8 @@ export abstract class GenericDriver implements AtsDriver {
         ancestry: chain.join(" < "),
         html: clean(el.outerHTML).slice(0, 400),
       });
-    }`;
-    const facts = await control.evaluate(DESCRIBE).catch((error: Error) => {
+    })()`;
+    const facts = await root.evaluate(DESCRIBE).catch((error: Error) => {
       console.log(`    🔬 cannot study "${field.label.slice(0, 46)}": ${error.message.split("\n")[0].slice(0, 90)}`);
       return "";
     });

@@ -32,6 +32,57 @@ export interface BrokenEscape {
   text: string;
 }
 
+/**
+ * A page script that is a bare arrow instead of an invoked IIFE. It returns undefined, silently.
+ *
+ * The invariant is already written down — "page.evaluate() takes a STRING and it must be an
+ * invoked IIFE" — and exactly one place in the codebase broke it: studyFailedField's DESCRIBE,
+ * written `(el) => { ... }`. So the whole of study mode returned nothing from the day it shipped,
+ * with no error and no note, while the same field failed over and over. The escape scanner could
+ * not see it either: it only collects templates that OPEN with the IIFE, so a template that gets
+ * this wrong is invisible to the check that would otherwise read it.
+ */
+export interface NonInvokedScript {
+  line: number;
+  name: string;
+  text: string;
+}
+
+/**
+ * Templates handed to `evaluate` that are functions rather than invocations.
+ *
+ * Two shapes, matching the escape scanner: passed inline, and assigned to a const that an
+ * `evaluate` call later names. A template that is never given to `evaluate` is ordinary text and
+ * is not the subject here.
+ */
+export function findNonInvokedScripts(source: string): NonInvokedScript[] {
+  const lineOf = (offset: number) => source.slice(0, offset).split("\n").length;
+  const bareArrow = /^\s*(?:\([A-Za-z0-9_$,\s]*\)|[A-Za-z0-9_$]+)\s*=>/;
+  const found: NonInvokedScript[] = [];
+
+  // Inline: .evaluate(`(el) => …`)
+  const inline = /\.(?:evaluate|evaluateAll|evaluateHandle|\$\$eval|\$eval)\s*\(\s*`/g;
+  for (let m = inline.exec(source); m; m = inline.exec(source)) {
+    const body = source.slice(m.index + m[0].length, m.index + m[0].length + 60);
+    if (bareArrow.test(body)) {
+      found.push({ line: lineOf(m.index), name: "(inline)", text: body.split("\n")[0].trim().slice(0, 60) });
+    }
+  }
+
+  // By name: const DESCRIBE = `(el) => …`  …  control.evaluate(DESCRIBE)
+  const named = /(?:const|let|var)\s+([A-Za-z0-9_$]+)\s*=\s*`/g;
+  for (let m = named.exec(source); m; m = named.exec(source)) {
+    const name = m[1] as string;
+    const body = source.slice(m.index + m[0].length, m.index + m[0].length + 60);
+    if (!bareArrow.test(body)) continue;
+    const used = new RegExp(`\\.(?:evaluate|evaluateAll|evaluateHandle|\\$\\$eval|\\$eval)\\s*\\(\\s*${name}\\b`);
+    if (used.test(source)) {
+      found.push({ line: lineOf(m.index), name, text: body.split("\n")[0].trim().slice(0, 60) });
+    }
+  }
+  return found;
+}
+
 const ESCAPE = /(?<!\\)\\([sdwbSDWB])/g;
 
 /** Every `evaluate(\`…\`)` / `$eval(\`…\`)` template literal in a source file, with its offset. */

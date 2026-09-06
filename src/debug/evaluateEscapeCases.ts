@@ -12,7 +12,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { findBrokenEscapes } from "../core/evaluateEscapes.js";
+import { findBrokenEscapes, findNonInvokedScripts } from "../core/evaluateEscapes.js";
 
 let pass = 0;
 let fail = 0;
@@ -58,6 +58,31 @@ for (const f of files) {
     offenders.push(`${f}:${h.line} ${h.token} — ${h.text}`);
   }
 }
+console.log("\nand no page script may be a bare arrow instead of an invoked IIFE");
+check(`an inline (el) => template handed to evaluate is reported`,
+  findNonInvokedScripts("control.evaluate(`(el) => el.tagName`)").length === 1);
+check(`a named const holding (el) => and passed to evaluate is reported`,
+  findNonInvokedScripts("const D = `(el) => el.tagName`;\ncontrol.evaluate(D);").length === 1);
+check(`an invoked IIFE is correct and is NOT reported`,
+  findNonInvokedScripts("page.evaluate(`(() => document.title)()`)").length === 0);
+check(`a named IIFE is NOT reported`,
+  findNonInvokedScripts("const R = `(() => 1)()`;\nroot.evaluate(R);").length === 0);
+// A template that is never given to evaluate is ordinary text, whatever it looks like.
+check(`a bare arrow template nobody evaluates is left alone`,
+  findNonInvokedScripts("const T = `(el) => el`;\nconsole.log(T);").length === 0);
+
+const bare: string[] = [];
+// These two hold the broken shape ON PURPOSE — one describes it, the other tests for it.
+const DESCRIBES_THE_PATTERN = ["src/core/evaluateEscapes.ts", "src/debug/evaluateEscapeCases.ts"];
+for (const f of files) {
+  if (DESCRIBES_THE_PATTERN.some((d) => f.endsWith(d) || f === d)) continue;
+  for (const h of findNonInvokedScripts(fs.readFileSync(f, "utf8"))) {
+    bare.push(`${f}:${h.line} ${h.name} — ${h.text}`);
+  }
+}
+check(`no page script in the tree is a non-invoked arrow`, bare.length === 0, bare.length ? bare : undefined);
+if (bare.length) for (const b of bare) console.log(`      ${b}`);
+
 check(`${files.length} files scanned, none carries a single-escaped regex token`,
   offenders.length === 0, offenders.length ? offenders : undefined);
 if (offenders.length) for (const o of offenders) console.log(`      ${o}`);
