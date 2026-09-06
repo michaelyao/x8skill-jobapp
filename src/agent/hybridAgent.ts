@@ -91,6 +91,43 @@ export class HybridAgent implements Agent {
       );
     }
 
+    /**
+     * AN OPTIONAL FIELD THE USER NEVER APPROVED IS LEFT BLANK, NOT ANSWERED.
+     *
+     * Zipline QCJHTQ was approved and then refused to submit over one difference: "Preferred First
+     * Name was not on the form you approved, and would be answered Nathan". The field is optional,
+     * the answer harmless, and the approval was spent anyway — the candidate had to look at the
+     * same application twice for a box the employer does not require.
+     *
+     * Answering it is the part that is wrong. The rule is that a value he has not read is never
+     * submitted, and leaving the box empty honours that better than filling it does: the
+     * application that goes in is exactly the one he approved. A REQUIRED new field still goes to
+     * the model and still stops the submit, because there we cannot proceed without an answer and
+     * he has to see it.
+     *
+     * Forms gain optional fields all the time — a preferred name, a pronoun, a LinkedIn URL — and
+     * an approval should not expire because one appeared.
+     */
+    /**
+     * An extra OCCURRENCE is not a new question and is not skipped. A third work-experience row
+     * the approval did not cover still goes to the model and is still flagged: half-filling a
+     * repeated block misrepresents the history, where an unanswered optional box says nothing.
+     */
+    const mustAnswer = gaps.filter(
+      (f) =>
+        f.required ||
+        f.groupRequired ||
+        gapReason.get(f.key) === "more occurrences than were approved",
+    );
+    const skipped = gaps.length - mustAnswer.length;
+    if (skipped > 0) {
+      console.log(
+        `    [replay] ${skipped} optional field(s) not in your approved set — left blank rather than answered`,
+      );
+    }
+    gaps.length = 0;
+    gaps.push(...mustAnswer);
+
     // Ask the LLM only about the gaps, and only when there are any — a submit visit of a
     // completely unchanged form must cost nothing and involve no model at all.
     if (gaps.length) {

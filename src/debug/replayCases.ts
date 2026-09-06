@@ -88,5 +88,38 @@ console.log("\nwhat must still happen");
     agent.novel.some((n) => n.reason === "more occurrences than were approved"), agent.novel);
 }
 
+{
+  /**
+   * A NEW OPTIONAL FIELD MUST NOT SPEND AN APPROVAL.
+   *
+   * Zipline QCJHTQ was approved and then refused over one difference: "Preferred First Name was
+   * not on the form you approved, and would be answered Nathan". Optional, harmless, and it sent
+   * the candidate back to look at the same application twice. Answering it was the mistake — the
+   * application that goes in is now exactly the one he approved, with the new box left empty.
+   */
+  const spy = new SpyAgent();
+  const agent = new HybridAgent([approved("First Name", "Nathan")], spy);
+  const out = await agent.decide(
+    snapshot([field("a", "First Name"), field("b", "Preferred First Name")]),
+    ctx,
+  );
+  check(`the approved field keeps its value`, out[0]?.value === "Nathan", out[0]);
+  check(`a NEW OPTIONAL field is never asked about`, spy.asked.length === 0, spy.asked);
+  check(`and so is not flagged as a difference`, agent.novel.length === 0, agent.novel);
+  check(`it goes in blank`, out[1]?.value === "", out[1]);
+}
+{
+  // But a REQUIRED new field still stops everything: we cannot submit without it, and he has
+  // to see whatever answers it.
+  const spy = new SpyAgent();
+  const agent = new HybridAgent([approved("First Name", "Nathan")], spy);
+  await agent.decide(
+    snapshot([field("a", "First Name"), { ...field("b", "Visa status"), required: true }]),
+    ctx,
+  );
+  check(`a NEW REQUIRED field still goes to the LLM`, spy.asked.length === 1, spy.asked);
+  check(`and is still flagged for re-approval`, agent.novel.length === 1, agent.novel);
+}
+
 console.log(`\n${fail ? "✗" : "✓"} ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
