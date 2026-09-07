@@ -430,9 +430,17 @@ export abstract class GenericDriver implements AtsDriver {
     }
     console.log(`    🔬 ${field.label.slice(0, 46)}: ${String(facts).slice(0, 300)}`);
 
-    const diagnosis = await explainStuckField(field.label, String(facts)).catch(
-      () => ({ why: "the study itself failed", remedy: "none" as const }),
-    );
+    /**
+     * SHOW IT THE CONTROL. The picture was already being taken and then not used for anything
+     * except a log line a human might read later, which is the weaker half of this mechanism: the
+     * facts come from our own reader, and our own reader is what just failed. A chevron marking a
+     * row as a folder is visible in the capture and absent from the DOM on most tenants.
+     */
+    const diagnosis = await explainStuckField(
+      field.label,
+      String(facts),
+      shot ? [{ path: shot, caption: `the control labelled "${field.label.slice(0, 60)}" that refused the value` }] : [],
+    ).catch(() => ({ why: "the study itself failed", remedy: "none" as const }));
     const line = `${diagnosis.why} → try ${diagnosis.remedy}`;
     console.log(`    🔎 studied "${field.label.slice(0, 46)}": ${line.slice(0, 200)}`);
     if (shot) console.log(`       picture of the control: ${shot}`);
