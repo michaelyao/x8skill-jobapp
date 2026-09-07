@@ -49,6 +49,15 @@ export async function AuthAlarm() {
   // banner listed "ntrs.wd1.myworkdayjobs.com" where it meant Northern Trust. Any job on the
   // tenant knows the company.
   const nameByTenant = new Map<string, string>();
+  /**
+   * THE POSTINGS THEMSELVES, because that is what he asked for twice.
+   *
+   * The first version of this told him which employers needed attention; the second linked to
+   * their sign-in pages. Neither is the thing you want in front of you — "I am not asking the sign
+   * in page, i am asking for the job application url". One account unblocks a tenant, but the
+   * postings are the work, and they were only ever available by asking me to run a query.
+   */
+  const postingsByTenant = new Map<string, Array<{ code: string; title: string; url: string }>>();
   for (const app of applications) {
     const url = app.applyUrl ?? "";
     const host = /^https:\/\/([^/]+)\//.exec(url)?.[1];
@@ -61,6 +70,12 @@ export async function AuthAlarm() {
     if (app.status === "error" || app.status === "prefilled_pending_submit") {
       if (!jobsByTenant.has(host)) jobsByTenant.set(host, new Set());
       jobsByTenant.get(host)!.add(app.code ?? app.id);
+      if (!postingsByTenant.has(host)) postingsByTenant.set(host, []);
+      postingsByTenant.get(host)!.push({
+        code: app.code ?? app.id,
+        title: app.title ?? "",
+        url,
+      });
     }
   }
 
@@ -75,6 +90,9 @@ export async function AuthAlarm() {
       alert,
       waiting: jobsByTenant.get(alert.tenant)?.size ?? 0,
       loginUrl: loginUrlFor(alert.tenant, urlsByTenant.get(alert.tenant) ?? []),
+      postings: (postingsByTenant.get(alert.tenant) ?? []).sort((x, y) =>
+        x.title.localeCompare(y.title),
+      ),
     }))
     .sort((a, b) => b.waiting - a.waiting || a.alert.tenant.localeCompare(b.alert.tenant));
   const waiting = rows.reduce((n, r) => n + r.waiting, 0);
@@ -101,22 +119,46 @@ export async function AuthAlarm() {
       the first successful sign-in, and nothing is retried at these tenants until then, so a wrong
       password is no longer being posted at them over and over.
       <ul style={{ margin: "8px 0 0", paddingLeft: 20 }}>
-        {rows.map(({ alert, waiting: count, loginUrl }) => (
-          <li key={alert.tenant} style={{ marginBottom: 2 }}>
-            <a
-              href={loginUrl}
-              target="_blank"
-              rel="noreferrer"
-              style={{ color: "#1b1b1b", fontWeight: 600 }}
-            >
-              {alert.company || nameByTenant.get(alert.tenant) || alert.tenant}
-            </a>{" "}
-            — {count} application{count === 1 ? "" : "s"} waiting
+        {rows.map(({ alert, waiting: count, loginUrl, postings }) => (
+          <li key={alert.tenant} style={{ marginBottom: 6 }}>
+            <strong>{alert.company || nameByTenant.get(alert.tenant) || alert.tenant}</strong>
+            {" — "}
+            <a href={loginUrl} target="_blank" rel="noreferrer" style={{ color: "#1b1b1b" }}>
+              create the account
+            </a>
             <span style={{ opacity: 0.75 }}>
               {" · "}
-              {alert.tenant}
+              {count} waiting
               {alert.hits > 1 ? ` · tried ${alert.hits}×` : ""}
             </span>
+            {postings.length ? (
+              <ul style={{ margin: "2px 0 0", paddingLeft: 18, listStyle: "circle" }}>
+                {postings.map((p) => (
+                  <li key={p.code}>
+                    {/*
+                      OUR page first, the employer's second. "actually the url of webpage of in our
+                      own website" — the thing he wants to open is the record we hold, where the
+                      answers and the history are; the posting is the aside.
+                    */}
+                    <a
+                      href={`/applications/${p.code}`}
+                      style={{ color: "#1b1b1b", fontWeight: 600 }}
+                    >
+                      {p.title || p.code}
+                    </a>{" "}
+                    <span style={{ opacity: 0.7 }}>{p.code}</span>{" "}
+                    <a
+                      href={p.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ color: "#1b1b1b", opacity: 0.7 }}
+                    >
+                      posting ↗
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </li>
         ))}
       </ul>
