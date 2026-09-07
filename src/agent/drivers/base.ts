@@ -2437,7 +2437,23 @@ export abstract class GenericDriver implements AtsDriver {
           trace(`${JSON.stringify(value)} is not on this menu; the records say ${JSON.stringify(derived!.option.slice(0, 46))} (${derived!.why})`);
         }
       }
-      if (idx < 0 && isClosedShortList(label)) {
+      /**
+       * THE LADDER DECIDES THIS QUESTION, EVEN WHEN THE MODEL HAS AN ANSWER.
+       *
+       * This was gated on `idx < 0` — only consulted when the model's answer was NOT among the
+       * options. On Mastercard the model answered "University/College (Campus)", which IS on the
+       * list, so idx was set, the whole plan below was skipped, and the fill clicked that row.
+       * It is a PARENT with a chevron: clicking it opens its children instead of committing
+       * anything, so the field reported "would not take it" and a required question went out
+       * blank. Two of four test jobs died there, and it is the largest cluster in the backlog —
+       * thirty records on this one field.
+       *
+       * The order here is the candidate's decision, not a guess to be overridden by whichever row
+       * the model liked: Handshake, then a campus event, then LinkedIn. He confirmed it again on
+       * this very tenant — "you select Job Board then Handshake, done" — and the plan already
+       * returns exactly that for Mastercard's three rows. It just was not being asked.
+       */
+      if (isClosedShortList(label)) {
         /**
          * HANDSHAKE FIRST, THEN A CAMPUS EVENT, THEN LINKEDIN — the candidate's order.
          *
@@ -2718,6 +2734,30 @@ export abstract class GenericDriver implements AtsDriver {
        * the candidate never gave, reported as filled, is the worst outcome this path can produce.
        */
       if (await this.committedIsWanted(root, keySelector, control, want, chosenRow)) return true;
+      /**
+       * A ROW THAT OPENED CHILDREN IS NOT A ROW THAT ANSWERED, and the log must say which it was.
+       *
+       * Mastercard's "How Did You Hear About Us?" offers three rows, and every one of them is a
+       * PARENT with a chevron: Job Board, Mastercard's Talent Acquisition Team, University/College
+       * (Campus). The model answered "University/College (Campus)", the fill clicked it, the menu
+       * drilled in — and the only thing recorded was "tried but the field would not take it",
+       * which reads as a broken control rather than a tree we walked into by accident.
+       *
+       * Not drilled in blindly: which child to take is an answer, and picking one because it is
+       * there is exactly the invention this code refuses everywhere else. The hear-about-us ladder
+       * decides that (Handshake under Job Board) and is consulted before this point now. This says
+       * what happened so the next failure of this shape is one line to read instead of a day.
+       */
+      const rowsAfterClick = await readTexts(opts, await opts.count().catch(() => 0));
+      const grew =
+        rowsAfterClick.length > 0 &&
+        rowsAfterClick.join("|") !== texts.join("|");
+      if (grew) {
+        trace(
+          `${JSON.stringify(texts[idx]?.slice(0, 30))} did not commit — it OPENED a sub-list ` +
+            `(${rowsAfterClick.map((t) => t.slice(0, 18)).slice(0, 4).join(", ")}), so it is a parent, not an answer`,
+        );
+      }
       // Keyboard commit. Verified on a live Workday prompt: clicking the visible row can
       // leave "0 items selected", while ArrowDown + Enter commits ("1 item selected").
       await control.press("ArrowDown").catch(() => undefined);
