@@ -147,14 +147,45 @@ export class WorkdayDriver extends GenericDriver {
         await el.pressSequentially(value, { delay: 15 }).catch(() => undefined);
       }
     };
+    /**
+     * EXISTING IS NOT CLICKING, and this returned true for the difference.
+     *
+     * It took the first selector that MATCHED, clicked it, swallowed the click's error, and
+     * returned true — so a later selector that would have worked was never tried. On Mastercard's
+     * Create Account page that is fatal in the most confusing way available:
+     *
+     *   createAccountSubmitButton  <button tabindex="-2" aria-hidden="true">   inert
+     *   click_filter[Create Acc.]  <div role="button" tabindex="0">            the real control
+     *
+     * Both are 376x40 and both are there. Playwright waits thirty seconds for the aria-hidden
+     * button to become actionable, never gets there, the error is dropped, and this reports
+     * success. The candidate could SEE the button on screen while the log said create-account did
+     * not advance — and it is the same shape as the signInSubmitButton rule already written down
+     * in CLAUDE.md, which says the click_filter wrapper is the clickable one.
+     *
+     * So: a bounded click, and a FAILED click falls through to the next candidate instead of
+     * ending the search. Thirty seconds per swallowed attempt was also most of a run's budget.
+     */
     const clickAny = async (selectors: string[], roleNames: RegExp[] = []): Promise<boolean> => {
       for (const sel of selectors) {
         const el = page.locator(sel).first();
-        if (await el.count().catch(() => 0)) { await el.click().catch(() => undefined); return true; }
+        if (!(await el.count().catch(() => 0))) continue;
+        try {
+          await el.click({ timeout: 8000 });
+          return true;
+        } catch {
+          console.log(`[workday] ${sel} is present but would not take a click — trying the next candidate`);
+        }
       }
       for (const rn of roleNames) {
         const el = page.getByRole("button", { name: rn }).first();
-        if (await el.isVisible().catch(() => false)) { await el.click().catch(() => undefined); return true; }
+        if (!(await el.isVisible().catch(() => false))) continue;
+        try {
+          await el.click({ timeout: 8000 });
+          return true;
+        } catch {
+          // fall through to the next name
+        }
       }
       return false;
     };
@@ -317,10 +348,17 @@ export class WorkdayDriver extends GenericDriver {
           await fillNth(pw, 0, password);
           await fillNth(pw, 1, password);
           await page.locator('input[type="checkbox"]').first().check().catch(() => undefined);
+          /**
+           * THE WRAPPER FIRST. createAccountSubmitButton is the inert aria-hidden button behind it,
+           * exactly as signInSubmitButton is behind the Sign In wrapper — measured on Mastercard,
+           * where clicking the wrapper created the account and landed on Candidate Home. The bare
+           * click_filter stays last and is a genuine last resort: on a page that has not switched
+           * to the create form, the only click_filter is "Sign In".
+           */
           await clickAny(
             [
-              '[data-automation-id="createAccountSubmitButton"]',
               '[data-automation-id="click_filter"][aria-label*="create" i]',
+              '[data-automation-id="createAccountSubmitButton"]',
               '[data-automation-id="click_filter"]',
             ],
             [/create account/i],
