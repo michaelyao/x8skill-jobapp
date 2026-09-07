@@ -20,6 +20,7 @@ const DECISION_WORDS: Record<string, string> = {
   approve: "Approve and submit",
   skip: "Skip",
   manual_submit: "Already submitted by hand",
+  answer_question: "Your answers, and a re-run",
   mark_closed: "Marking the posting closed",
   change: "A correction",
   retry: "A re-fill",

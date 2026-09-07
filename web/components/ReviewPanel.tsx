@@ -6,7 +6,7 @@ import { useMemo, useState } from "react";
  * Commands that settle what happens to this application. `update_answers` is not one — it teaches
  * the answer store and is sent as part of approving, so it must not lock anything on its own.
  */
-const DECISIONS = new Set(["approve", "skip", "manual_submit", "mark_closed", "change"]);
+const DECISIONS = new Set(["approve", "skip", "manual_submit", "mark_closed", "answer_question", "change"]);
 import type { PendingEntry } from "@core/knowledge/approvalQueue.js";
 
 interface Props {
@@ -79,6 +79,11 @@ export function ReviewPanel({ entry, description, noteUrl, requisitionId, role, 
   const [note, setNote] = useState<string | null>(null);
   const [changeText, setChangeText] = useState("");
   const [copied, setCopied] = useState<"ok" | "fail" | null>(null);
+  /**
+   * His answers to the questions the form asked and we could not. Keyed by the form's own label,
+   * because that is what gets recorded and what the next employer's version is matched against.
+   */
+  const [openAnswers, setOpenAnswers] = useState<Record<string, string>>({});
   const [showChange, setShowChange] = useState(false);
   // Corrections are worth more than this one application: by default they become the standing
   // answer for that question, so the next form asking it is filled correctly without a review.
@@ -365,6 +370,74 @@ export function ReviewPanel({ entry, description, noteUrl, requisitionId, role, 
           <p className="muted" style={{ fontSize: 13, marginBottom: 0 }}>
             <a href={`/history/${entry.code}`}>Compare every recorded copy →</a>
           </p>
+        </div>
+      ) : null}
+
+      {(entry.openQuestions ?? []).length ? (
+        /*
+          THE QUESTIONS THIS APPLICATION STOPPED ON.
+          "They should put such question, with the available option, in the webpage of this job. I
+          will make the correct selection." The wording and the options are the FORM'S, verbatim —
+          a paraphrase would have him answering a different question from the one the employer asked.
+          Answering re-runs the application on its own; he should not have to press retry as well.
+        */
+        <div className="card" style={{ borderColor: "var(--warn)", marginBottom: 18 }}>
+          <h2 style={{ marginTop: 0 }}>
+            {entry.openQuestions!.length} question{entry.openQuestions!.length === 1 ? "" : "s"} only you can answer
+          </h2>
+          <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>
+            Nothing in your résumé or answer store covers these, and the system will not invent an
+            answer to them. Answer once and it is remembered for every later employer that asks the
+            same thing — then this application re-runs by itself.
+          </p>
+          {entry.openQuestions!.map((q) => (
+            <div key={q.label} style={{ marginTop: 14 }}>
+              <label style={{ display: "block", fontWeight: 600, fontSize: 14, marginBottom: 5 }}>
+                {q.label}
+                {q.required ? <span style={{ color: "var(--bad)" }}> *</span> : null}
+              </label>
+              {q.options?.length ? (
+                <select
+                  value={openAnswers[q.label] ?? ""}
+                  onChange={(e) => setOpenAnswers((prev) => ({ ...prev, [q.label]: e.target.value }))}
+                  style={{ minWidth: 320, maxWidth: "100%" }}
+                >
+                  <option value="">— choose the answer the form should get —</option>
+                  {q.options.map((o) => (
+                    <option key={o} value={o}>
+                      {o}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={openAnswers[q.label] ?? ""}
+                  placeholder="type the answer"
+                  onChange={(e) => setOpenAnswers((prev) => ({ ...prev, [q.label]: e.target.value }))}
+                  style={{ width: "100%", maxWidth: 520 }}
+                />
+              )}
+            </div>
+          ))}
+          <button
+            className="primary"
+            style={{ marginTop: 14 }}
+            disabled={
+              busy !== null ||
+              decided !== null ||
+              !Object.values(openAnswers).some((v) => v.trim())
+            }
+            onClick={() =>
+              send("answer_question", {
+                entries: Object.entries(openAnswers)
+                  .filter(([, v]) => v.trim())
+                  .map(([question, answer]) => ({ question, answer: answer.trim() })),
+              })
+            }
+          >
+            {busy === "answer_question" ? "Saving…" : "Save answers and re-run"}
+          </button>
         </div>
       ) : null}
 

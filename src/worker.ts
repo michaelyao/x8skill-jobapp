@@ -9,6 +9,7 @@ import { applyToJob, type ApplyDeps } from "./core/applyJob.js";
 import { jobFromEntry, submitApprovedEntry } from "./core/submitApproved.js";
 import { addLearnedAnswer, forgetLearnedAnswers, loadAnswers, syncAnswersMarkdown } from "./knowledge/answerStore.js";
 import { normalizeQuestion } from "./utils/normalize.js";
+import { rememberQuestion } from "./knowledge/questionMemory.js";
 import { hasSubmittedBefore, loadApplications, setApplicationStatus } from "./knowledge/applications.js";
 import { planSweep } from "./core/selectJobs.js";
 import { probeOcr, writeOcrHealth } from "./knowledge/ocrHealth.js";
@@ -795,6 +796,79 @@ async function runCommand(command: Command): Promise<{ ok: boolean; message: str
         message: learned.length
           ? `recorded ${learned.length} answer(s) for future applications: ${learned.slice(0, 3).join("; ")}${learned.length > 3 ? ` (+${learned.length - 3})` : ""}`
           : "nothing usable to record",
+      };
+    }
+
+    case "answer_question": {
+      /**
+       * HE ANSWERED A QUESTION WE COULD NOT, and two things follow from that.
+       *
+       * "They should put such question, with the available option, in the webpage of this job. I
+       * will make the correct selection. However, once i answered, they need remember this type of
+       * question, as their knowledge, and use it again if they see the similar question."
+       *
+       * So: record it as knowledge keyed on the QUESTION (every later employer asking the same
+       * thing, in whatever shape, is answered without him), and re-run THIS application, because
+       * the whole point is that it stops being blocked. He should not have to answer and then also
+       * remember to press retry.
+       */
+      if (!command.entries?.length) return { ok: false, message: "no answers given" };
+      let answers = await loadAnswers();
+      const learned: string[] = [];
+      for (const entry of command.entries) {
+        const label = (entry.question ?? "").trim();
+        const value = (entry.answer ?? "").trim();
+        if (!label || !value) continue;
+        answers = await addLearnedAnswer(
+          answers,
+          {
+            label,
+            normalizedLabel: normalizeQuestion(label),
+            type: "text",
+            required: false,
+            options: [],
+            locatorDescription: label,
+          },
+          value,
+        );
+        /**
+         * `source: "candidate"` is load-bearing: it outranks anything we worked out ourselves,
+         * for good — see recallAnswer. An answer is a fact about him, and he is the authority on
+         * it. The shape is "unknown" on purpose, because an ANSWER travels between widgets and
+         * only a MECHANISM is tied to one.
+         */
+        await rememberQuestion({
+          sampleLabel: label,
+          ats: (await atsForCode(command.code).catch(() => "")) || "unknown",
+          shape: "unknown",
+          answer: value,
+          source: "candidate",
+          worked: true,
+        }).catch(() => undefined);
+        learned.push(label.length > 48 ? `${label.slice(0, 47)}…` : label);
+      }
+      if (!learned.length) return { ok: false, message: "nothing usable in those answers" };
+      await syncAnswersMarkdown(answers);
+
+      // Clear the questions off the entry so the page stops asking, then re-run it.
+      const answered = await findEntry(command.code);
+      if (answered) {
+        await upsertPending({ ...answered, openQuestions: undefined }).catch(() => undefined);
+      }
+      await enqueueCommand({
+        name: "retry",
+        code: command.code,
+        source: "worker",
+        actor: command.actor ?? "answer_question",
+        priority: 1,
+        instruction: `re-run: the candidate answered ${learned.length} question(s) this form asked`,
+      }).catch(() => undefined);
+
+      return {
+        ok: true,
+        message:
+          `[${command.code}] recorded ${learned.length} answer(s) and queued a re-fill: ` +
+          `${learned.slice(0, 3).join("; ")}${learned.length > 3 ? "…" : ""}`,
       };
     }
 

@@ -25,6 +25,7 @@ export type CommandName =
   | "skip"
   | "manual_submit"
   | "mark_closed"
+  | "answer_question"
   | "apply"
   | "change"
   | "retry"
@@ -149,6 +150,12 @@ export type Command = Base &
       }
     | { name: "refresh_list" }
     | { name: "update_answers"; entries: Array<{ question: string; answer: string }> }
+    /**
+     * He answered a question the form asked and we could not. Same payload shape as
+     * update_answers, plus the code, because the point is to unblock THAT application as well as
+     * to learn the answer for every later one asking the same thing.
+     */
+    | { name: "answer_question"; code: string; entries: Array<{ question: string; answer: string }> }
   /** The whole guidelines.txt, as edited on /preference. The worker is the only writer. */
   | { name: "update_guidelines"; text: string }
     | { name: "forget_answers"; questions: string[] }
@@ -222,6 +229,9 @@ const PRIORITY: Record<string, number> = {
   // A decision too, and a cheap one: no browser, two file writes, and it stops a dead posting
   // being re-filled while it waits its turn.
   mark_closed: 0,
+  // A decision, and the one he is most likely to be sitting in front of: he has just typed the
+  // answer and expects the application to move.
+  answer_question: 0,
   // Same class, for the same two reasons: it is a JSON evaluation and a file write (no browser),
   // and its verdict GATES the submit — an approved application sits unsent until this lands. Left
   // to the default rank of 2 it would queue behind a `change`, and behind whatever fill is already

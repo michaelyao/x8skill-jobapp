@@ -50,9 +50,36 @@ export function isSubmittedStatus(status: PendingStatus | undefined): boolean {
  * APPROVE/SKIP reply. Approval can take days, so this is persisted and processed
  * later by the Phase-B poller — the fill run does NOT block on it.
  */
+/**
+ * A question the form asked that we had no truthful answer for, offered back to the candidate.
+ *
+ * His instruction: "They should put such question, with the available option, in the webpage of
+ * this job. I will make the correct selection. However, once i answered, they need remember this
+ * type of question, as their knowledge, and use it again if they see the similar question."
+ *
+ * The wording is the FORM'S, verbatim, and the options are the ones it actually offered — a
+ * paraphrase would be us answering a different question from the one he is looking at.
+ */
+export interface OpenQuestion {
+  /** The label exactly as the form words it. */
+  label: string;
+  /** The rows the form offered, when it is a choice. Absent for free text. */
+  options?: string[];
+  required: boolean;
+  /** So the page can render a radio, a select or a text box. */
+  type: string;
+}
+
 export interface PendingEntry {
   key: string; // primary key: job code, else identity key
   code?: string;
+  /**
+   * Questions this application stopped on because nothing in the store answers them — a
+   * conflict-of-interest declaration, a driver's licence, government employment. Roughly fifteen
+   * records were blocked on one of these, and re-running could never help: the answer was never
+   * ours to work out. Answering one on the job's page is what unblocks it.
+   */
+  openQuestions?: OpenQuestion[];
   identityKey: string;
   externalJobId?: string; // the ATS's id for this listing
   companyReqId?: string; // the employer's own requisition id — matches across ATS

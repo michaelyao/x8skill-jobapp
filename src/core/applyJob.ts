@@ -824,6 +824,31 @@ export async function applyToJob(
           status: "awaiting_approval",
           attempts: 0,
           lastError: `incomplete: ${describeProblems(gaps)}`,
+          /**
+           * THE QUESTIONS HE CAN ANSWER, carried to the page with the form's own wording.
+           *
+           * `result.unknown` is the list of labels nothing in the store answers — deliberately
+           * separate from `failedToFill`, which is a widget that refused a value we HAD. Only the
+           * first is his to settle. Joined against `observedFields` so each question arrives with
+           * the options the form actually offered, because a choice he cannot see the choices for
+           * is not a question he can answer.
+           *
+           * Capped: an application blocked on fifteen questions is a reading failure, not a
+           * questionnaire, and handing him fifteen boxes would bury the one that matters.
+           */
+          openQuestions: result.unknown
+            .map((label) => {
+              const seen = result.observedFields.find((f) => f.label === label);
+              return {
+                label,
+                ...(seen?.options?.length ? { options: seen.options.slice(0, 40) } : {}),
+                required: seen?.required ?? false,
+                type: seen?.type ?? "text",
+              };
+            })
+            // Required first: those are the ones actually holding the application up.
+            .sort((a, b) => Number(b.required) - Number(a.required))
+            .slice(0, 6),
           reapproval: undefined,
           visualCheck,
         });
