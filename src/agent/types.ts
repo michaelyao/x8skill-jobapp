@@ -34,6 +34,14 @@ export interface FieldSpec {
   groupRequired?: boolean;
   filled?: boolean; // does the control currently hold a value? (undefined = couldn't tell)
   /**
+   * OUR OWN READING OF THIS CONTROL IS SUSPECT, and why.
+   *
+   * Set by `readingSanity` when the FieldSpec contradicts itself — a dropdown with no options, a
+   * label that is also one of its own options. The point is that the agent is told the reading is
+   * testimony rather than fact: "I do not think LLM should fully trust what filler told it!"
+   */
+  readerDoubt?: string;
+  /**
    * WHAT it currently holds, when the control will say.
    *
    * `filled` alone was not enough. A prefilled field is left as it is — right, for a dialling code

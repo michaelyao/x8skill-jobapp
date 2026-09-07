@@ -6,6 +6,7 @@ import type { DocumentUploads, HistoryOutcome, Agent, AgentContext, AtsDriver, F
 import { ocrLayoutTiled } from "../knowledge/visualCheck.js";
 import { captureFormShot, captureTallTiles } from "./formShot.js";
 import { CAPTCHA_PROBE } from "../core/captchaGate.js";
+import { describeDoubts, doubtsAboutReading, readerFaults } from "../core/readingSanity.js";
 import { planTiles } from "../knowledge/tiles.js";
 import { judgePageLanguage } from "../core/pageLanguage.js";
 import { isExclusiveGroup } from "../core/fieldGroups.js";
@@ -974,7 +975,7 @@ export async function runApplication(
      */
     const readMs = Number(process.env.READ_TIMEOUT_MS ?? 5 * 60_000);
     let readTimer: NodeJS.Timeout | undefined;
-    const snapshot = await Promise.race([
+    let snapshot = await Promise.race([
       driver.read(root),
       new Promise<never>((_, reject) => {
         readTimer = setTimeout(
@@ -1023,6 +1024,60 @@ export async function runApplication(
       observedByPage.set(pageKey, forPage);
     }
     console.log(`  [turn ${turns}] ${snapshot.fields.length} field(s), submitReady=${snapshot.submitReady}`);
+
+    /**
+     * DO NOT TRUST THE READER WITHOUT LOOKING AT WHAT IT SAID.
+     *
+     * The candidate's point, and the design had the opposite stance baked in: "The filler might not
+     * be able to pickup the correct DOM, thus why it got empty option… The correct question at this
+     * moment should: is there something wrong with the filler?" And then: "I do not think LLM should
+     * fully trust what filler told it!"
+     *
+     * Every layer downstream of read() treated a FieldSpec as ground truth. So Mastercard's
+     * "How Did You Hear About Us?*" arrived with an empty option list, and the agent answered the
+     * question anyway — from the label, because that was all it had. A dropdown with nothing to
+     * choose is not a page state; no employer ships one. It is testimony that does not hold
+     * together.
+     *
+     * A reader fault gets ONE second read before anything is answered, because attribution is the
+     * usual cause and it is often transient: closeOpenMenu had not finished, or the previous
+     * field's menu was still up. If the second read holds together, nothing else happens and the
+     * cost was one read.
+     */
+    let doubts = doubtsAboutReading(snapshot.fields);
+    if (readerFaults(doubts).length) {
+      for (const line of describeDoubts(doubts.filter((d) => d.severity === "reader-fault"))) {
+        console.log(`    🤨 ${line}`);
+      }
+      console.log(`    🤨 reading again before answering anything — the reader, not the form, is the suspect`);
+      const second = await driver.read(root).catch(() => null);
+      if (second?.fields.length) {
+        const stillWrong = readerFaults(doubtsAboutReading(second.fields));
+        if (stillWrong.length < readerFaults(doubts).length) {
+          console.log(`    🤨 the second read holds together better — using it`);
+          snapshot = second;
+          doubts = doubtsAboutReading(second.fields);
+          const forPage = new Map<string, FieldSpec>();
+          for (const f of second.fields) forPage.set(`${f.label}\u0000${f.type}`, f);
+          observedByPage.set(pageKey, forPage);
+        }
+      }
+    }
+    /**
+     * A doubt that survives the second read is carried WITH the field, so the agent is told the
+     * reading is suspect rather than being handed it as fact. It is also filed as a note against
+     * this ATS and question, because "our reader cannot see this control" is exactly the kind of
+     * thing that should be known before the next employer asks the same question.
+     */
+    const doubted = new Map(doubts.map((d) => [d.field, d]));
+    for (const f of snapshot.fields) {
+      const d = doubted.get(f.label);
+      if (d) f.readerDoubt = `${d.doubt} — ${d.expected}`;
+    }
+    for (const line of describeDoubts(doubts.filter((d) => d.severity === "suspicious"))) {
+      console.log(`    🤨 ${line}`);
+    }
+
     const filledBefore = filled.length;
 
     // First pass: answer everything the reader found.

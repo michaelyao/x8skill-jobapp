@@ -50,7 +50,8 @@
     "test:notes": "tsx src/debug/fieldNoteCases.ts",
     "test:checkboxes": "tsx src/debug/checkboxGroupCases.ts",
     "requeue:stale": "tsx src/debug/requeueStale.ts",
-    "test:memory": "tsx src/debug/questionMemoryCases.ts"
+    "test:memory": "tsx src/debug/questionMemoryCases.ts",
+    "test:reading": "tsx src/debug/readingSanityCases.ts"
   },
   "repository": {
     "type": "git",

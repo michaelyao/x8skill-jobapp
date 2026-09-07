@@ -643,6 +643,18 @@ function buildPrompt(snapshot: PageSnapshot, ctx: AgentContext, loadedGuidelines
     "Rules:",
     "- Never invent facts (names, numbers, employers, dates) not supported by the provided data.",
     "- For select/radio fields, the value MUST be exactly one of the given options.",
+    /**
+     * THE READER CAN BE WRONG, AND SAYING SO IS A CORRECT ANSWER.
+     *
+     * Without this the model has no way to reject its input: every field arrives as fact, so a
+     * dropdown described as having no options gets answered from its label. His instruction was to
+     * ask "is there something wrong with the filler?" — which the model cannot do unless it is told
+     * that is an available conclusion, and unless something acts on it.
+     */
+    '- A field carrying "ourReadingIsSuspect" was read badly BY US, not shipped badly by the employer. ' +
+      'A required dropdown with no options does not exist on real forms. Do NOT answer such a field from its ' +
+      'label alone and do NOT guess a plausible-sounding value: answer with the empty string and set ' +
+      'needsHuman, so the run reports our own reading as the fault instead of filing a guess.',
     '- EXCEPTION — a field with "searchableTypeahead": true is a type-to-search box whose "optionsSample" is only the first few of thousands of choices (e.g. every university in the world). Answer with the candidate\'s REAL value (their actual school, city, employer) even when it does not appear in the sample, and do NOT set needsHuman merely because it is missing from the sample. The value is matched against the live filtered list when it is entered.',
     '- For a searchableTypeahead you MAY answer with two or three comma-separated alternatives, ordered most specific first: "Python, Computer Science". Each is tried against the live list and the first one the list actually offers is selected. Use this when you cannot tell how the list names things — the "optionsSample" shows its vocabulary and granularity, so if the sample reads "Accounting, Actuarial Science, Aerospace Engineering" a broader field belongs in your list as well as the specific skill. Never leave a skills or field-of-study box unanswered because you are unsure of the exact wording.',
     "- For checkboxes, value is 'Yes' or 'No'.",
@@ -676,6 +688,15 @@ function buildPrompt(snapshot: PageSnapshot, ctx: AgentContext, loadedGuidelines
     // options" rule and defer the field as needsHuman whenever the real answer wasn't in
     // the slice — which silently blocked the whole job. Send it as a labelled sample.
     ...(f.searchable ? { searchableTypeahead: true, optionsSample: f.options?.slice(0, 10) } : { options: f.options }),
+    /**
+     * OUR READING OF THIS CONTROL IS SUSPECT — say so, rather than presenting it as fact.
+     *
+     * "I do not think LLM should fully trust what filler told it!" The reader's output was handed
+     * over as ground truth, so an empty option list read as "this dropdown has no choices" instead
+     * of "we failed to see them", and the model answered from the label. It picked a row that was
+     * really a folder.
+     */
+    ...(f.readerDoubt ? { ourReadingIsSuspect: f.readerDoubt } : {}),
     sensitive: f.sensitive ?? isSensitive(f.label),
     /**
      * The candidate's guideline for this KIND of question, when one covers it — so a prose answer
