@@ -62,7 +62,23 @@ const BARE_LABEL = /^(month|day|year|from|to|state|city|country|zip|postal code|
  * Fields whose real option list is long, so a handful of rows means a virtualised list we only saw
  * the top of — the country dialling code is ~250 entries shown fourteen at a time.
  */
-const LONG_LIST = /country|dial|phone code|state|province|university|school|field of study|major|discipline|degree/i;
+const LONG_LIST = /country|dial|phone code|state|province|university|school|field of study|major|discipline/i;
+/**
+ * `degree` was in that list and fired on a real page: Workday's Degree offers nine rows —
+ * Bachelors, Masters, Doctorate and so on — which is the whole list, not the top of it. A rule
+ * that cries wolf on a correct reading costs more than the one it catches, because the reaction
+ * to a doubt is to distrust the field.
+ */
+
+/**
+ * Rows that are not answers. "No Items." is what a Workday typeahead shows before you type, and it
+ * was being counted as this control's one and only option — reading as "a choice between one
+ * thing" when the truth is "nothing has been offered yet".
+ */
+const PLACEHOLDER_ROW = /^(select one|select\.{0,3}|choose\.{0,3}|no items\.?|none|--+|)$/i;
+
+const realOptions = (options: readonly string[]): string[] =>
+  options.filter((o) => !PLACEHOLDER_ROW.test((o ?? "").trim()));
 
 /** Whitespace-insensitive, case-insensitive comparison — labels and options are hand-typed. */
 const same = (a: string, b: string): boolean =>
@@ -78,7 +94,7 @@ const same = (a: string, b: string): boolean =>
 export function doubtsAboutField(field: FieldSpec): ReadingDoubt[] {
   const found: ReadingDoubt[] = [];
   const label = (field.label ?? "").trim();
-  const options = field.options ?? [];
+  const options = realOptions(field.options ?? []);
 
   if (field.required && !label) {
     found.push({

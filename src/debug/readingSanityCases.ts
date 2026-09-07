@@ -106,6 +106,41 @@ check(`a normally-long list showing four rows is suspicious`,
     options: ["Afghanistan (+93)", "Albania (+355)", "Algeria (+213)", "Andorra (+376)"],
   }))).length === 1);
 
+console.log("\nfalse alarms found by running it against real pages");
+// Both of these fired on live Workday forms within minutes of the rules going in. A rule that
+// cries wolf on a correct reading costs more than the one it catches, because the reaction to a
+// doubt is to distrust the field.
+check(`Degree offering nine rows is the WHOLE list, not the top of one`,
+  doubtsAboutField(field({
+    label: "Degree", type: "single_select",
+    options: ["Bachelors", "Masters", "Doctorate", "Associates", "High School", "MBA", "JD", "MD", "Other"],
+  })).length === 0);
+// My first expectation here was wrong and the code was right. A list whose only row is "No Items."
+// has offered nothing, so "a dropdown with no options" is the truthful reading — not "a choice
+// between one thing", which is what it said before placeholders were filtered.
+check(`"No Items." is not an option — the control has offered NOTHING`,
+  faults(doubtsAboutField(field({ label: "Type to Add Skills", type: "multi_select", options: ["No Items."] })))
+    .some((d) => d.doubt.includes("no options")));
+check(`and it stops saying "a choice between one thing"`,
+  odd(doubtsAboutField(field({ label: "Type to Add Skills", type: "multi_select", options: ["No Items."] })))
+    .every((d) => !d.doubt.includes("only one option")));
+// The same control marked searchable is a typeahead that has not been typed into yet, and quiet.
+check(`a searchable typeahead showing "No Items." is expected`,
+  doubtsAboutField(field({
+    label: "Type to Add Skills", type: "multi_select", searchable: true, options: ["No Items."],
+  })).length === 0);
+check(`"Select One" is not an option either`,
+  doubtsAboutField(field({ label: "Gender", type: "single_select", options: ["Select One"] }))
+    .some((d) => d.doubt.includes("no options")));
+check(`but a real two-way choice with a placeholder in front is fine`,
+  doubtsAboutField(field({ label: "Gender", type: "single_select", options: ["Select One", "Male", "Female"] })).length === 0);
+// The taxonomy chooser: two rows that are both navigation, correctly flagged as odd.
+check(`Field of Study showing two rows is still suspicious`,
+  doubtsAboutField(field({
+    label: "Education — Field of Study", type: "single_select",
+    options: ["Partial List (First 500 Entries)", "All"],
+  })).some((d) => d.doubt.includes("normally long")));
+
 console.log("\ndoubts only the whole page can see");
 {
   // CLAUDE.md's unresolved Workday bug: City and Postal Code filled, State never touched, and
