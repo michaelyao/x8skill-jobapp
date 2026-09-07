@@ -7,6 +7,7 @@ import { ocrLayoutTiled } from "../knowledge/visualCheck.js";
 import { captureFormShot, captureTallTiles } from "./formShot.js";
 import { CAPTCHA_PROBE } from "../core/captchaGate.js";
 import { describeDoubts, doubtsAboutReading, readerFaults } from "../core/readingSanity.js";
+import { rememberQuestion, shapeOfField } from "../knowledge/questionMemory.js";
 import { planTiles } from "../knowledge/tiles.js";
 import { judgePageLanguage } from "../core/pageLanguage.js";
 import { isExclusiveGroup } from "../core/fieldGroups.js";
@@ -496,14 +497,21 @@ export async function runApplication(
            * saying "click-label recovered it" makes this one action instead of a model call and
            * four guesses; a note saying a remedy did not help stops it being repeated.
            */
-          const learned = driver.knownRemedy ? await driver.knownRemedy(ats, field.label).catch(() => undefined) : undefined;
+          // The widget family, so the question memory can be keyed on the QUESTION rather than on
+          // the label this particular form used. Derived in one place — see shapeOfField.
+          const shape = shapeOfField(field);
+          const learned = driver.knownRemedy
+            ? await driver.knownRemedy(ats, field.label, shape).catch(() => undefined)
+            : undefined;
           if (learned && driver.applyRemedy) {
             console.log(`    📓 seen before on ${ats}: ${learned} recovered "${field.label.slice(0, 40)}" — trying that first`);
             const ok = await driver.applyRemedy(root, field, learned).catch(() => false);
             const again = ok
               ? await withDeadline(driver.fill(root, field, answer), FIELD_TIMEOUT_MS, field.label).catch(() => false)
               : false;
-            await driver.recordRemedyOutcome?.(ats, field.label, learned, Boolean(again)).catch(() => undefined);
+            await driver
+              .recordRemedyOutcome?.(ats, field.label, learned, Boolean(again), shape)
+              .catch(() => undefined);
             if (again) {
               console.log(`    ✓ recovered from what we learned before: ${field.label.slice(0, 46)}`);
               filled.push(`${field.label}: ${answer.value}`);
@@ -548,9 +556,11 @@ export async function runApplication(
                 FIELD_TIMEOUT_MS,
                 field.label,
               ).catch(() => false);
-              await driver.recordRemedyOutcome?.(driver.type ?? "unknown", field.label, remedy, Boolean(second)).catch(
-                () => undefined,
-              );
+              // Shape here too: this is the outcome of the STUDY's own suggestion, which is the
+              // one most worth remembering — it is what a fresh diagnosis cost us.
+              await driver
+                .recordRemedyOutcome?.(driver.type ?? "unknown", field.label, remedy, Boolean(second), shape)
+                .catch(() => undefined);
               if (second) {
                 console.log(`    ✓ recovered after ${remedy}: ${field.label.slice(0, 50)}`);
                 filled.push(`${field.label}: ${answer.value}`);
@@ -1072,7 +1082,25 @@ export async function runApplication(
     const doubted = new Map(doubts.map((d) => [d.field, d]));
     for (const f of snapshot.fields) {
       const d = doubted.get(f.label);
-      if (d) f.readerDoubt = `${d.doubt} — ${d.expected}`;
+      if (!d) continue;
+      f.readerDoubt = `${d.doubt} — ${d.expected}`;
+      /**
+       * A doubt that survived the second read is filed against the QUESTION.
+       *
+       * "Our reader cannot see this control on this tenant" is exactly the sort of thing that
+       * should be known before the next employer asks the same thing — and it is recorded as a
+       * mechanism that did NOT work, so the study loop spends its budget on something else.
+       */
+      if (d.severity === "reader-fault") {
+        await rememberQuestion({
+          sampleLabel: f.label,
+          ats: driver.type ?? "unknown",
+          shape: shapeOfField(f),
+          mechanism: { recipe: "reader-cannot-see" },
+          source: "learned",
+          worked: false,
+        }).catch(() => undefined);
+      }
     }
     for (const line of describeDoubts(doubts.filter((d) => d.severity === "suspicious"))) {
       console.log(`    🤨 ${line}`);

@@ -4,7 +4,13 @@ import { TRANSCRIPT_PATH } from "../../config.js";
 import type { Locator, Page } from "playwright";
 import { loadSkillPicks, loadSkillRemovals, pillsToRemove, type SkillPill } from "../../knowledge/skillPlan.js";
 import { datePartOf, datePartValue } from "../../core/dateParts.js";
-import { explainStuckField, type Remedy } from "../fieldStudy.js";
+import {
+  readQuestionMemory,
+  recallMechanism,
+  rememberQuestion,
+  type WidgetShape,
+} from "../../knowledge/questionMemory.js";
+import { explainStuckField, type Remedy, REMEDIES } from "../fieldStudy.js";
 import { noteFor, readFieldNotes, recordFieldNote } from "../../knowledge/fieldNotes.js";
 import {
   chooseOfferedOption,
@@ -471,7 +477,34 @@ export abstract class GenericDriver implements AtsDriver {
    * stops it being tried again. Both save a model call, and more importantly they stop the same
    * discovery being made twice.
    */
-  async knownRemedy(ats: string, label: string): Promise<Remedy | undefined> {
+  async knownRemedy(ats: string, label: string, shape?: string): Promise<Remedy | undefined> {
+    /**
+     * THE QUESTION MEMORY IS ASKED FIRST, because it is keyed on the QUESTION and this is keyed on
+     * the label THIS form happened to use.
+     *
+     * The candidate's complaint: "even for same ATS, the different job will have some kind of
+     * variant of the way to ask the same or similar question." A field note recorded against
+     * "5. How Did You Hear About Us?*" taught the next employer's "How did you hear about us"
+     * nothing at all. The fingerprint strips the numbering, the star and the parenthetical, so it
+     * does.
+     *
+     * Still narrow: `recallMechanism` refuses to leave its own ats+shape, because how a control
+     * behaves is a property of that tenant's widget. Only the ANSWER travels, and answers are not
+     * this function's business.
+     */
+    if (shape) {
+      const remembered = recallMechanism(
+        await readQuestionMemory().catch(() => []),
+        label,
+        ats,
+        shape as WidgetShape,
+      );
+      const recipe = remembered?.mechanism?.recipe;
+      if (recipe && recipe !== "none" && (REMEDIES as readonly string[]).includes(recipe)) {
+        console.log(`    📓 this question has been solved on ${ats} before: ${recipe}`);
+        return recipe as Remedy;
+      }
+    }
     const notes = await readFieldNotes().catch(() => []);
     const note = noteFor(notes, ats, label);
     if (!note?.remedy || note.remedy === "none") return undefined;
@@ -480,7 +513,13 @@ export abstract class GenericDriver implements AtsDriver {
   }
 
   /** Record whether the remedy actually recovered the field, so the note is worth reading. */
-  async recordRemedyOutcome(ats: string, label: string, remedy: string, worked: boolean): Promise<void> {
+  async recordRemedyOutcome(
+    ats: string,
+    label: string,
+    remedy: string,
+    worked: boolean,
+    shape?: string,
+  ): Promise<void> {
     const notes = await readFieldNotes().catch(() => []);
     const previous = noteFor(notes, ats, label);
     await recordFieldNote({
@@ -491,6 +530,25 @@ export abstract class GenericDriver implements AtsDriver {
       remedy,
       worked,
     }).catch(() => undefined);
+    /**
+     * AND AGAINST THE QUESTION, so the next employer asking it inherits this.
+     *
+     * Both outcomes are worth keeping. A recipe that worked is the answer next time; one that did
+     * not is what stops the loop spending its budget re-trying it — the rule `field-notes` already
+     * had, now keyed so it survives a change of wording.
+     */
+    if (shape) {
+      await rememberQuestion({
+        sampleLabel: label,
+        ats,
+        shape: shape as WidgetShape,
+        mechanism: { recipe: remedy },
+        source: "learned",
+        worked,
+      }).catch((error: Error) => {
+        console.log(`    📓 could not remember this question: ${error.message.split("\n")[0].slice(0, 80)}`);
+      });
+    }
   }
 
   /**

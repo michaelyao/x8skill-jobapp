@@ -196,9 +196,14 @@ export interface AtsDriver {
    */
   applyRemedy?(root: Root, field: FieldSpec, remedy: string): Promise<boolean>;
   /** A remedy already known to work for this field on this ATS, from data/field-notes.json. */
-  knownRemedy?(ats: string, label: string): Promise<string | undefined>;
+  /**
+   * `shape` is the widget family (see `shapeOfField`). A mechanism is only valid within one, so the
+   * question memory cannot be consulted without it — and this used to take only (ats, label),
+   * which is why a remembered fix could not be keyed to the question rather than the job.
+   */
+  knownRemedy?(ats: string, label: string, shape?: string): Promise<string | undefined>;
   /** Record whether a remedy recovered the field, so the note is worth reading next time. */
-  recordRemedyOutcome?(ats: string, label: string, remedy: string, worked: boolean): Promise<void>;
+  recordRemedyOutcome?(ats: string, label: string, remedy: string, worked: boolean, shape?: string): Promise<void>;
   /** Click a repeated section's "Add" until it holds `wanted` rows. See WorkdayDriver. */
   expandRepeatedBlocks?(root: Root, wanted: number): Promise<{ section: string; from: number; to: number }[]>;
   /**

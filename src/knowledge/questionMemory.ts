@@ -41,6 +41,37 @@ export type WidgetShape =
   | "text"
   | "unknown";
 
+/**
+ * The widget family a FieldSpec belongs to, derived in ONE place.
+ *
+ * A mechanism is only valid within a shape, so this is the other half of the memory key. Kept here
+ * beside `WidgetShape` rather than inlined at each call site — two slightly different mappings
+ * would silently split one question's memory into two.
+ */
+export function shapeOfField(field: {
+  type?: string;
+  widget?: string;
+  options?: readonly string[];
+  groupKey?: string;
+}): WidgetShape {
+  if (field.widget === "workday-select") return "workday-prompt";
+  if (field.widget === "react-select") return "react-select";
+  switch (field.type) {
+    case "single_select":
+    case "multi_select":
+      return "select";
+    case "radio":
+      return "radio";
+    case "checkbox":
+      return field.groupKey ? "checkbox-group" : "checkbox";
+    case "text":
+    case "textarea":
+      return "text";
+    default:
+      return "unknown";
+  }
+}
+
 export interface QuestionMemory {
   /** `normalizeQuestion(label)` — the question, stripped of the wording each form gives it. */
   fingerprint: string;
