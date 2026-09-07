@@ -49,7 +49,8 @@
     "test:drift": "tsx src/debug/driftCases.ts",
     "test:notes": "tsx src/debug/fieldNoteCases.ts",
     "test:checkboxes": "tsx src/debug/checkboxGroupCases.ts",
-    "requeue:stale": "tsx src/debug/requeueStale.ts"
+    "requeue:stale": "tsx src/debug/requeueStale.ts",
+    "test:memory": "tsx src/debug/questionMemoryCases.ts"
   },
   "repository": {
     "type": "git",

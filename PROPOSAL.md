@@ -232,9 +232,126 @@ or a settings page (`/answers`, `/preference`). Ten tabs → three lists + setti
 
 ---
 
-## 6. What I need from you
+## 6. Answers, and the revised centrepiece
 
-Ordered by how much the answer changes the work.
+Reviewed 2026-09-07. His answers changed what this proposal is about.
+
+**On the option tree (Q2) he redirected it, and he is right:**
+
+> "For this particular 'How do you hear from us' question, it is the workday only problem. Other
+> ATS might have similar issue, but i am not sure. What i want address is the deeper issue: When
+> this does not work, how to make LLM to automatically find out the issue and fix it, instead of I
+> have to find it out. I proposed a study mode should be trigger when worker's code can not fill in
+> a field, especially common field. The study mode should invoke LLM and Vision to study the page,
+> and then DOM and get the problem solve, and fix the code onward."
+
+So the option tree drops from centrepiece to a narrow fix for one known widget, and the centrepiece
+becomes **self-repair**: when a field refuses a value, the run itself works out why and gets past it,
+without him finding it.
+
+Other answers: **Q1** — put the question and its real options on the job's page, he chooses, and the
+answer is remembered for the same question anywhere. **Q3** — converge the two status enums first.
+**Q4** — Handshake always, overridable at review.
+
+---
+
+## 7. Self-repair — what it may search over, and what it may not
+
+The one line that makes this safe:
+
+> **The loop may search over MECHANISM. It may never search over MEANING.**
+
+It may discover *how* to tick a box — which element takes the click, whether a parent must be opened
+first, whether the control needs a blur to commit. It may never discover *what* to tick: the value
+always comes from the store, the ladder, or `guidelines.txt`, and when there is no value the answer
+is to ask him (§8), never to try options until one sticks. That distinction is what keeps a
+self-repairing filler from becoming a machine that invents answers on live employer forms.
+
+### 7.1 The loop
+
+Triggered the moment a field was told to take a value and did not, while the page is still open.
+
+```
+0. LOOK IT UP     fingerprint(question) + ats + widgetShape → a recipe that worked before?
+                  → apply it. One action instead of a model call and four guesses.
+1. OBSERVE        DOM facts (already built) + NEW: a screenshot of the control and its
+                  neighbours + the opened menu if it is a choice control
+2. HYPOTHESISE    ask the model WITH THE IMAGE: what is this control, and what would a
+                  person do to set it to X? Answer constrained to the recipe catalogue.
+3. EXPERIMENT     try it; verify by read-back. Failed → next candidate. Bounded.
+4. LEARN          success → store the winning recipe under that key. Failure → store that
+                  too, so it is never tried again.
+5. GIVE UP WELL   write a repair dossier: screenshot, DOM, ancestry, everything tried,
+                  what the model said, the failing selector. Surface it for review.
+```
+
+Steps 0–4 already exist in weaker form — `studyFailedField`, `REMEDIES`, `applyRemedy`,
+`knownRemedy`, `recordRemedyOutcome`, `fieldNotes`. This is an upgrade of a mechanism that shipped
+broken and ran for the first time yesterday, not a greenfield build.
+
+### 7.2 What is genuinely missing
+
+| Gap | What it needs |
+|---|---|
+| **No vision.** `callModel` sends text only — `content: user` as a string, `parts:[{text}]` for Gemini | both APIs take images; a contained addition to one client |
+| **The catalogue has no notion of a path.** Seven remedies, all single actions | add `option-path`: open parents to reach a leaf. That is the Workday tree case |
+| **Notes are keyed per field, per ATS** | key on `fingerprint(question) + ats + widgetShape` so a *different job* with the same shape reuses it |
+| **Budget is flat** | scale it by how many applications the field blocks — 29 for hear-about-us earns vision and six experiments; a one-off earns one |
+| **Giving up is silent** | the dossier, and a page that lists them |
+
+### 7.3 On "fix the code onward"
+
+Two different things, and I want to be explicit about which I will do.
+
+**Data-level repair, applied automatically.** Almost every fix so far has been *data*, not logic:
+which element takes the click (the `click_filter` wrapper, not the inert button), which path commits
+(Job Board → Handshake), whether a blur is needed, what the answer is. Learned, verified on the spot,
+stored, reused. That is a permanent behaviour change with no code edit, and it is where the loop
+should live.
+
+**Code-level repair, proposed and never auto-applied.** When the loop exhausts its budget, a new
+widget family probably needs real code. The dossier makes that a short job with evidence instead of a
+day of hunting. I am not going to have a model rewrite the fill path unseen: `CLAUDE.md` already
+says a fix invented by a model and applied unseen is the false success everything else guards
+against, and the last day produced three separate bugs whose whole nature was code *reporting*
+success it did not have. If you want that line moved, say so and I will move it — but I want it
+recorded as your decision, not mine.
+
+---
+
+## 8. Asking him the question — his Q1 answer
+
+> "They should put such question, with the available option, in the webpage of this job. I will make
+> the correct selection. However, once i answered, they need remember this type of question, as
+> their knowledge, and use it again if they see the similar question"
+
+So a field with no truthful answer stops being a failure and becomes **a question on the job's page**:
+the question as the form words it, the options as the form offers them, and his choice recorded
+against the question fingerprint — so the next employer asking the same thing, in whatever shape, is
+answered without him. Roughly 15 records today, and the same memory store as §7.
+
+---
+
+## 9. The plan, in order
+
+Each step is useful alone, and each one earns the next.
+
+1. **The memory store** — `fingerprint(question) + ats + widgetShape` → the recipe or path that
+   committed, and the answer he gave. Foundation for both 7 and 8; replaces `field-notes.json`'s
+   per-field keying.
+2. **Ask him the question** (§8). Converts ~15 stopped applications into one-field decisions, and is
+   the first thing that visibly reduces the count.
+3. **Vision in the study, and the verified experiment loop** (§7). The deeper ask.
+4. **The Workday tree prompt** — option-tree probe and resolver, that widget only, as he scoped it.
+5. **Converge the two status enums** (his Q3). 34 postings currently disagree; two of them disagree
+   about whether an application exists at all.
+
+---
+
+## 10. What I need from you
+
+
+Answered above; kept for the record.
 
 1. **Appetite.** 3.1–3.3 touch the centre of the fill path. Done properly it is a week of careful
    work with the suite extended first; done fast it is a day and I will break things I cannot see. I
