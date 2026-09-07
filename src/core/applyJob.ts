@@ -21,7 +21,13 @@ import {
   findCrossAtsDuplicate,
   recordApplication,
 } from "../knowledge/applications.js";
-import { loadPendingQueue, upsertPending, updatePendingStatus, type PendingEntry } from "../knowledge/approvalQueue.js";
+import {
+  loadPendingQueue,
+  upsertPending,
+  updatePendingStatus,
+  type OpenQuestion,
+  type PendingEntry,
+} from "../knowledge/approvalQueue.js";
 import { resolveResumeForJob } from "../knowledge/resume.js";
 import {
   fetchStoredJobDescription,
@@ -96,6 +102,37 @@ async function scrollToTop(page: Page): Promise<void> {
     })()`)
     .catch(() => undefined);
   await page.waitForTimeout(250);
+}
+
+/**
+ * The questions this run could not answer, in the form's own words, for the candidate to settle.
+ *
+ * `unknown` is the right source and `failedToFill` is not: the first is a question nothing in the
+ * store answers, the second a widget that refused a value we HAD. Only the first is his.
+ *
+ * ONE builder because BOTH failure paths need it — the run that reached Review with gaps, and the
+ * far commoner one that stopped before Review on an empty required field. Two copies of this
+ * mapping would drift, which is the failure this project keeps finding a week late.
+ */
+function questionsForCandidate(
+  unknown: readonly string[],
+  observed: readonly { label: string; options?: string[]; required: boolean; type: string }[],
+  blocking: readonly string[] = [],
+): OpenQuestion[] {
+  const blockingSet = new Set(blocking.map((b) => b.replace(/^form says:\s*/, "")));
+  return unknown
+    .map((label) => {
+      const seen = observed.find((f) => f.label === label);
+      return {
+        label,
+        ...(seen?.options?.length ? { options: seen.options.slice(0, 40) } : {}),
+        required: seen?.required ?? blockingSet.has(label),
+        type: seen?.type ?? "text",
+      };
+    })
+    // The ones actually holding the application up come first.
+    .sort((a, b) => Number(b.required) - Number(a.required))
+    .slice(0, 6);
 }
 
 async function findPendingEntry(key: string) {
@@ -611,6 +648,56 @@ export async function applyToJob(
           "stopped before review",
         ],
       });
+      /**
+       * AND GIVE HIM SOMEWHERE TO ANSWER IT — this is the branch that matters most.
+       *
+       * A run that stops before Review on an empty required field is the commonest failure in the
+       * whole list (73 of 222 records), and this path wrote the LEDGER and retired the queue entry
+       * without ever creating one. So the job had no page carrying its state, and the question that
+       * stopped it — a conflict-of-interest declaration, a driver's licence — was visible nowhere.
+       * Re-running could not help: the answer was never ours to work out.
+       *
+       * Queued as `error`, not `awaiting_approval`, because nothing here is approvable: the fill did
+       * not finish. It shows on /queue's stopped list and its own page carries the questions, so the
+       * one thing standing between this application and a submission is a box he can type in.
+       */
+      const openQuestions = questionsForCandidate(
+        result.unknown,
+        result.observedFields,
+        result.blockedRequired,
+      );
+      if (openQuestions.length) {
+        await upsertPending({
+          key: job.id || identity.identityKey,
+          code: job.id,
+          identityKey: identity.identityKey,
+          externalJobId: identity.externalJobId || undefined,
+          companyReqId: identity.companyReqId,
+          ats: recordedAts,
+          company: job.company,
+          title: job.title,
+          applyUrl: job.applyUrl,
+          location: job.location,
+          region: job.region,
+          resumeName: resume.name,
+          resumeStandard: resume.isStandard,
+          jobDescription: jobDescriptionResolved,
+          filledFields: result.filled,
+          answers: result.answers,
+          reviewSentAt: new Date().toISOString(),
+          status: "error",
+          attempts: 0,
+          lastError: result.blockedRequired.length
+            ? `blocked on: ${result.blockedRequired.slice(0, 4).join("; ")}`
+            : "the run stopped before the form was finished",
+          reapproval: undefined,
+          openQuestions,
+        }).catch(() => undefined);
+        console.log(
+          `  ❓ ${openQuestions.length} question(s) only you can answer — on /queue/${job.id ?? ""}: ` +
+            openQuestions.map((q) => q.label.slice(0, 40)).join("; "),
+        );
+      }
       await jobPage.close().catch(() => undefined);
       return finish("opened_and_prefilled", [
         ...result.filled.map((i) => `filled ${i}`),
@@ -836,19 +923,7 @@ export async function applyToJob(
            * Capped: an application blocked on fifteen questions is a reading failure, not a
            * questionnaire, and handing him fifteen boxes would bury the one that matters.
            */
-          openQuestions: result.unknown
-            .map((label) => {
-              const seen = result.observedFields.find((f) => f.label === label);
-              return {
-                label,
-                ...(seen?.options?.length ? { options: seen.options.slice(0, 40) } : {}),
-                required: seen?.required ?? false,
-                type: seen?.type ?? "text",
-              };
-            })
-            // Required first: those are the ones actually holding the application up.
-            .sort((a, b) => Number(b.required) - Number(a.required))
-            .slice(0, 6),
+          openQuestions: questionsForCandidate(result.unknown, result.observedFields, result.blockedRequired),
           reapproval: undefined,
           visualCheck,
         });
